@@ -47,6 +47,36 @@ def _synchronize_device(device: torch.device):
 # Standalone weight-transfer helpers
 # ---------------------------------------------------------------------------
 
+def _swap_modules(layer: nn.Module, linear_only: bool) -> dict:
+    """{name: module} of the weight-carrying modules a block swap moves, keyed so two blocks pair by position even
+    when only one of them is LoRA-wrapped: a wrapper's base Linear (LoRALinear / LoRAConv: `.base` + `.adapters`)
+    is keyed by the wrapper's own name. MOSS-Image leaves block 22 unwrapped (no LoRA there), so its `proj.q` must
+    pair with block 21's `proj.q.base`; pairing by raw name met the wrapper itself, which has no .weight."""
+    out = {}
+    for name, m in layer.named_modules():
+        w = getattr(m, "weight", None)
+        if w is None or (linear_only and not m.__class__.__name__.endswith("Linear")):
+            continue
+        out[name] = m
+    for name, m in layer.named_modules():
+        base = getattr(m, "base", None)
+        if isinstance(base, nn.Module) and hasattr(m, "adapters"):
+            key = f"{name}.base" if name else "base"
+            if key in out:
+                out[name] = out.pop(key)
+    return out
+
+
+def _weight_swap_pairs(layer_to_cpu: nn.Module, layer_to_cuda: nn.Module, linear_only: bool = True):
+    """[(module_to_cpu or None, module_to_cuda)] by position in the block; None: no same-shaped partner."""
+    to_cpu = _swap_modules(layer_to_cpu, linear_only)
+    pairs = []
+    for name, m in _swap_modules(layer_to_cuda, linear_only).items():
+        c = to_cpu.get(name)
+        pairs.append((c if c is not None and c.weight.shape == m.weight.shape else None, m))
+    return pairs
+
+
 def swap_weight_devices_no_cuda(device: torch.device, layer_to_cpu: nn.Module, layer_to_cuda: nn.Module):
     """
     Swap weights between two layers without CUDA streams (fallback path).
@@ -54,8 +84,8 @@ def swap_weight_devices_no_cuda(device: torch.device, layer_to_cpu: nn.Module, l
     assert layer_to_cpu.__class__ == layer_to_cuda.__class__
 
     weight_swap_jobs = []
-    for module_to_cpu, module_to_cuda in zip(layer_to_cpu.modules(), layer_to_cuda.modules()):
-        if hasattr(module_to_cpu, "weight") and module_to_cpu.weight is not None:
+    for module_to_cpu, module_to_cuda in _weight_swap_pairs(layer_to_cpu, layer_to_cuda, linear_only=False):
+        if module_to_cpu is not None:
             weight_swap_jobs.append((module_to_cpu, module_to_cuda, module_to_cpu.weight.data, module_to_cuda.weight.data))
 
     # device -> cpu
@@ -154,21 +184,14 @@ class Offloader:
         weight_swap_jobs = []
 
         with T.section("find modules"):
-            modules_to_cpu = {k: v for k, v in layer_to_cpu.named_modules()}
-            for module_to_cuda_name, module_to_cuda in layer_to_cuda.named_modules():
-                if (
-                    hasattr(module_to_cuda, "weight")
-                    and module_to_cuda.weight is not None
-                    and module_to_cuda.__class__.__name__.endswith("Linear")
-                ):
-                    module_to_cpu = modules_to_cpu.get(module_to_cuda_name, None)
-                    if module_to_cpu is not None and module_to_cpu.weight.shape == module_to_cuda.weight.shape:
-                        weight_swap_jobs.append(
-                            (module_to_cpu, module_to_cuda, module_to_cpu.weight.data, module_to_cuda.weight.data)
-                        )
-                    else:
-                        if module_to_cuda.weight.data.device.type != device.type:
-                            module_to_cuda.weight.data = module_to_cuda.weight.data.to(device)
+            for module_to_cpu, module_to_cuda in _weight_swap_pairs(layer_to_cpu, layer_to_cuda):
+                if module_to_cpu is not None:
+                    weight_swap_jobs.append(
+                        (module_to_cpu, module_to_cuda, module_to_cpu.weight.data, module_to_cuda.weight.data)
+                    )
+                else:
+                    if module_to_cuda.weight.data.device.type != device.type:
+                        module_to_cuda.weight.data = module_to_cuda.weight.data.to(device)
 
         with T.section("synchronize before swap"):
             # Ensures the offloading layer's computation is done before we touch its buffers
