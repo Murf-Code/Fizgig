@@ -67,14 +67,25 @@ def _swap_modules(layer: nn.Module, linear_only: bool) -> dict:
     return out
 
 
-def _weight_swap_pairs(layer_to_cpu: nn.Module, layer_to_cuda: nn.Module, linear_only: bool = True):
-    """[(module_to_cpu or None, module_to_cuda)] by position in the block; None: no same-shaped partner."""
+def _weight_swap_plan(layer_to_cpu: nn.Module, layer_to_cuda: nn.Module, linear_only: bool = True):
+    """([(module_to_cpu or None, module_to_cuda)] by position in the block, [modules of layer_to_cpu left unpaired]).
+    A partner must match in shape AND dtype: the swap trades the two weight tensors (values copied, storage kept),
+    so an INT8 Linear paired with a bf16 one hands each the other's dtype. MOSS-Image's block 22 is neither
+    LoRA-wrapped nor quantised, so on an INT8 base it pairs with nobody and each side just moves on its own."""
     to_cpu = _swap_modules(layer_to_cpu, linear_only)
-    pairs = []
+    pairs, used = [], set()
     for name, m in _swap_modules(layer_to_cuda, linear_only).items():
         c = to_cpu.get(name)
-        pairs.append((c if c is not None and c.weight.shape == m.weight.shape else None, m))
-    return pairs
+        ok = c is not None and c.weight.shape == m.weight.shape and c.weight.dtype == m.weight.dtype
+        pairs.append((c if ok else None, m))
+        if ok:
+            used.add(name)
+    return pairs, [c for n, c in to_cpu.items() if n not in used]
+
+
+def _weight_swap_pairs(layer_to_cpu: nn.Module, layer_to_cuda: nn.Module, linear_only: bool = True):
+    """[(module_to_cpu or None, module_to_cuda)] by position in the block; None: no same-shaped, same-dtype partner."""
+    return _weight_swap_plan(layer_to_cpu, layer_to_cuda, linear_only)[0]
 
 
 def swap_weight_devices_no_cuda(device: torch.device, layer_to_cpu: nn.Module, layer_to_cuda: nn.Module):
@@ -84,9 +95,15 @@ def swap_weight_devices_no_cuda(device: torch.device, layer_to_cpu: nn.Module, l
     assert layer_to_cpu.__class__ == layer_to_cuda.__class__
 
     weight_swap_jobs = []
-    for module_to_cpu, module_to_cuda in _weight_swap_pairs(layer_to_cpu, layer_to_cuda, linear_only=False):
+    pairs, cpu_only = _weight_swap_plan(layer_to_cpu, layer_to_cuda, linear_only=False)
+    for module_to_cpu, module_to_cuda in pairs:
         if module_to_cpu is not None:
             weight_swap_jobs.append((module_to_cpu, module_to_cuda, module_to_cpu.weight.data, module_to_cuda.weight.data))
+        else:                                   # no partner: moves on its own
+            module_to_cuda.weight.data = module_to_cuda.weight.data.to(device)
+    _synchronize_device(device)
+    for m in cpu_only:
+        m.weight.data = m.weight.data.to("cpu")
 
     # device -> cpu
     for module_to_cpu, module_to_cuda, cuda_data_view, cpu_data_view in weight_swap_jobs:
@@ -184,7 +201,8 @@ class Offloader:
         weight_swap_jobs = []
 
         with T.section("find modules"):
-            for module_to_cpu, module_to_cuda in _weight_swap_pairs(layer_to_cpu, layer_to_cuda):
+            pairs, cpu_only = _weight_swap_plan(layer_to_cpu, layer_to_cuda)
+            for module_to_cpu, module_to_cuda in pairs:
                 if module_to_cpu is not None:
                     weight_swap_jobs.append(
                         (module_to_cpu, module_to_cuda, module_to_cpu.weight.data, module_to_cuda.weight.data)
@@ -196,6 +214,16 @@ class Offloader:
         with T.section("synchronize before swap"):
             # Ensures the offloading layer's computation is done before we touch its buffers
             torch.cuda.current_stream().synchronize()
+
+        for m in cpu_only:                      # unpaired (another dtype, e.g. a bf16 block among INT8 ones)
+            m.weight.data = m.weight.data.to("cpu")
+        if not weight_swap_jobs:
+            return None
+        # the reused buffers fit one set of jobs; a block that pairs differently gets fresh ones
+        sig = [(v.shape, v.dtype) for _, _, v, _ in weight_swap_jobs]
+        if sig != getattr(self, "_buffer_sig", None):
+            self.staging_buffer_a = self.staging_buffer_b = self.pinned_buffer = None
+            self._buffer_sig = sig
 
         if not self.use_pinned_memory:
             # Minimize pinned memory usage for lower shared GPU RAM consumption

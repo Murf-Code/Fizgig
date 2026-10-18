@@ -63,3 +63,86 @@ def test_no_cuda_swap_pairs_by_position(wrapped):
     for c, m in pairs:
         assert c is not None
         assert names_cpu[id(c)].removesuffix(".base") == names_cuda[id(m)]
+
+
+# ---- INT8 base: block 22 is not quantised either (quant targets = LoRA targets) ----------------------------------
+class _NoCuda:
+    """Stands in for the CUDA stream / event / pinned-memory calls, so the CUDA swap path runs on the CPU."""
+
+    def __init__(self, *a, **k):
+        pass
+
+    def synchronize(self):
+        pass
+
+    def wait_event(self, e):
+        pass
+
+    def record(self, *a):
+        pass
+
+    def record_event(self):
+        return _NoCuda()
+
+
+@pytest.fixture
+def cuda_on_cpu(monkeypatch):
+    import contextlib
+    monkeypatch.setattr(torch.cuda, "current_stream", lambda *a, **k: _NoCuda())
+    monkeypatch.setattr(torch.cuda, "stream", lambda *a, **k: contextlib.nullcontext())
+    monkeypatch.setattr(torch.cuda, "Event", _NoCuda)
+    monkeypatch.setattr(torch.cuda, "set_device", lambda *a: None)
+    monkeypatch.setattr(torch.cuda, "current_device", lambda: 0)
+    monkeypatch.setattr(torch.cuda, "empty_cache", lambda: None)
+    monkeypatch.setattr(torch.Tensor, "pin_memory", lambda self, device=None: self)
+
+
+def _int8_preview_model():
+    """The SFT preview model as load_preview_checkpoint builds it on a small card: INT8 base, the epoch's LoRA."""
+    from fizgig.families import quant
+    from fizgig.moss_image.model import MOSSImageDiT
+    drv = registry.get("moss_image").load_driver()
+    torch.manual_seed(0)
+    dit = MOSSImageDiT(**TINY).eval().requires_grad_(False)
+    quant.quantize(dit, drv, "int8", "cpu", store_device="cpu")
+    net = FamilyLoRA(dit, drv, device="cpu")
+    net.add_trainable(4, 4.0)
+    for p in net.parameters():
+        p.data.normal_(0, 0.05)
+    return dit
+
+
+def test_int8_and_bf16_linears_never_pair():
+    dit = _int8_preview_model()
+    assert dit.layers[21].proj["q"].base.weight.dtype == torch.int8
+    assert dit.layers[22].proj["q"].weight.dtype != torch.int8          # block 22: no LoRA, not quantised
+    for a, b in ((21, 22), (22, 21)):
+        pairs, cpu_only = offloading._weight_swap_plan(dit.layers[a], dit.layers[b])
+        assert all(c is None for c, _ in pairs)
+        assert len(cpu_only) == len(pairs) == 6
+    pairs, cpu_only = offloading._weight_swap_plan(dit.layers[20], dit.layers[21])
+    assert all(c is not None for c, _ in pairs) and not cpu_only
+
+
+@pytest.mark.parametrize("swap", [1, 13, 22])
+def test_int8_preview_streams_like_resident(cuda_on_cpu, swap):
+    """A fresh INT8 + LoRA preview model per round, as each epoch loads one: the streamed forward matches the
+    resident one. 1 block keeps block 22 resident (Zaush_v4's epoch 0: 18 of 42); 13 and 22 wrap around, so block 22
+    streams (epoch 1: 23 of 42 -> "expected mat1 and mat2 to have the same dtype ... BFloat16 != signed char")."""
+    x = torch.randn(1, 8, 4, 4, generator=torch.Generator().manual_seed(1))
+    ctx = torch.randn(1, 20, 16, generator=torch.Generator().manual_seed(2))
+    t = torch.tensor([500.0])
+    dit = _int8_preview_model()
+    with torch.no_grad():
+        ref = dit(x, t, ctx)
+        dit.enable_block_swap(swap, torch.device("cpu"), supports_backward=False)
+        dit.offloader.cuda_available, dit.offloader.stream = True, _NoCuda()
+        dit.switch_block_swap_for_inference()
+        for _ in range(2):                          # two sampling steps: the second starts from the rotated blocks
+            assert torch.equal(dit(x, t, ctx), ref)
+        for i in list(dit.offloader.futures):
+            dit.offloader._wait_blocks_move(i)
+    for n, m in dit.named_modules():
+        if type(m) is nn.Linear and n.startswith("layers."):
+            want = torch.int8 if not n.startswith("layers.22.") else torch.float32
+            assert m.weight.dtype == want, n
