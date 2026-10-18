@@ -141,13 +141,12 @@ def _face_info(x1, y1, x2, y2, gender="unknown", score=1.0, source="insightface"
 
 
 def _pil_to_bgr(pil_image: Image.Image) -> np.ndarray:
-    import cv2
+    """The BGR array InsightFace / OpenCV expect: the same pixels cv2.cvtColor's GRAY2BGR / RGBA2BGR / RGB2BGR give
+    (a channel copy or swap, nothing rounded), done in numpy."""
     a = np.array(pil_image)
     if a.ndim == 2:
-        return cv2.cvtColor(a, cv2.COLOR_GRAY2BGR)
-    if a.shape[2] == 4:
-        return cv2.cvtColor(a, cv2.COLOR_RGBA2BGR)
-    return cv2.cvtColor(a[..., :3], cv2.COLOR_RGB2BGR)
+        a = np.stack([a, a, a], axis=-1)
+    return np.ascontiguousarray(a[..., 2::-1])
 
 
 def _load_pil(path: str) -> Image.Image:

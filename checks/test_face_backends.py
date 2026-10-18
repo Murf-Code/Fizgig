@@ -1,29 +1,26 @@
-"""Face backends: detector selection / auto fallback, YOLO ONNX decoding + NMS, letterbox mapping, identity embedder
-thresholds and cache invalidation, likeness + loss-watch integration. Heavy models are mocked; the real-ONNX tests
-run when the exported models / test images are present (FIZGIG_FACE_ONNX_DIR, FIZGIG_FACE_IMG_DIR)."""
+"""The face finder and look match (fizgig/face_utils.py) without any model: the defaults stay InsightFace + ArcFace and
+run exactly the steps Fizgig always ran, the opt-in YOLO / Auto finders and DINOv2 / CLIP look matches pick, merge and
+score as documented (docs/FACE_BACKENDS.md), YOLO ONNX outputs decode right, and saved scores record their embedder.
+InsightFace, onnxruntime and the embedding models are stood in for by small fakes, so this runs on any CPU with only
+checks/requirements.txt installed."""
 
 import json
 import math
 import os
-import sys
 import types
 
 import numpy as np
 import pytest
 from PIL import Image
 
+from fizgig import face_utils as F
+
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-sys.path.insert(0, os.path.join(ROOT, "src"))
-
-from fizgig import face_utils as F  # noqa: E402
-
-ONNX_DIR = os.environ.get("FIZGIG_FACE_ONNX_DIR", os.path.join(ROOT, "user_data", "models", "face"))
-IMG_DIR = os.environ.get("FIZGIG_FACE_IMG_DIR", "")
 
 
 @pytest.fixture(autouse=True)
 def _clean_env(monkeypatch, tmp_path):
-    for k in ("FIZGIG_FACE_DETECTOR", "FIZGIG_FACE_YOLO_MODEL", "FIZGIG_FACE_IDENTITY"):
+    for k in ("FIZGIG_FACE_DETECTOR", "FIZGIG_FACE_YOLO_MODEL", "FIZGIG_FACE_IDENTITY", "FIZGIG_FACE_AUTO_THRESHOLD"):
         monkeypatch.delenv(k, raising=False)
     monkeypatch.setattr(F, "PREFS_FILE", str(tmp_path / "prefs.json"))    # never the real prefs.json
     monkeypatch.setattr(F, "_HERE", str(tmp_path / "fizgig"))
@@ -59,7 +56,7 @@ def test_local_fdetailer_is_the_default_yolo_model_when_present(tmp_path, monkey
     p.write_bytes(b"x")
     assert F.load_face_settings({})["face_yolo_model"] == str(p)
     assert F.load_face_settings({"face_yolo_model": "other.onnx"})["face_yolo_model"] == "other.onnx"
-    e = F.FaceEmbedder(settings={"face_detector": "yolo"})
+    e = F.FaceEmbedder(settings={"face_detector": "yolo", "face_identity": "auto"})
     assert e.cache_id == "dinov2@yolo:fdetailer_v11.onnx"
 
 
@@ -78,7 +75,8 @@ def _detector(backend, insight_faces, yolo_faces, insight_ok=True, yolo_ok=True)
     d = F.FaceDetector(backend=backend, settings={})
     calls = []
     d._insight = types.SimpleNamespace(available=lambda: insight_ok, load=lambda: None, app=None,
-                                       detect_bgr=lambda bgr: calls.append("insightface") or list(insight_faces))
+                                       detect_bgr=lambda bgr, pad_retry=False: calls.append("insightface")
+                                       or list(insight_faces))
     d._yolo = types.SimpleNamespace(available=lambda: yolo_ok, load=lambda: None, label="m.onnx", model_path="m.onnx",
                                     detect_bgr=lambda bgr: calls.append("yolo") or list(yolo_faces))
     return d, calls
@@ -163,7 +161,8 @@ def test_relative_model_path_resolves_against_the_fizgig_folder(tmp_path, monkey
     (tmp_path / "models" / "face").mkdir(parents=True)
     (tmp_path / "models" / "face" / "m.onnx").write_bytes(b"x")
     y = F.YoloOnnxBackend(os.path.join("models", "face", "m.onnx"))
-    assert y.model_path == str(tmp_path / "models" / "face" / "m.onnx") and y.available()
+    assert y.model_path == str(tmp_path / "models" / "face" / "m.onnx")
+    assert y.available() == F._importable("onnxruntime", "cv2")      # runnable where onnxruntime + OpenCV are
 
 
 # --------------------------------------------------------------------------------------------- YOLO decoding
@@ -185,6 +184,7 @@ ROWS = [(100, 100, 40, 40, 0, 0.9), (102, 101, 40, 42, 0, 0.8),     # overlappin
 
 
 def test_decode_detect_nms_conf_and_class_filter():
+    pytest.importorskip("cv2")          # NMS / resize are OpenCV's (not in checks/requirements.txt)
     out = F.decode_yolo([_det_table(ROWS, 2)], conf=0.35, iou=0.5, class_ids=[0], n_classes=2)
     assert [round(o[4], 2) for o in out] == [0.9, 0.6]
     x1, y1, x2, y2, s, c = out[0]
@@ -195,6 +195,7 @@ def test_decode_detect_nms_conf_and_class_filter():
 
 
 def test_decode_transposed_and_without_metadata():
+    pytest.importorskip("cv2")          # NMS / resize are OpenCV's (not in checks/requirements.txt)
     t = _det_table(ROWS, 2, n=2100)                 # real heads have thousands of anchors (vs <=1000 end-to-end rows)
     a = F.decode_yolo([t], 0.35, 0.5, [0], n_classes=2)
     b = F.decode_yolo([np.transpose(t, (0, 2, 1))], 0.35, 0.5, [0], n_classes=None)
@@ -202,6 +203,7 @@ def test_decode_transposed_and_without_metadata():
 
 
 def test_decode_segment_layout_ignores_mask_coefficients():
+    pytest.importorskip("cv2")          # NMS / resize are OpenCV's (not in checks/requirements.txt)
     nc = 6                                                           # Fdetailer: face + 5 other classes
     rows = [(200, 150, 50, 60, 0, 0.88), (400, 300, 30, 30, 3, 0.99)]
     seg = _det_table(rows, nc, extra=32, n=80)
@@ -213,6 +215,7 @@ def test_decode_segment_layout_ignores_mask_coefficients():
 
 
 def test_decode_end_to_end_layout():
+    pytest.importorskip("cv2")          # NMS / resize are OpenCV's (not in checks/requirements.txt)
     e2e = np.zeros((1, 300, 6), np.float32)
     e2e[0, 0] = (10, 20, 50, 80, 0.9, 0)
     e2e[0, 1] = (11, 21, 51, 81, 0.7, 1)
@@ -222,6 +225,7 @@ def test_decode_end_to_end_layout():
 
 
 def test_letterbox_and_box_mapping_back_to_the_image():
+    pytest.importorskip("cv2")          # NMS / resize are OpenCV's (not in checks/requirements.txt)
     rgb = np.zeros((300, 600, 3), np.uint8)
     canvas, r, (left, top) = F.letterbox(rgb, 640)
     assert canvas.shape == (640, 640, 3) and r == pytest.approx(640 / 600) and left == 0 and top == 160
@@ -278,8 +282,9 @@ def test_look_cutoff_uses_the_embedder_floor():
 def test_cache_id_and_settings_key_invalidate_across_backends():
     arc = F.FaceEmbedder(settings={"face_detector": "insightface"})
     arc2 = F.FaceEmbedder(settings={"face_detector": "auto"})
-    dino = F.FaceEmbedder(settings={"face_detector": "yolo", "face_yolo_model": "C:/m/fdetailer_v11.onnx"})
-    dino_default = F.FaceEmbedder(settings={"face_detector": "yolo"})
+    dino = F.FaceEmbedder(settings={"face_detector": "yolo", "face_yolo_model": "C:/m/fdetailer_v11.onnx",
+                                    "face_identity": "auto"})
+    dino_default = F.FaceEmbedder(settings={"face_detector": "yolo", "face_identity": "dinov2"})
     clip = F.FaceEmbedder(settings={"face_detector": "yolo", "face_identity": "clip"})
     assert arc.cache_id == arc2.cache_id == "arcface" and arc.settings_key == arc2.settings_key
     assert dino.cache_id == "dinov2@yolo:fdetailer_v11.onnx" and dino_default.cache_id == "dinov2@yolo:default"
@@ -397,8 +402,10 @@ def test_look_match_explicit_settings_bypass_the_probe(dataset):
     paths = dataset(h=24)
     assert F.decide_look_match(paths, {"face_detector": "auto", "face_identity": "clip"}, detector=det,
                                log=None).identity == "clip"
-    assert F.decide_look_match(paths, {"face_detector": "yolo"}, detector=det, log=None).identity == "dinov2"
-    assert F.decide_look_match(paths, {"face_detector": "insightface"}, detector=det, log=None).identity == "arcface"
+    assert F.decide_look_match(paths, {"face_detector": "yolo", "face_identity": "auto"}, detector=det,
+                               log=None).identity == "dinov2"
+    assert F.decide_look_match(paths, {"face_detector": "insightface", "face_identity": "auto"}, detector=det,
+                               log=None).identity == "arcface"
     assert det.calls == 0
 
 
@@ -543,7 +550,6 @@ def test_prep_notes_a_gender_choice_on_a_yolo_face():
 
 
 def test_web_face_settings_validate_and_report(tmp_path, monkeypatch):
-    pytest.importorskip("cv2")
     from fizgig.web import prep_jobs
     model = tmp_path / "fizgig" / "m.onnx"
     model.parent.mkdir(parents=True, exist_ok=True)
@@ -563,7 +569,6 @@ def test_web_face_settings_validate_and_report(tmp_path, monkeypatch):
 
 
 def test_web_look_filter_uses_one_embedder_per_session(tmp_path, monkeypatch):
-    pytest.importorskip("cv2")
     from fizgig.web import prep_jobs
 
     class Emb:
@@ -580,6 +585,7 @@ def test_web_look_filter_uses_one_embedder_per_session(tmp_path, monkeypatch):
         Image.new("RGB", (8, 8)).save(p)
         files.append(str(p))
     monkeypatch.setattr(prep_jobs, "session_embedder", lambda paths, log=None: (Emb(), "[faces] Auto look match: test"))
+    monkeypatch.setattr(prep_jobs, "faces_available", lambda: True)
     prep_jobs._look.update(state="idle")
     prep_jobs.look_scan(str(tmp_path), files[:3])
     for _ in range(200):
@@ -600,54 +606,3 @@ def test_fetch_models_lists_the_face_fallbacks():
     head = [i for i in ids if "anime_head_detection" in i][0]
     assert F.DEFAULT_YOLO["revision"] in head and F.DEFAULT_YOLO["file"] in head
     assert any(i.startswith("hf-model:facebook/dinov2-base@" + F._DinoV2.revision) for i in ids)
-
-
-# --------------------------------------------------------------------------------------------- real ONNX (CPU)
-def _onnx(name):
-    p = os.path.join(ONNX_DIR, name)
-    if not os.path.isfile(p):
-        pytest.skip(f"{p} not present")
-    return p
-
-
-def _img(name):
-    if not IMG_DIR:
-        pytest.skip("set FIZGIG_FACE_IMG_DIR to a folder of test images")
-    p = os.path.join(IMG_DIR, name)
-    if not os.path.isfile(p):
-        pytest.skip(f"{p} not present")
-    return p
-
-
-@pytest.mark.parametrize("model,image,min_faces", [
-    ("FacesV1.onnx", "suit_2023_09_20_Hexagon_Husky_Photoshoot_05_j.jpg", 1),
-    ("dghs_head_v2.0s.onnx", "draw_Harvett_August_2026_png.jpg", 1),
-    ("bingsu_face_yolov8n.onnx", "ctrl_human_zidane.jpg", 1),
-    ("fdetailer_v11.onnx", "suit_2023_09_20_Hexagon_Husky_Photoshoot_05_j.jpg", 1),   # seg model, face class of 6
-    ("fdetailer_v11.onnx", "draw_Harvett_Fox_png.jpg", 1),
-])
-def test_real_onnx_detection(model, image, min_faces):
-    pytest.importorskip("onnxruntime")
-    d = F.FaceDetector(settings={"face_detector": "yolo", "face_yolo_model": _onnx(model), "face_yolo_conf": 0.35})
-    faces = d.detect_all(_img(image))
-    W, H = Image.open(_img(image)).size
-    assert len(faces) >= min_faces
-    for f in faces:
-        x1, y1, x2, y2 = f.bbox
-        assert 0 <= x1 < x2 <= W and 0 <= y1 < y2 <= H and 0.35 <= f.score <= 1 and f.gender == "unknown"
-
-
-def test_real_fdetailer_picks_the_face_class():
-    pytest.importorskip("onnxruntime")
-    y = F.YoloOnnxBackend(_onnx("fdetailer_v11.onnx"))
-    y.load()
-    assert y.names[0] == "face" and len(y.names) == 6 and y.class_ids == [0] and y.size == 640
-
-
-def test_real_seg_onnx_detection():
-    """A YOLO *segment* export (as Fdetailer is) through onnxruntime."""
-    pytest.importorskip("onnxruntime")
-    d = F.FaceDetector(settings={"face_detector": "yolo", "face_yolo_model": _onnx("person_yolov8n_seg.onnx")})
-    d._yolo.classes = ("person",)
-    faces = d.detect_all(_img("ctrl_human_bus.jpg"))
-    assert len(faces) >= 3
