@@ -5,29 +5,40 @@ Fizgig uses faces in two ways:
 - the **face finder** (detector) decides where the face is. Image Prep's face close-ups (Resize + face close-ups, Face close-ups only), *Test face detection on one photo* and the clip-still picker use it, and so does the look match when it scores a crop.
 - the **look match** (identity embedder) turns a face into a vector, so two faces can be compared. The **Look Consistency Filter**, the **sample gallery's live likeness badges**, **LoRA Royale's likeness score**, **Repair Studio's likeness chips** and the **Block Profiler's likeness/bleed numbers** all use it.
 
-InsightFace and ArcFace are built for human photographs. On a drawn or fursuit character they usually find no face at all (0 of 19 on our test set). For furry and anime datasets, switch both settings.
+The defaults are **InsightFace** and **ArcFace**, the same as before this feature: a set of people needs nothing changed, and gets exactly the face crops, Look Filter scores and likeness scores it got before ([checked](#people-sets-are-unchanged)). InsightFace and ArcFace are built for human photographs, though. On a drawn or fursuit character they usually find no face at all (0 of 19 on our test set). For furry, anime and drawn datasets, switch both settings.
 
 ## Where to set it
 
-**Image Prep tab → 1 · What to do → "Face finder", "Look match" and "YOLO model"**, just under the Face / Padding options. They save as soon as you change them (the YOLO model when you press **Use**), in `user_data/prefs.json` like every other preference, and apply from the next scan or run.
+**Image Prep tab → 1 · What to do → Furry, anime and drawn characters** (a section that starts closed, under the Face / Padding options; it opens by itself when the settings aren't the defaults). It has three rows:
+
+- **Face finder**: *People (InsightFace, the default)*, *Furry, anime and drawn (YOLO model)*, or *Both, for sets with people and characters* (`auto`).
+- **Look match**: *People (ArcFace, the default)*, *Any face (DINOv2)*, *Any face (CLIP)*, or *Decide for each set of pictures* (`auto`).
+- **YOLO face model** (shown when the face finder isn't InsightFace): the standard file row, as for model paths elsewhere: type a path, **Choose…** a file on the Fizgig computer, or **Upload…** an `.onnx` from the device you're using (it lands in Fizgig's `uploads` folder and is filled in).
+
+They save as soon as you change them, in `user_data/prefs.json` like every other preference, and apply from the next scan or run. Picking a YOLO or Both face finder while the look match is still *People (ArcFace)* moves the look match along (the page says so), since ArcFace can't score a character's face: YOLO → *Any face (DINOv2)*, Both → *Decide for each set of pictures*.
+
+### What the hints on the page leave out
+
+- **Both** runs InsightFace and the YOLO model on every picture and merges the boxes (see [How Auto merges](#face-finder-backends)): about 0.3 s a picture on the CPU instead of ~0.13 s.
+- **A blank YOLO face model** means `user_data/models/face/fdetailer_v11.onnx` if that file exists (Fdetailer, which you convert once: [below](#fdetailer-v11-recommended-furry-model)), otherwise deepghs' MIT anime head model, downloaded from Hugging Face the first time it's used.
+- **Any face (DINOv2)** scores run higher than ArcFace's: the same character usually lands at 60–90% rather than 30–70%. The Look Filter's colours, the gallery badges and the chart bands use each look match's own thresholds ([table](#look-match-identity-embedders)).
+- **Decide for each set of pictures** looks at up to 24 of the pictures each time it scores (the [Auto look match](#auto-look-match)).
 
 | prefs.json key | Values | Default |
 |---|---|---|
-| `face_detector` | `auto` (InsightFace **and** the YOLO model on every image, boxes merged), `insightface`, `yolo` | `auto` |
+| `face_detector` | `insightface`, `yolo`, `auto` (InsightFace **and** the YOLO model on every image, boxes merged) | `insightface` |
 | `face_yolo_model` | path to a YOLO face/head model **.onnx**. A relative path is read relative to the Fizgig folder. Blank means `user_data/models/face/fdetailer_v11.onnx` if that file exists, otherwise the built-in deepghs anime head model. | blank |
 | `face_yolo_conf` | the YOLO confidence threshold | `0.35` |
-| `face_identity` | `auto` (with the Auto finder: decided per dataset / scoring session, see [Auto look match](#auto-look-match); with `insightface` → ArcFace, with `yolo` → DINOv2), `arcface`, `dinov2`, `clip` | `auto` |
+| `face_identity` | `arcface`, `dinov2`, `clip`, `auto` (with the Auto finder: decided per dataset / scoring session, see [Auto look match](#auto-look-match); with `insightface` → ArcFace, with `yolo` → DINOv2) | `arcface` |
 | `face_auto_threshold` | Auto look match: the share of probed images that must have a confident human face for ArcFace | `0.5` |
 
 You can override these for headless runs and tests with `FIZGIG_FACE_DETECTOR`, `FIZGIG_FACE_YOLO_MODEL`, `FIZGIG_FACE_IDENTITY` and `FIZGIG_FACE_AUTO_THRESHOLD`.
 
-**Recommended for every dataset (human, furry, anime or mixed):** finder **Auto**, look match **Auto**, with **Fdetailer v1.1 converted to .onnx** as the YOLO model (see below).
+**What to pick:**
 
-- Auto runs both detectors on every image.
-- The look match picks ArcFace for a human dataset and DINOv2 for a furry, anime or mixed one.
-- Gender targeting still works on human faces.
-
-Pick **YOLO** or **InsightFace** only to force one detector, for example to save the ~0.13 s per image InsightFace costs on a purely furry set.
+- **People:** nothing. The defaults are InsightFace + ArcFace, as always.
+- **Furry, anime or drawn characters:** face finder **YOLO**, look match **Any face (DINOv2)** (or *Decide for each set*), with **Fdetailer v1.1 converted to .onnx** as the YOLO face model (see below).
+- **A mix of people and characters:** face finder **Both**, look match **Decide for each set of pictures**. Gender targeting still works on the human faces.
 
 ## Face finder backends
 
@@ -68,8 +79,10 @@ How it decides:
 The decision is logged (the server console) and shown under the Look Filter's status line, for example:
 
 ```
-[faces] Auto look match: InsightFace found human faces in 0/11 images, YOLO-only faces in 7/11 -> furry/anime set: DINOv2-base (face crop) on InsightFace + YOLO (fdetailer_v11.onnx) crops
+[faces] Look match for this set: DINOv2 (any face), furry, anime or drawn characters (a person's face in 0/11 pictures looked at, only a character's face in 7/11)
 ```
+
+With an explicit look match (the default, ArcFace, included) nothing is probed and nothing extra is shown.
 
 The embedder is also recorded in the score caches (`embedder`, `embedder_label`), the gallery's status line, LoRA Royale's best-epoch line and Repair Studio's likeness chip (its tooltip). The decision is cached per set of probed files (path, mtime, size) and settings, so the same folder always decides the same way. An explicit look match (ArcFace / DINOv2 / CLIP), or an explicit finder, skips the probe.
 
@@ -110,7 +123,7 @@ cd C:\path\to\Fizgig
 
 Use any Python that has ultralytics: Forge's `system\python\python.exe`, A1111's `venv\Scripts\python.exe`, or a venv where you ran `pip install ultralytics`.
 
-The script turns off ultralytics' auto-install and update checks, exports at 640×640, checks the result with onnxruntime when it's available, and prints the class it will use. 640 matched 1024 on our test set and runs about twice as fast. Then either save it as **`user_data\models\face\fdetailer_v11.onnx` inside the Fizgig folder**, as the command above does, where it's used automatically whenever the YOLO model box is blank, or type its path into **YOLO model** and press **Use**. `user_data/` is git-ignored.
+The script turns off ultralytics' auto-install and update checks, exports at 640×640, checks the result with onnxruntime when it's available, and prints the class it will use. 640 matched 1024 on our test set and runs about twice as fast. Then either save it as **`user_data\models\face\fdetailer_v11.onnx` inside the Fizgig folder**, as the command above does, where it's used automatically whenever the YOLO face model box is blank, or pick it in **YOLO face model** (type the path, **Choose…** or **Upload…**). `user_data/` is git-ignored.
 
 **Defaults:**
 
@@ -206,6 +219,23 @@ These thresholds come from a small set. Treat them as a starting point, and trus
 - The gallery's `likeness.json` stores `embedder`, `embedder_label` and `thresholds`, and the gallery draws its badge colours and chart bands from `thresholds`. When you reopen or resume scoring, saved scores are reused only if the embedder matches. Files without an `embedder` count as ArcFace. If you change the face settings mid-run, the gallery rescores from scratch.
 - The in-memory embedding cache shared by the Look Filter, gallery and Repair Studio is keyed by the embedder's settings. Changing the finder, the model or the look match never mixes old and new embeddings.
 - Block Profiler reports name the embedder in the likeness/bleed note.
+
+## People sets are unchanged
+
+With the defaults (InsightFace + ArcFace), everything a set of people gets is what it got before this feature. Checked on CPU with the real InsightFace `buffalo_l` models, running the same code paths on `master` and on this branch over 18 pictures of people: 11 photos (one to three faces each, men and women), plus versions of them made to hit the edge cases: three face close-ups, a greyscale PNG, an RGBA PNG, a JPEG with an EXIF rotation, and one with no face.
+
+| What | Compared | Differences |
+|---|---|---|
+| Face finder: `detect_all` and `detect_from_pil` (boxes, gender, gender score, area, centre) | 506 values | 0 |
+| Image Prep runs (*Resize + face close-ups* and *Face close-ups only*, × Largest / Male / Female): every file written, by SHA-256, and the Output Log | 258 | 0 (byte-identical) |
+| *Test face detection on one photo* (faces, gender, chosen face, and the preview JPEG's bytes) | 309 | 0 |
+| Look Consistency Filter (scores, verdicts, median, cutoff, Auto-Suggest) and `fizgig_look_scores.json` | 144 | 0, except two added keys, `embedder` and `embedder_label` |
+| Samples gallery likeness (`likeness.json` scores, the real worker thread) | 19 | 0 |
+| LoRA Royale likeness (`score_renders`) | 36 | 0 |
+| Repair Studio likeness (embeddings and face boxes) | 105 | 0 (embeddings bit-identical) |
+| Block Profiler embeddings | 36 | 0 (bit-identical) |
+
+The InsightFace path keeps every detail of the old one: one detection pass (the padded retry is only for *Both*), boxes truncated to whole pixels and not clamped, `gender_score` from the detection score, files read with OpenCV for *Test face detection* and Repair Studio as before. `checks/test_face_backends.py` pins this down without models: the old detection, embedding and crop code is copied into the checks and compared with the new on stand-in InsightFace answers.
 
 ## Limitations
 

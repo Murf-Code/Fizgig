@@ -128,19 +128,10 @@ More: [docs/WEB_UI.md](docs/WEB_UI.md).
 
 ## Face backends
 
-Face crops, the Look Consistency Filter and every likeness score use two choices, both in the Image Prep tab's face settings:
+Face crops, the Look Consistency Filter and every likeness score work on furry, anime and drawn characters and fursuits too, not just people. People's sets need nothing changed: the defaults are InsightFace and ArcFace, as always. For characters, open **Image Prep → Furry, anime and drawn characters** and pick:
 
-- **Face finder**:
-  - **InsightFace** for human photos (it knows gender).
-  - **a YOLO face model** run with onnxruntime for drawn, anime and furry characters and fursuits. No ultralytics needed.
-  - **Auto** (default): both detectors on every image, boxes merged (~0.3 s per image on CPU).
-- **Look match**:
-  - **ArcFace** for people.
-  - **DINOv2** for furry / anime faces.
-  - optionally **CLIP**.
-  - **Auto** (default) decides once per dataset or scoring session: ArcFace for a mostly-human set, DINOv2 for a furry, anime or mixed one, so scores never mix embedding spaces.
-
-  Each has its own calibrated thresholds, and cached scores record which embedder made them.
+- **Face finder**: a **YOLO face model**, run with onnxruntime (no ultralytics needed), or **Both** for a set with people and characters.
+- **Look match**: **Any face (DINOv2)**, or let Fizgig decide for each set of pictures. Each look match has its own thresholds, and saved scores record which one made them.
 
 For furry datasets we recommend [Fdetailer v1.1](https://civitai.com/models/1228695), converted once to `.onnx` with `src/fizgig/scripts/convert_yolo_to_onnx.py`. The MIT-licensed deepghs anime head model is the built-in fallback and downloads by itself. Details, numbers and limitations: [docs/FACE_BACKENDS.md](docs/FACE_BACKENDS.md).
 
