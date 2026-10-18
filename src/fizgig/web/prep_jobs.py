@@ -23,9 +23,11 @@ _model_lock = threading.Lock()
 
 
 def faces_available() -> bool:
+    """Whether the face finder Image Prep's face settings pick can run here (the default, InsightFace: InsightFace,
+    OpenCV and onnxruntime installed, as before)."""
     try:
-        from fizgig.face_utils import is_face_detection_available
-        return bool(is_face_detection_available())
+        from fizgig.face_utils import FaceDetector
+        return bool(FaceDetector().available)
     except Exception:
         return False
 
@@ -54,7 +56,7 @@ def session_embedder(paths, log=None):
     human set and DINOv2 for a furry / anime / mixed one (face_utils.decide_look_match) - never a mix of the two."""
     from fizgig.face_utils import decide_look_match
     d = decide_look_match(list(paths), log=log)
-    return face_embedder(d.settings), d.message
+    return face_embedder(d.settings), ("" if d.kind == "explicit" else d.message)   # only Auto's choice is news
 
 
 FACE_DETECTOR_LABELS = {"auto": "Auto (InsightFace + YOLO)", "insightface": "InsightFace (people)",
@@ -212,6 +214,11 @@ def embed_face_box(path, embedder=None):
     from PIL import Image
     emb = embedder or face_embedder()
     try:
+        if emb.name == "arcface":       # read as before (OpenCV, unicode-safe): the same pixels, the same numbers
+            import cv2
+            import numpy as np
+            bgr = cv2.imdecode(np.fromfile(path, dtype=np.uint8), cv2.IMREAD_COLOR)
+            return (None, None) if bgr is None else emb.embed_bgr(bgr)
         with Image.open(path) as img:
             return emb.embed_pil(img.convert("RGB"))
     except Exception:

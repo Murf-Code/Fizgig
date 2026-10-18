@@ -76,8 +76,7 @@ def score(gen, rendered, ref):
     DINOv2 for a furry / anime face - on the CPU): {label: cosine or None (no face)}, and the best."""
     from fizgig.lora_royale import likeness
     if not likeness.available():
-        raise ValueError("Likeness scoring needs the face tools (InsightFace, or onnxruntime + transformers for "
-                         "DINOv2) - run install_fizgig.py to enable it.")
+        raise ValueError("Likeness scoring needs the face tools - run install_fizgig.py to enable it.")
     if not ref or not os.path.isfile(ref):
         raise ValueError("Pick a subject image to score likeness against.")
     scored = likeness.score_renders(ref, _images(rendered))

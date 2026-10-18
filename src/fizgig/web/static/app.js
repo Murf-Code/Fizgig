@@ -2276,7 +2276,8 @@ async function royaleScore() {
     if (r.best == null) { $("ryLikeStatus").textContent = "No faces detected in the renders or subject image."; $("ryBest").disabled = true; return; }
     $("ryBest").disabled = false;
     $("ryLikeStatus").textContent = `Best: ${ryLabel(r.best).toLowerCase()} (${r.scores[r.best].toFixed(3)})` +
-      (r.no_face ? `  (${r.no_face} no-face)` : "") + (r.embedder ? `  · ${r.embedder}` : "");
+      (r.no_face ? `  (${r.no_face} no-face)` : "") +
+      (r.embedder && !r.embedder.startsWith("ArcFace") ? `  · ${r.embedder}` : "");     // named when it isn't the usual one
     royaleBest();
   } catch (e) { $("ryLikeStatus").textContent = e.message; }
 }

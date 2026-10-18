@@ -255,8 +255,9 @@ class Prep:
         self._originals = {}
         area = target_area(prep_mp)
         face_mode = face_mode_of(face_label)
-        if self.detector is not None and mode != "Resize Only" and hasattr(self.detector, "describe"):
-            self.log(f"Face finder: {self.detector.describe()}\n")
+        if self.detector is not None and mode != "Resize Only" and getattr(self.detector, "backend_name",
+                                                                             "insightface") != "insightface":
+            self.log(f"Face finder: {self.detector.describe()}\n")      # only when it isn't the usual one
         if mode == "Auto Prep (Face Crops)":
             self.auto_prep(folder, folder, area, face_mode, face_padding, replace)
         elif mode == "Face Crop Only":

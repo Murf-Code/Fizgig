@@ -171,7 +171,7 @@ def _worker(samples_dir, gen, baselines):
             scores[f] = None if e is None else round(float(np.mean([float(np.dot(b, e)) for b in base])), 4)
             if i % 2 == 0 or i == len(todo):
                 _write(samples_dir, names, f"scoring… {len(scores)}/{len(files)}", scores, meta)
-        status = f"live - {len(scores)} sample(s) scored ({emb.label})"
+        status = f"live - {len(scores)} sample(s) scored" + ("" if emb.name == "arcface" else f" ({emb.label})")
         if todo or status != last:
             _write(samples_dir, names, status, scores, meta)
             last = status

@@ -31,7 +31,7 @@ def _clean_env(monkeypatch, tmp_path):
 # --------------------------------------------------------------------------------------------- settings / selection
 def test_settings_defaults_prefs_and_env(monkeypatch, tmp_path):
     st = F.load_face_settings({})
-    assert st["face_detector"] == "auto" and st["face_identity"] == "auto" and st["face_yolo_model"] == ""
+    assert st["face_detector"] == "insightface" and st["face_identity"] == "arcface" and st["face_yolo_model"] == ""
     assert st["face_yolo_conf"] == pytest.approx(0.35)
     (tmp_path / "prefs.json").write_text(json.dumps({"face_detector": "yolo", "face_yolo_model": ' "C:/m/f.onnx" ',
                                                      "face_yolo_conf": "0.5", "face_identity": "CLIP"}))
@@ -65,6 +65,169 @@ def test_resolve_identity_auto():
     assert F.resolve_identity({"face_detector": "auto", "face_identity": "auto"}) == "arcface"
     assert F.resolve_identity({"face_detector": "insightface", "face_identity": "auto"}) == "arcface"
     assert F.resolve_identity({"face_detector": "insightface", "face_identity": "clip"}) == "clip"
+
+
+# --------------------------------------------------------------------------------------------- the defaults = before
+# InsightFace stand-ins: Face objects as insightface.app.FaceAnalysis.get returns them, and an app that counts calls.
+class _Face(types.SimpleNamespace):
+    pass
+
+
+def _face(bbox, gender=1, det_score=0.9, emb=None):
+    f = _Face(bbox=np.asarray(bbox, dtype=np.float32), det_score=np.float32(det_score),
+              normed_embedding=None if emb is None else np.asarray(emb, np.float32))
+    if gender is not None:
+        f.gender = gender
+    return f
+
+
+class _App:
+    def __init__(self, *answers):
+        self.answers, self.shapes = list(answers), []
+
+    def get(self, bgr):
+        self.shapes.append(bgr.shape)
+        return self.answers.pop(0) if self.answers else []
+
+
+@pytest.fixture
+def fake_cv2(monkeypatch):
+    """The two OpenCV calls the face code makes, in numpy (CI has no OpenCV): a replicated border and imread."""
+    import sys
+    cv2 = types.SimpleNamespace(BORDER_REPLICATE=1, IMREAD_COLOR=1, read=[],
+                                copyMakeBorder=lambda a, t, b, l, r, _m: np.pad(a, ((t, b), (l, r), (0, 0)), "edge"))
+    cv2.imread = lambda p: cv2.read.append(p) or np.zeros((40, 60, 3), np.uint8)
+    monkeypatch.setitem(sys.modules, "cv2", cv2)
+    return cv2
+
+
+def _old_faceinfo(faces):
+    """What Fizgig's InsightFace FaceDetector made of InsightFace's faces before the face backends (verbatim logic)."""
+    out = []
+    for face in faces:
+        bbox = face.bbox.astype(int)
+        x1, y1, x2, y2 = bbox[0], bbox[1], bbox[2], bbox[3]
+        gender_idx = getattr(face, "gender", None)
+        if gender_idx is not None:
+            gender = "male" if gender_idx == 1 else "female"
+            gender_score = float(face.det_score) if hasattr(face, "det_score") else 1.0
+        else:
+            gender, gender_score = "unknown", 0.0
+        out.append(((x1, y1, x2, y2), gender, gender_score, (x2 - x1) * (y2 - y1), ((x1 + x2) // 2, (y1 + y2) // 2)))
+    return out
+
+
+def test_defaults_are_insightface_and_arcface():
+    det, emb = F.FaceDetector(settings={}), F.FaceEmbedder(settings={})
+    assert det.backend_name == "insightface" and det.describe() == "InsightFace (people)"
+    assert emb.name == "arcface" and emb.cache_id == "arcface" and emb.thresholds == {"match": 0.45,
+                                                                                     "borderline": 0.30, "floor": 0.25}
+    det._yolo = types.SimpleNamespace(available=lambda: True, load=lambda: 1 / 0, detect_bgr=lambda bgr: 1 / 0)
+    det._insight = types.SimpleNamespace(available=lambda: True, load=lambda: None,
+                                         detect_bgr=lambda bgr, pad_retry=False: [] if not pad_retry else 1 / 0)
+    assert det.detect_bgr(np.zeros((8, 8, 3), np.uint8)) == []              # never the YOLO model, never a retry
+
+
+def test_insightface_finder_gives_the_same_faces_as_before(monkeypatch):
+    raw = [_face([10.7, -3.2, 50.9, 61.5], 1, 0.91),        # off the top: not clamped, as before
+           _face([40.2, 30.0, 95.6, 80.4], 0, 0.62),        # off the right of a 90 px wide picture
+           _face([5, 5, 25, 30], None, 0.5)]                # no gender model answer
+    app = _App(list(raw))
+    monkeypatch.setitem(F.InsightFaceBackend._shared, ("detection", "genderage"), app)
+    monkeypatch.setattr(F.InsightFaceBackend, "available", staticmethod(lambda: True))
+    det = F.FaceDetector(settings={})
+    got = det.detect_bgr(np.zeros((70, 90, 3), np.uint8))
+    assert [(f.bbox, f.gender, f.gender_score, f.area, f.center) for f in got] == _old_faceinfo(raw)
+    assert app.shapes == [(70, 90, 3)]                                       # one pass
+    assert det.get_largest(got).bbox == (40, 30, 95, 80)
+    assert det.get_largest_by_gender(got, "male").bbox == (10, -3, 50, 61)
+    assert det.detect_bgr(np.zeros((70, 90, 3), np.uint8)) == [] and len(app.shapes) == 2   # nothing: no padded retry
+
+
+def test_insightface_detect_all_reads_the_file_as_before(tmp_path, fake_cv2, monkeypatch):
+    monkeypatch.setitem(F.InsightFaceBackend._shared, ("detection", "genderage"), _App([_face([1, 2, 30, 35])]))
+    monkeypatch.setattr(F.InsightFaceBackend, "available", staticmethod(lambda: True))
+    p = tmp_path / "a.jpg"
+    Image.new("RGB", (60, 40)).save(p)
+    faces = F.FaceDetector(settings={}).detect_all(str(p))
+    assert fake_cv2.read == [str(p)] and faces[0].bbox == (1, 2, 30, 35)     # OpenCV's imread, as before
+
+
+def test_auto_retries_padded_and_maps_back(monkeypatch, fake_cv2):
+    app = _App([], [_face([30, 20, 80, 70], 1, 0.9)])
+    monkeypatch.setitem(F.InsightFaceBackend._shared, ("detection", "genderage"), app)
+    monkeypatch.setattr(F.InsightFaceBackend, "available", staticmethod(lambda: True))
+    f = F.InsightFaceBackend().detect_bgr(np.zeros((40, 60, 3), np.uint8), pad_retry=True)
+    assert app.shapes == [(40, 60, 3), (60, 90, 3)]                         # 25% border the second time
+    assert f[0].bbox == (15, 10, 60, 40)                                     # back in the picture, clamped
+
+
+def _old_arcface(app, bgr, cv2):
+    """The ArcFace embedding Fizgig made before (FaceEmbedder.embed / likeness._largest_embedding / embed_face_box)."""
+    faces = app.get(bgr)
+    if faces:
+        f = max(faces, key=lambda x: (x.bbox[2] - x.bbox[0]) * (x.bbox[3] - x.bbox[1]))
+        x1, y1, x2, y2 = (int(v) for v in f.bbox)
+        h, w = bgr.shape[:2]
+        return np.asarray(f.normed_embedding, np.float32), (max(0, x1), max(0, y1), min(w, x2), min(h, y2))
+    for pad in (0.25, 0.5):
+        h, w = bgr.shape[:2]
+        faces = app.get(cv2.copyMakeBorder(bgr, int(h * pad), int(h * pad), int(w * pad), int(w * pad), 1))
+        if faces:
+            f = max(faces, key=lambda x: (x.bbox[2] - x.bbox[0]) * (x.bbox[3] - x.bbox[1]))
+            return np.asarray(f.normed_embedding, np.float32), None
+    return None, None
+
+
+@pytest.mark.parametrize("answers", [
+    [[_face([5, 5, 30, 40], emb=[1, 0, 0]), _face([-4, 10, 70, 90], emb=[0, 0.6, 0.8])]],   # the largest, clamped box
+    [[], [], [_face([10, 10, 50, 50], emb=[0, 1, 0])]],                     # found on the 50% padded retry: no box
+    [[], [], []],                                                           # no face at all
+])
+def test_arcface_look_match_gives_the_same_embedding_as_before(monkeypatch, fake_cv2, answers):
+    import copy
+    monkeypatch.setattr(F.InsightFaceBackend, "available", staticmethod(lambda: True))
+    bgr = np.random.default_rng(0).integers(0, 255, (64, 48, 3), dtype=np.uint8)
+    old_app, new_app = _App(*copy.deepcopy(answers)), _App(*copy.deepcopy(answers))
+    want = _old_arcface(old_app, bgr, fake_cv2)
+    monkeypatch.setitem(F.InsightFaceBackend._shared, ("detection", "recognition"), new_app)
+    got = F.FaceEmbedder(settings={}).embed_bgr(bgr)
+    assert old_app.shapes == new_app.shapes                                 # the same passes, the same padding
+    assert (got[1], None if got[0] is None else got[0].tolist()) == (want[1], None if want[0] is None else
+                                                                      want[0].tolist())
+
+
+def test_pil_to_bgr_is_opencvs_channel_swap():
+    rgb = np.random.default_rng(1).integers(0, 255, (5, 7, 3), dtype=np.uint8)
+    rgba = np.concatenate([rgb, np.full((5, 7, 1), 9, np.uint8)], axis=-1)
+    assert np.array_equal(F._pil_to_bgr(Image.fromarray(rgb)), rgb[..., ::-1])
+    assert np.array_equal(F._pil_to_bgr(Image.fromarray(rgba, "RGBA")), rgb[..., ::-1])
+    g = F._pil_to_bgr(Image.fromarray(rgb[..., 0]))
+    assert g.shape == (5, 7, 3) and all(np.array_equal(g[..., i], rgb[..., 0]) for i in range(3))
+    try:
+        import cv2
+    except ImportError:
+        return
+    assert np.array_equal(F._pil_to_bgr(Image.fromarray(rgb)), cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR))
+    assert np.array_equal(F._pil_to_bgr(Image.fromarray(rgba, "RGBA")), cv2.cvtColor(rgba, cv2.COLOR_RGBA2BGR))
+
+
+def test_prep_face_crops_with_the_defaults(tmp_path, monkeypatch):
+    """A real Face close-ups only run on a fake InsightFace: the crop is the old crop of the old box, and the Output
+    Log says nothing new (no face finder line unless it was changed)."""
+    from fizgig.dataset import prep
+    monkeypatch.setitem(F.InsightFaceBackend._shared, ("detection", "genderage"),
+                        _App([_face([20.6, 10.2, 60.9, 58.7], 0, 0.8)]))
+    monkeypatch.setattr(F.InsightFaceBackend, "available", staticmethod(lambda: True))
+    pic = np.random.default_rng(2).integers(0, 255, (100, 120, 3), dtype=np.uint8)
+    Image.fromarray(pic).save(tmp_path / "a.png")
+    log = []
+    prep.Prep(log.append, F.FaceDetector(settings={})).run("Face Crop Only", str(tmp_path), 1.0, "Largest Face",
+                                                          20.0, False)
+    text = "".join(log)
+    assert "Face finder" not in text and "[face: female]" in text
+    old = F.crop_to_face(Image.fromarray(pic), F.FaceInfo((20, 10, 60, 58), "female", 0.8, 40 * 48, (40, 34)), 20.0)
+    assert np.array_equal(np.asarray(Image.open(tmp_path / "a.png")), np.asarray(old))
 
 
 def _fi(x1, y1, x2, y2, gender="unknown", src="yolo"):
@@ -406,6 +569,8 @@ def test_look_match_explicit_settings_bypass_the_probe(dataset):
                                log=None).identity == "dinov2"
     assert F.decide_look_match(paths, {"face_detector": "insightface", "face_identity": "auto"}, detector=det,
                                log=None).identity == "arcface"
+    d = F.decide_look_match(paths, {}, detector=det, log=None)              # the defaults: ArcFace, no probe
+    assert (d.identity, d.kind) == ("arcface", "explicit")
     assert det.calls == 0
 
 

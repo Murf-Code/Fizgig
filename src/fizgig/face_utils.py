@@ -2,10 +2,13 @@
 Face finding and identity embedding for Fizgig
 ==============================================
 
-Two pluggable parts, both CPU-only (they never compete with the DiT for VRAM) and lazily loaded:
+Two pluggable parts, both CPU-only (they never compete with the DiT for VRAM) and lazily loaded. The defaults are
+InsightFace + ArcFace, exactly what Fizgig always used: the YOLO, Auto, DINOv2 and CLIP choices are opt-in, picked on
+the Image Prep tab ("Furry, anime and drawn characters"). docs/FACE_BACKENDS.md has the details.
 
 FACE DETECTOR (FaceDetector) - where the faces are. prefs.json "face_detector":
-  * "insightface" - InsightFace buffalo_l (RetinaFace + gender/age). Human photos; the only one with gender.
+  * "insightface" - InsightFace buffalo_l (RetinaFace + gender/age). Human photos; the only one with gender. The
+                    default, and exactly the detection Fizgig always ran (one pass, boxes as InsightFace gives them).
   * "yolo"        - a YOLO face model run through onnxruntime (no ultralytics needed): an ADetailer-style .onnx
                     the user picks in "face_yolo_model" (recommended for furry datasets: Fdetailer v1.1, converted
                     once with src/fizgig/scripts/convert_yolo_to_onnx.py - see docs/FACE_BACKENDS.md). Blank =
@@ -19,6 +22,7 @@ FACE DETECTOR (FaceDetector) - where the faces are. prefs.json "face_detector":
 IDENTITY EMBEDDER (FaceEmbedder) - how alike two faces are (Look Filter, likeness scoring, Repair Studio metrics,
 Block Profiler). prefs.json "face_identity":
   * "arcface" - InsightFace's ArcFace (512-d). Human faces only (it needs InsightFace's own detection/landmarks).
+                The default.
   * "dinov2"  - DINOv2-base (facebook/dinov2-base, Apache-2.0) on the detector's face crop. Any face: furry, anime,
                 human. Needs only transformers (already a dependency).
   * "clip"    - CLIP ViT-B/16 image features on the crop (optional alternative).
@@ -54,11 +58,11 @@ PREFS_FILE = user_data.PREFS_FILE
 # ---------------------------------------------------------------------------------------------------------------
 DETECTORS = ("auto", "insightface", "yolo")
 IDENTITIES = ("auto", "arcface", "dinov2", "clip")
-FACE_SETTING_DEFAULTS = {
-    "face_detector": "auto",
+FACE_SETTING_DEFAULTS = {          # what people get today: InsightFace + ArcFace; the rest is opt-in
+    "face_detector": "insightface",
     "face_yolo_model": "",          # path to a YOLO .onnx; blank = DEFAULT_YOLO (auto-download)
     "face_yolo_conf": 0.35,         # box confidence; Fdetailer's true faces score ~0.6-0.9, misfires < 0.4
-    "face_identity": "auto",
+    "face_identity": "arcface",
     "face_auto_threshold": 0.5,     # Auto look match: share of probed images with a human face needed for ArcFace
 }
 AUTO_HUMAN_SCORE = 0.6     # an InsightFace face counts as human at this confidence (fursuits / art rarely reach it)
@@ -97,9 +101,9 @@ def load_face_settings(prefs: Optional[dict] = None) -> dict:
     out["face_detector"] = str(out["face_detector"]).lower()
     out["face_identity"] = str(out["face_identity"]).lower()
     if out["face_detector"] not in DETECTORS:
-        out["face_detector"] = "auto"
+        out["face_detector"] = FACE_SETTING_DEFAULTS["face_detector"]
     if out["face_identity"] not in IDENTITIES:
-        out["face_identity"] = "auto"
+        out["face_identity"] = FACE_SETTING_DEFAULTS["face_identity"]
     try:
         out["face_yolo_conf"] = float(out["face_yolo_conf"])
     except (TypeError, ValueError):
@@ -244,16 +248,26 @@ class InsightFaceBackend:
                 return faces, (px, py)
         return [], (0, 0)
 
-    def detect_bgr(self, bgr) -> List[FaceInfo]:
-        faces, (px, py) = self.raw_faces(bgr)
+    def detect_bgr(self, bgr, pad_retry: bool = False) -> List[FaceInfo]:
+        """FaceInfo for every face. pad_retry=False (the InsightFace finder) is the detection Fizgig always ran: one
+        pass, the boxes as InsightFace gives them (truncated to ints, not clamped), gender_score = the detection
+        score. pad_retry=True (Auto) also tries a padded copy when nothing is found, its boxes mapped back and
+        clamped to the picture."""
+        if pad_retry:
+            faces, (px, py) = self.raw_faces(bgr)
+        else:
+            faces, (px, py) = self.app.get(bgr), (0, 0)
         h, w = bgr.shape[:2]
         out = []
         for f in faces:
-            x1, y1, x2, y2 = (float(v) for v in f.bbox)
-            x1, y1, x2, y2 = max(0, x1 - px), max(0, y1 - py), min(w, x2 - px), min(h, y2 - py)
+            x1, y1, x2, y2 = (int(v) for v in np.asarray(f.bbox).astype(int))
+            if (px, py) != (0, 0):
+                x1, y1, x2, y2 = max(0, x1 - px), max(0, y1 - py), min(w, x2 - px), min(h, y2 - py)
             g = getattr(f, "gender", None)
+            score = float(getattr(f, "det_score", 1.0))
             gender = "unknown" if g is None else ("male" if int(g) == 1 else "female")
-            out.append(_face_info(x1, y1, x2, y2, gender, float(getattr(f, "det_score", 1.0)), self.name))
+            info = _face_info(x1, y1, x2, y2, gender, score, self.name)
+            out.append(info if g is not None else info._replace(gender_score=0.0))
         return out
 
 
@@ -475,10 +489,10 @@ class FaceDetector:
 
     def describe(self) -> str:
         if self.backend_name == "insightface":
-            return "InsightFace (buffalo_l)"
+            return "InsightFace (people)"
         if self.backend_name == "yolo":
-            return f"YOLO face model: {self._yolo.label}"
-        return f"Auto: InsightFace + YOLO ({self._yolo.label}), boxes merged"
+            return f"YOLO face model ({self._yolo.label})"
+        return f"Both: InsightFace and a YOLO face model ({self._yolo.label})"
 
     @property
     def has_gender(self) -> bool:
@@ -521,11 +535,11 @@ class FaceDetector:
             return self._yolo.detect_bgr(bgr)
         if self.backend_name == "insightface":
             self.last_source = "insightface"
-            return self._insight.detect_bgr(bgr)
+            return self._insight.detect_bgr(bgr)          # one pass, as Fizgig always did
         # auto: both on every image, merged (InsightFace keeps human faces + gender, YOLO adds the rest)
         insight, yolo = [], []
         if self._insight.available():
-            insight = self._insight.detect_bgr(bgr)
+            insight = self._insight.detect_bgr(bgr, pad_retry=True)
         if self._yolo.available() and not self._yolo_broken:
             try:
                 yolo = self._yolo.detect_bgr(bgr)
@@ -550,11 +564,19 @@ class FaceDetector:
                 hit = _DETECT_CACHE.get(key)
             if hit is not None:
                 return list(hit)
-        try:
-            pil = _load_pil(image_path)
-        except Exception as e:
-            raise ValueError(f"Could not load image: {image_path} ({e})")
-        faces = self.detect_bgr(_pil_to_bgr(pil))
+        if self.backend_name == "insightface":
+            # read as Fizgig always read it for InsightFace (OpenCV, which also applies a JPEG's EXIF rotation), so
+            # Test face detection shows exactly what it showed before
+            import cv2
+            bgr = cv2.imread(image_path)
+            if bgr is None:
+                raise ValueError(f"Could not load image: {image_path}")
+        else:
+            try:
+                bgr = _pil_to_bgr(_load_pil(image_path))
+            except Exception as e:
+                raise ValueError(f"Could not load image: {image_path} ({e})")
+        faces = self.detect_bgr(bgr)
         if key is not None:
             with _DETECT_LOCK:
                 _DETECT_CACHE[key] = list(faces)
@@ -655,7 +677,9 @@ def draw_face_boxes(
             color, width = (255, 255, 0), 2
         draw.rectangle([x1, y1, x2, y2], outline=color, width=width)
         gender_char = 'M' if face.gender == 'male' else 'F' if face.gender == 'female' else '?'
-        label = f"{gender_char} {face.score:.2f} ({face.area:,}px)"
+        label = f"{gender_char} ({face.area:,}px)"
+        if face.source != "insightface":        # a YOLO face: its score instead of a gender to go by
+            label = f"{gender_char} {face.score:.2f} ({face.area:,}px)"
         label_y = y1 - 20 if y1 > 20 else y2 + 5
         bbox = draw.textbbox((x1, label_y), label, font=font)
         draw.rectangle(bbox, fill=(0, 0, 0, 180))
@@ -915,6 +939,12 @@ class FaceEmbedder:
         self._ensure_loaded()
         with self._lock:
             return self._impl.embed_bgr(_pil_to_bgr(pil.convert("RGB")))
+
+    def embed_bgr(self, bgr):
+        """(embedding, bbox) of the largest face in a BGR array, as embed_pil."""
+        self._ensure_loaded()
+        with self._lock:
+            return self._impl.embed_bgr(bgr)
 
     def embed_image(self, pil: Image.Image) -> Optional[np.ndarray]:
         return self.embed_pil(pil)[0]
