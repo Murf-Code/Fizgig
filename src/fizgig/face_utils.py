@@ -704,8 +704,7 @@ IDENTITY_THRESHOLDS = {
     "dinov2": {"match": 0.62, "borderline": 0.48, "floor": 0.40},
     "clip": {"match": 0.86, "borderline": 0.80, "floor": 0.75},
 }
-IDENTITY_LABELS = {"arcface": "ArcFace (InsightFace)", "dinov2": "DINOv2-base (face crop)",
-                   "clip": "CLIP ViT-B/16 (face crop)"}
+IDENTITY_LABELS = {"arcface": "ArcFace (people)", "dinov2": "DINOv2 (any face)", "clip": "CLIP (any face)"}
 CROP_MARGIN = 0.25      # the crop an embedder sees: the face box grown 25% each side (ears, muzzle, markings)
 
 
@@ -1044,17 +1043,15 @@ def decide_look_match(paths, settings: Optional[dict] = None, *, max_n: int = AU
     if not InsightFaceBackend.available():
         kind, ident, why = "furry", "dinov2", "InsightFace isn't installed"
     elif human / n >= thr and yolo_only / n < AUTO_MIXED_SHARE:
-        kind, ident, why = "human", "arcface", "human set"
+        kind, ident, why = "human", "arcface", "a set of people"
     elif human / n >= thr or (human / n >= AUTO_MIXED_SHARE and yolo_only / n >= AUTO_MIXED_SHARE):
-        kind, ident, why = "mixed", "dinov2", "mixed human + furry/anime set - one embedder for all"
+        kind, ident, why = "mixed", "dinov2", "people and characters mixed, so one look match for all"
     elif yolo_only / n >= AUTO_MIXED_SHARE:
-        kind, ident, why = "furry", "dinov2", "furry/anime set"
+        kind, ident, why = "furry", "dinov2", "furry, anime or drawn characters"
     else:
-        kind, ident, why = "furry", "dinov2", "too few human faces for ArcFace"
-    model = os.path.basename(st["face_yolo_model"]) if st["face_yolo_model"] else DEFAULT_YOLO["label"]
-    msg = (f"[faces] Auto look match: InsightFace found human faces in {human}/{probed} images, YOLO-only faces in "
-           f"{yolo_only}/{probed} -> {why}: {IDENTITY_LABELS[ident]}"
-           + (f" on InsightFace + YOLO ({model}) crops" if ident != "arcface" else ""))
+        kind, ident, why = "furry", "dinov2", "too few people's faces"
+    msg = (f"[faces] Look match for this set: {IDENTITY_LABELS[ident]}, {why} (a person's face in {human}/{probed} "
+           f"pictures looked at, only a character's face in {yolo_only}/{probed})")
     d = LookMatchDecision(ident, kind, human, yolo_only, probed, dict(st, face_identity=ident), msg)
     with _DECISION_LOCK:
         _DECISIONS[key] = d

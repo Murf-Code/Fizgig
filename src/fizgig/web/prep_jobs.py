@@ -59,10 +59,11 @@ def session_embedder(paths, log=None):
     return face_embedder(d.settings), ("" if d.kind == "explicit" else d.message)   # only Auto's choice is news
 
 
-FACE_DETECTOR_LABELS = {"auto": "Auto (InsightFace + YOLO)", "insightface": "InsightFace (people)",
-                        "yolo": "YOLO model (furry / anime)"}
-FACE_IDENTITY_LABELS = {"auto": "Auto (decided per dataset)", "arcface": "ArcFace (people)",
-                        "dinov2": "DINOv2 (any face)", "clip": "CLIP (any face)"}
+FACE_DETECTOR_LABELS = {"insightface": "People (InsightFace, the default)",
+                        "yolo": "Furry, anime and drawn (YOLO model)",
+                        "auto": "Both, for sets with people and characters"}
+FACE_IDENTITY_LABELS = {"arcface": "People (ArcFace, the default)", "dinov2": "Any face (DINOv2)",
+                        "clip": "Any face (CLIP)", "auto": "Decide for each set of pictures"}
 
 
 def face_settings():
@@ -78,8 +79,10 @@ def face_settings():
     det = F.FaceDetector(settings=st)
     return {"detector": st["face_detector"], "identity": st["face_identity"],
             "yolo_model": str(saved.get("face_yolo_model") or ""), "auto_threshold": st["face_auto_threshold"],
-            "detectors": [[k, FACE_DETECTOR_LABELS[k]] for k in F.DETECTORS],
-            "identities": [[k, FACE_IDENTITY_LABELS[k]] for k in F.IDENTITIES],
+            "detectors": [[k, FACE_DETECTOR_LABELS[k]] for k in ("insightface", "yolo", "auto")],
+            "identities": [[k, FACE_IDENTITY_LABELS[k]] for k in ("arcface", "dinov2", "clip", "auto")],
+            "defaults": {"detector": F.FACE_SETTING_DEFAULTS["face_detector"],
+                         "identity": F.FACE_SETTING_DEFAULTS["face_identity"]},
             "finder": det.describe(), "has_gender": det.has_gender,
             "insightface": F.is_insightface_available(), "local_model": F.LOCAL_YOLO_DEFAULT}
 
@@ -101,8 +104,8 @@ def save_face_settings(b):
         m = str(b["yolo_model"] or "").strip().strip('"')
         full = m if not m or os.path.isabs(m) else os.path.join(F._HERE, m)
         if m and not (full.lower().endswith(".onnx") and os.path.isfile(full)):
-            raise ValueError("The YOLO model must be an .onnx file on the Fizgig computer (convert a .pt with "
-                             "src/fizgig/scripts/convert_yolo_to_onnx.py).")
+            raise ValueError("Pick an .onnx face model on the Fizgig computer. docs/FACE_BACKENDS.md explains how to "
+                             "make one from a .pt file.")
         ch["face_yolo_model"] = m
     if "auto_threshold" in b:
         try:

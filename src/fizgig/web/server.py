@@ -1508,7 +1508,7 @@ def _stop():
 UPLOAD_EXTS = (MEDIA - {".gif", ".webm"}) | {".txt", ".caption", ".json", ".zip"}
 UPLOAD_DEFAULT = os.path.join(BASE_DIR, "training_data")     # when Preferences has no input folder set
 UPLOAD_FILES = os.path.join(BASE_DIR, "uploads")              # single files: a context LoRA, a test photo
-UPLOAD_FILE_EXTS = (UPLOAD_EXTS - {".zip"}) | {".safetensors"}
+UPLOAD_FILE_EXTS = (UPLOAD_EXTS - {".zip"}) | {".safetensors", ".onnx"}      # .onnx: a YOLO face model (Image Prep)
 
 
 def uploads_root() -> str:
@@ -1902,7 +1902,7 @@ def _upload_target(folder, name, single):
     ext = os.path.splitext(name)[1].lower()
     if single:
         if ext not in UPLOAD_FILE_EXTS:
-            raise ValueError(f"{name}: not a LoRA (.safetensors), picture, clip or song.")
+            raise ValueError(f"{name}: not a LoRA (.safetensors), face model (.onnx), picture, clip or song.")
         dest = UPLOAD_FILES
     else:
         folder = _upload_name(folder, "Folder name")

@@ -591,7 +591,7 @@ def test_look_match_threshold_knob(dataset, monkeypatch):
     assert F.decide_look_match(paths, AUTO, detector=_ProbeDetector(), log=None).identity == "arcface"
     monkeypatch.setenv("FIZGIG_FACE_AUTO_THRESHOLD", "0.8")
     d = F.decide_look_match(paths, AUTO, detector=_ProbeDetector(), log=None)
-    assert d.identity == "dinov2" and "too few human faces" in d.message
+    assert d.identity == "dinov2" and "too few people's faces" in d.message
 
 
 def test_probe_sample_spreads_and_caps(tmp_path):
@@ -730,7 +730,10 @@ def test_web_face_settings_validate_and_report(tmp_path, monkeypatch):
     (tmp_path / "prefs.json").write_text(json.dumps({"face_detector": "yolo", "face_yolo_model": "m.onnx"}))
     f = prep_jobs.face_settings()
     assert f["detector"] == "yolo" and f["yolo_model"] == "m.onnx" and f["has_gender"] is False
-    assert [k for k, _ in f["detectors"]] == list(F.DETECTORS) and [k for k, _ in f["identities"]] == list(F.IDENTITIES)
+    assert sorted(k for k, _ in f["detectors"]) == sorted(F.DETECTORS)
+    assert sorted(k for k, _ in f["identities"]) == sorted(F.IDENTITIES)
+    assert f["detectors"][0][0] == "insightface" and f["identities"][0][0] == "arcface"      # the defaults first
+    assert f["defaults"] == {"detector": "insightface", "identity": "arcface"}
 
 
 def test_web_look_filter_uses_one_embedder_per_session(tmp_path, monkeypatch):

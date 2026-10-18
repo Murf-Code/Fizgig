@@ -3107,8 +3107,22 @@ async function prepRun() {
   } catch (e) { $("prepState").textContent = e.message; }
 }
 
-// the face finder / look match (fizgig/face_utils.py, prefs.json face_*): saved as soon as they change
-function faceSettingsShow(f) {
+// Image Prep's "Furry, anime and drawn characters" (fizgig/face_utils.py, prefs.json face_*): saved as soon as they
+// change. InsightFace + ArcFace are the defaults; the section opens by itself when something else is chosen.
+const FACE_HINTS = {
+  insightface: "For people. It can tell men from women, for Largest Male / Female Face. It doesn't see furry, anime " +
+    "or drawn faces.",
+  yolo: "For furry, anime or drawn characters, and fursuits, pick this. It can't tell men from women, so Largest " +
+    "Male / Female Face use the largest face.",
+  auto: "For a set with both people and characters in it. Both finders look at every picture, so it's a little slower."};
+const LOOK_HINTS = {
+  arcface: "For people's faces. For furry, anime or drawn characters, pick Any face (DINOv2).",
+  dinov2: "For any face, furry, anime and drawn ones included. Its scores run higher than the people setting's, and " +
+    "the colours follow.",
+  clip: "Another way to compare any face. Try it if Any face (DINOv2) gets your character wrong.",
+  auto: "Fizgig looks at some of the pictures each time it scores: the people setting for a set of people, Any face " +
+    "(DINOv2) for anything else."};
+function faceSettingsShow(f, msg) {
   if (!f) return;
   S.prep.face = f;
   for (const [id, list, v] of [["prepDetector", f.detectors, f.detector], ["prepIdentity", f.identities, f.identity]]) {
@@ -3116,22 +3130,44 @@ function faceSettingsShow(f) {
     for (const [k, label] of list) $(id).append(el("option", {value: k, text: label}));
     $(id).value = v;
   }
-  $("prepYolo").value = f.yolo_model;
+  if (document.activeElement !== $("prepYolo")) $("prepYolo").value = f.yolo_model;
   $("prepYoloRow").style.display = f.detector === "insightface" ? "none" : "";
-  const hints = {
-    auto: "Both finders on every picture, boxes merged: InsightFace for people (and their gender), the YOLO model for " +
-      "furry, anime and drawn faces. About 0.3 s a picture on the CPU.",
-    insightface: "People only: furry, anime and drawn faces aren't found.",
-    yolo: "Furry, anime and drawn faces (and fursuits). No gender: Largest Male / Female Face use the largest face."};
-  $("prepFaceHint").textContent = `${hints[f.detector] || ""} Now: ${f.finder}. ` +
-    (f.detector !== "insightface" && !f.yolo_model ? `Blank YOLO model = ${f.local_model} if it's there (Fdetailer, ` +
-      "converted with convert_yolo_to_onnx.py - see docs/FACE_BACKENDS.md), else deepghs' anime head detector, " +
-      "downloaded on first use. " : "") +
-    "Look match Auto: ArcFace for a set of people, DINOv2 for a furry, anime or mixed one - decided per dataset.";
+  $("prepDetectorHint").textContent = FACE_HINTS[f.detector] || "";
+  $("prepIdentityHint").textContent = f.identity === "auto" && f.detector !== "auto" ?
+    `With this face finder that means ${f.detector === "yolo" ? "Any face (DINOv2)" : "People (ArcFace)"}.` :
+    LOOK_HINTS[f.identity] || "";
+  $("prepYoloHint").textContent = `Blank: Fdetailer if it's saved as ${f.local_model}, otherwise a free anime head ` +
+    "finder that downloads the first time it's used. docs/FACE_BACKENDS.md explains how to get Fdetailer.";
+  $("prepFaceMsg").textContent = msg || "";
+  const custom = f.defaults && (f.detector !== f.defaults.detector || f.identity !== f.defaults.identity);
+  if (custom) $("prepChars").open = true;              // never hide a choice that is changing what you get
 }
-async function faceSettingsSave(changes) {
-  try { faceSettingsShow(await api("/api/prep/face_settings", changes)); }
-  catch (e) { $("prepFaceHint").textContent = e.message; }
+async function faceSettingsSave(changes, msg) {
+  try { faceSettingsShow(await api("/api/prep/face_settings", changes), msg); }
+  catch (e) { $("prepFaceMsg").textContent = e.message; }
+}
+function faceSettingsWire() {
+  $("prepDetector").addEventListener("change", () => {
+    const det = $("prepDetector").value, f = S.prep.face || {};
+    // a YOLO face finder with the people-only look match would score nothing: the look match follows, said aloud
+    if (det !== "insightface" && f.identity === "arcface") {
+      const ident = det === "yolo" ? "dinov2" : "auto";
+      return faceSettingsSave({detector: det, identity: ident}, `Look match changed to ${ident === "dinov2" ?
+        "Any face (DINOv2)" : "Decide for each set of pictures"}, so characters' faces get scored too.`);
+    }
+    faceSettingsSave({detector: det});
+  });
+  $("prepIdentity").addEventListener("change", () => faceSettingsSave({identity: $("prepIdentity").value}));
+  // the YOLO face model: the standard path row (type, Choose… on the Fizgig machine, or Upload… from this device)
+  const input = $("prepYolo"), set = (p) => faceSettingsSave({yolo_model: p});
+  input.addEventListener("change", () => set(input.value.trim()));
+  const row = $("prepYoloPick");
+  row.append(el("button", {class: "btn", text: "Choose…", title: "Pick from what is on the machine running Fizgig",
+    onclick: () => pick(input.value || ((S.prep.face || {}).local_model || "").replace(/[\\/][^\\/]*$/, ""), false,
+      (p) => { input.value = p; set(p); })}));
+  const up = uploadButton({kind: "path", key: "FACE_YOLO_MODEL", accept: ".onnx"}, input, set);
+  row.append(up.btn);
+  $("prepYoloRow").append(up.status);
 }
 
 function prepTest() {
@@ -3301,9 +3337,7 @@ function wirePrep() {
   for (const id of ["prepMp", "prepFace", "prepPadding"]) $(id).addEventListener("change", () => { prepSummary(); savePrepSoon(); });
   $("prepRun").addEventListener("click", prepRun);
   $("prepTest").addEventListener("click", prepTest);
-  $("prepDetector").addEventListener("change", () => faceSettingsSave({detector: $("prepDetector").value}));
-  $("prepIdentity").addEventListener("change", () => faceSettingsSave({identity: $("prepIdentity").value}));
-  $("prepYoloSave").addEventListener("click", () => faceSettingsSave({yolo_model: $("prepYolo").value}));
+  faceSettingsWire();
   $("lookPick").addEventListener("click", lookPickOpen);
   $("lookScan").addEventListener("click", lookScan);
   $("lookSuggest").addEventListener("click", lookSuggest);
@@ -6564,7 +6598,7 @@ function uploadButton(r, input, set) {
   const status = el("div", {class: "field-hint upload-status"});
   const say = (t, bad) => { status.textContent = t; status.classList.toggle("bad", !!bad); };
   const picker = r.kind === "folder" ? el("input", {type: "file", webkitdirectory: true, hidden: true}) :
-    el("input", {type: "file", hidden: true, accept: ".safetensors,image/*,.mp4,audio/*,.m4a"});
+    el("input", {type: "file", hidden: true, accept: r.accept || ".safetensors,image/*,.mp4,audio/*,.m4a"});
   picker.addEventListener("change", async () => {
     const files = [...picker.files];
     picker.value = "";
