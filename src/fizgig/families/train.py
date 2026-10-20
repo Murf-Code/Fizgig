@@ -38,6 +38,7 @@ from fizgig.families import quant  # noqa: E402
 from fizgig.families.lora import FamilyLoRA  # noqa: E402
 from fizgig.families.registry import get as get_family  # noqa: E402
 from fizgig.training.adaptive_lr import AdaptiveLR  # noqa: E402
+from fizgig.training.resume_lr import resume_lr  # noqa: E402
 from fizgig.training.metadata import (build_metadata, latest_sample_image, refresh_checkpoint_thumbnail,  # noqa: E402
                                       resolve_title, sample_for_epoch, thumbnail_data_uri)
 from fizgig.training.train_utils import LossRecorder, prune_state_dirs, validate_output_name  # noqa: E402
@@ -194,42 +195,6 @@ def _load_state(state_dir, net, optimizer, device, arch, untagged_own=False, dri
         if "cuda" in rng and torch.cuda.is_available():
             torch.cuda.set_rng_state_all(rng["cuda"])
     return int(meta.get("epoch", 0)), int(meta.get("global_step", 0)), meta
-
-
-def _resume_lr(optimizer, fresh, meta, box_lr, adaptive=None):
-    """A resume at a Learning Rate other than the paused run's: optimizer.load_state_dict brings back the saved
-    rates, so the form's new one would be ignored. fresh is each group's rate as this run built it (before the load).
-    Each group's start rate ('initial_lr', which the LR scheduler counts from) becomes the new one, and a run with no
-    scheduler goes on at old rate x new/old. With adaptive LR the saved rate is kept, moved inside a new Min/Max.
-    The same rate as before changes nothing. Returns True if the rate was changed."""
-    groups = optimizer.param_groups
-    if len(groups) != len(fresh):
-        return False
-    if adaptive is not None:
-        moved = False
-        for g in groups:
-            lr = min(max(float(g["lr"]), adaptive.min_lr), adaptive.max_lr)
-            if lr != g["lr"]:
-                logger.info(f"[resume] learning rate {float(g['lr']):.3e} -> {lr:.3e}: inside the new adaptive LR "
-                            f"Min/Max ({adaptive.min_lr:.3e} to {adaptive.max_lr:.3e})")
-                g["lr"], moved = lr, True
-        return moved
-    if all("initial_lr" in g for g in groups):
-        old = [float(g["initial_lr"]) for g in groups]
-    elif meta.get("learning_rate") is not None and box_lr:
-        old = [float(f) * float(meta["learning_rate"]) / float(box_lr) for f in fresh]
-    else:
-        return False                    # nothing says what the paused run started at
-    if all(math.isclose(o, float(f), rel_tol=1e-9, abs_tol=0.0) for o, f in zip(old, fresh)):
-        return False
-    for g, o, f in zip(groups, old, fresh):
-        if "initial_lr" in g:
-            g["initial_lr"] = float(f)
-        g["lr"] = float(g["lr"]) * float(f) / o if o > 0 else float(f)
-    logger.info(f"[resume] learning rate changed: {old[0]:.3e} -> {float(fresh[0]):.3e} (the Learning Rate box); "
-                f"training goes on at the new rate" + (", the LR schedule from where it paused"
-                                                      if "initial_lr" in groups[0] else ""))
-    return True
 
 
 def _preview_vram(tag, reset_peak=False):
@@ -1415,7 +1380,7 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
         if adaptive:
             adaptive.load_state_dict(meta.get("adaptive_lr_state"))
         if optimizer is not None and meta.get("own_state") and not owns_its_rate(optimizer):
-            _resume_lr(optimizer, _fresh_lrs, meta, box_learning_rate, adaptive)
+            resume_lr(optimizer, _fresh_lrs, meta, box_learning_rate, adaptive)
         if ema is not None and meta["own_state"] and os.path.exists(os.path.join(resume_state_dir, "ema.pt")):
             _esd = torch.load(os.path.join(resume_state_dir, "ema.pt"), map_location="cpu")
             if meta.get("legacy_perm"):     # an older trainer's order, as the optimizer's

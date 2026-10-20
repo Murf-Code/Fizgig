@@ -1,13 +1,21 @@
 """A resume at another Learning Rate: the saved optimizer state brings back the paused run's rates, so the trainer
 moves them to the form's new one (and logs it); the same rate as before leaves the restored state exactly as it was."""
 import logging
+import math
 
 import pytest
 
 torch = pytest.importorskip("torch")
-pytestmark = pytest.mark.filterwarnings("ignore:Detected call of `lr_scheduler.step\(\)` before")
-from fizgig.families import train as T  # noqa: E402
+pytestmark = pytest.mark.filterwarnings(r"ignore:Detected call of `lr_scheduler.step\(\)` before")
+from fizgig.training.resume_lr import resume_lr  # noqa: E402
 from fizgig.training.adaptive_lr import AdaptiveLR  # noqa: E402
+
+
+def _sched(opt, kind, total):
+    """The trainer's LambdaLR (families/train.py _step_scheduler, no warm-up): cosine or constant."""
+    def f(s):
+        return 0.5 * (1 + math.cos(math.pi * min(1.0, s / total))) if kind == "cosine" else 1.0
+    return torch.optim.lr_scheduler.LambdaLR(opt, f)
 
 
 def _groups(lr):
@@ -18,7 +26,7 @@ def _groups(lr):
 def _paused(lr, kind="cosine", steps=7, total=20):
     """A run at lr with a scheduler, stepped `steps` times, as its optimizer.pt would hold it."""
     opt = torch.optim.AdamW(_groups(lr))
-    sch = T._step_scheduler(opt, kind, 0, total) if kind else None
+    sch = _sched(opt, kind, total) if kind else None
     for _ in range(steps):
         opt.zero_grad()
         sum(p.sum() for g in opt.param_groups for p in g["params"]).backward()
@@ -34,9 +42,9 @@ def _resume(sd, lr, kind="cosine", steps=7, total=20, meta=None, adaptive=None):
     opt = torch.optim.AdamW(_groups(lr))
     fresh = [g["lr"] for g in opt.param_groups]
     opt.load_state_dict(sd)
-    changed = T._resume_lr(opt, fresh, meta or {"learning_rate": None}, lr, adaptive)
+    changed = resume_lr(opt, fresh, meta or {"learning_rate": None}, lr, adaptive)
     if kind:
-        sch = T._step_scheduler(opt, kind, 0, total)
+        sch = _sched(opt, kind, total)
         for _ in range(steps):
             sch.step()
     return opt, changed
@@ -50,7 +58,7 @@ def test_same_rate_is_untouched(kind, caplog):
     ref, _ = _resume(sd, 1e-4, kind)
     plain = torch.optim.AdamW(_groups(1e-4))           # what a resume did before this change
     plain.load_state_dict(sd)
-    sch = T._step_scheduler(plain, kind, 0, 20)
+    sch = _sched(plain, kind, 20)
     for _ in range(7):
         sch.step()
     assert not changed and "learning rate changed" not in caplog.text
@@ -65,7 +73,7 @@ def test_higher_rate_takes_over(kind, caplog):
         opt, changed = _resume(sd, 3e-4, kind)
     assert changed and "learning rate changed: 1.000e-04 -> 3.000e-04" in caplog.text
     fresh_run = torch.optim.AdamW(_groups(3e-4))       # a run at 3e-4 from the start, at the same point
-    sch = T._step_scheduler(fresh_run, kind, 0, 20)
+    sch = _sched(fresh_run, kind, 20)
     for _ in range(7):
         sch.step()
     for g, w in zip(opt.param_groups, fresh_run.param_groups):
