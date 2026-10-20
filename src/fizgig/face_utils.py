@@ -3,8 +3,8 @@ Face finding and identity embedding for Fizgig
 ==============================================
 
 Two pluggable parts, both CPU-only (they never compete with the DiT for VRAM) and lazily loaded. The defaults are
-InsightFace + ArcFace, exactly what Fizgig always used: the YOLO, Auto, DINOv2 and CLIP choices are opt-in, picked on
-the Image Prep tab ("Furry, anime and drawn characters"). docs/FACE_BACKENDS.md has the details.
+InsightFace + ArcFace, exactly what Fizgig always used: the YOLO, Auto and DINOv2 choices are opt-in, picked on
+the Image Prep tab ("Anime/furry/drawn characters"). docs/FACE_BACKENDS.md has the details.
 
 FACE DETECTOR (FaceDetector) - where the faces are. prefs.json "face_detector":
   * "insightface" - InsightFace buffalo_l (RetinaFace + gender/age). Human photos; the only one with gender. The
@@ -23,9 +23,9 @@ IDENTITY EMBEDDER (FaceEmbedder) - how alike two faces are (Look Filter, likenes
 Block Profiler). prefs.json "face_identity":
   * "arcface" - InsightFace's ArcFace (512-d). Human faces only (it needs InsightFace's own detection/landmarks).
                 The default.
-  * "dinov2"  - DINOv2-base (facebook/dinov2-base, Apache-2.0) on the detector's face crop. Any face: furry, anime,
+  * "dinov2"  - DINOv2-base (facebook/dinov2-base, Apache-2.0) on the detector's face crop. Any face: anime, furry,
                 human. Needs only transformers (already a dependency).
-  * "clip"    - CLIP ViT-B/16 image features on the crop (optional alternative).
+  * "clip"    - removed (tested and dropped: DINOv2 separates characters better); a saved "clip" reads as "dinov2".
   * "auto"    - "yolo" -> DINOv2, "insightface" -> ArcFace. With the "auto" detector it is decided PER DATASET /
                 scoring session (decide_look_match): ArcFace only when InsightFace finds a human face in most of the
                 probed images and few images have only non-human (YOLO) faces; otherwise DINOv2 for the whole session.
@@ -57,7 +57,8 @@ PREFS_FILE = user_data.PREFS_FILE
 # Settings
 # ---------------------------------------------------------------------------------------------------------------
 DETECTORS = ("auto", "insightface", "yolo")
-IDENTITIES = ("auto", "arcface", "dinov2", "clip")
+IDENTITIES = ("auto", "arcface", "dinov2")
+IDENTITY_RENAMED = {"clip": "dinov2"}   # retired look matches -> what they read as now (old prefs / env)
 FACE_SETTING_DEFAULTS = {          # what people get today: InsightFace + ArcFace; the rest is opt-in
     "face_detector": "insightface",
     "face_yolo_model": "",          # path to a YOLO .onnx; blank = DEFAULT_YOLO (auto-download)
@@ -100,6 +101,7 @@ def load_face_settings(prefs: Optional[dict] = None) -> dict:
             out[k] = os.environ[env]
     out["face_detector"] = str(out["face_detector"]).lower()
     out["face_identity"] = str(out["face_identity"]).lower()
+    out["face_identity"] = IDENTITY_RENAMED.get(out["face_identity"], out["face_identity"])
     if out["face_detector"] not in DETECTORS:
         out["face_detector"] = FACE_SETTING_DEFAULTS["face_detector"]
     if out["face_identity"] not in IDENTITIES:
@@ -120,7 +122,8 @@ def load_face_settings(prefs: Optional[dict] = None) -> dict:
 
 def resolve_identity(settings: dict) -> str:
     """The concrete identity embedder for these settings ("auto" follows the detector)."""
-    ident = settings.get("face_identity", "auto")
+    ident = settings.get("face_identity", FACE_SETTING_DEFAULTS["face_identity"])
+    ident = IDENTITY_RENAMED.get(ident, ident)
     if ident != "auto":
         return ident
     return "dinov2" if settings.get("face_detector") == "yolo" else "arcface"
@@ -696,15 +699,14 @@ def draw_face_boxes(
 #   drift       below:            likely off-look / a different subject
 #   floor:      the Look Filter's outlier cut-off never goes below it (a different subject rarely clears it)
 # ArcFace: InsightFace's conventions (same person across varied photos 0.30-0.70 vs one baseline; a different
-# person rarely clears 0.25). DINOv2 / CLIP: calibrated on face/head crops of furry, anime and human images
+# person rarely clears 0.25). DINOv2: calibrated on face/head crops of anime, furry and human images
 # (docs/FACE_BACKENDS.md has the numbers) - provisional, the Look Filter's dataset-relative cut-off
 # (median - 1.5 IQR) does most of the work.
 IDENTITY_THRESHOLDS = {
     "arcface": {"match": 0.45, "borderline": 0.30, "floor": 0.25},
     "dinov2": {"match": 0.62, "borderline": 0.48, "floor": 0.40},
-    "clip": {"match": 0.86, "borderline": 0.80, "floor": 0.75},
 }
-IDENTITY_LABELS = {"arcface": "ArcFace (people)", "dinov2": "DINOv2 (any face)", "clip": "CLIP (any face)"}
+IDENTITY_LABELS = {"arcface": "ArcFace (people)", "dinov2": "DINOv2 (any face)"}
 CROP_MARGIN = 0.25      # the crop an embedder sees: the face box grown 25% each side (ears, muzzle, markings)
 
 
@@ -862,33 +864,12 @@ class _DinoV2(_CropEmbedder):
         return out.pooler_output[0].float().numpy()       # CLS token after the final layernorm
 
 
-class _Clip(_CropEmbedder):
-    name = "clip"
-    model_id = "openai/clip-vit-base-patch16"
-    revision = "57c216476eefef5ab752ec549e440a49ae4ae5f3"
-
-    def _load(self):
-        import torch
-        from transformers import CLIPVisionModelWithProjection
-        model = _hf_pretrained(CLIPVisionModelWithProjection, self.model_id, self.revision).to(
-            "cpu", torch.float32).eval()
-        return None, model
-
-    def _features(self, crop):
-        import torch
-        _, model = self._model()
-        x = _preprocess(crop, 224, 224, (0.48145466, 0.4578275, 0.40821073), (0.26862954, 0.26130258, 0.27577711))
-        with torch.no_grad():
-            out = model(pixel_values=torch.from_numpy(x))
-        return out.image_embeds[0].float().numpy()
-
-
-_EMBEDDERS = {"arcface": _ArcFace, "dinov2": _DinoV2, "clip": _Clip}
+_EMBEDDERS = {"arcface": _ArcFace, "dinov2": _DinoV2}
 
 
 class FaceEmbedder:
     """
-    Identity embedding of the LARGEST face in an image, with a pluggable backend (ArcFace / DINOv2 / CLIP), for
+    Identity embedding of the LARGEST face in an image, with a pluggable backend (ArcFace / DINOv2), for
     look-consistency and likeness scoring. Embeddings are L2-normalised, so cosine similarity is a dot product -
     but only between embeddings of the SAME embedder (compare `name`).
 
@@ -967,7 +948,7 @@ class FaceEmbedder:
 # Auto look match: one embedder per dataset / scoring session
 # ---------------------------------------------------------------------------------------------------------------
 class LookMatchDecision(NamedTuple):
-    identity: str            # "arcface" | "dinov2" | "clip"
+    identity: str            # "arcface" | "dinov2"
     kind: str                # "human" | "furry" | "mixed" | "explicit" | "empty"
     human: int               # probed images with a confident InsightFace (human) face
     yolo_only: int           # probed images whose only faces came from the YOLO model
@@ -1047,7 +1028,7 @@ def decide_look_match(paths, settings: Optional[dict] = None, *, max_n: int = AU
     elif human / n >= thr or (human / n >= AUTO_MIXED_SHARE and yolo_only / n >= AUTO_MIXED_SHARE):
         kind, ident, why = "mixed", "dinov2", "people and characters mixed, so one look match for all"
     elif yolo_only / n >= AUTO_MIXED_SHARE:
-        kind, ident, why = "furry", "dinov2", "furry, anime or drawn characters"
+        kind, ident, why = "furry", "dinov2", "anime, furry or drawn characters"
     else:
         kind, ident, why = "furry", "dinov2", "too few people's faces"
     msg = (f"[faces] Look match for this set: {IDENTITY_LABELS[ident]}, {why} (a person's face in {human}/{probed} "

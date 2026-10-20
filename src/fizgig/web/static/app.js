@@ -3107,21 +3107,20 @@ async function prepRun() {
   } catch (e) { $("prepState").textContent = e.message; }
 }
 
-// Image Prep's "Furry, anime and drawn characters" (fizgig/face_utils.py, prefs.json face_*): saved as soon as they
+// Image Prep's "Anime/furry/drawn characters" (fizgig/face_utils.py, prefs.json face_*): saved as soon as they
 // change. InsightFace + ArcFace are the defaults; the section opens by itself when something else is chosen.
 const FACE_HINTS = {
-  insightface: "For people. It can tell men from women, for Largest Male / Female Face. It doesn't see furry, anime " +
+  insightface: "For people. It can tell men from women, for Largest Male / Female Face. It doesn't see anime, furry " +
     "or drawn faces.",
-  yolo: "For furry, anime or drawn characters, and fursuits, pick this. It can't tell men from women, so Largest " +
+  yolo: "For anime, furry or drawn characters, and fursuits, pick this. It can't tell men from women, so Largest " +
     "Male / Female Face use the largest face.",
   auto: "For a set with both people and characters in it. Both finders look at every picture, so it's a little slower."};
 const LOOK_HINTS = {
-  arcface: "For people's faces. For furry, anime or drawn characters, pick Any face (DINOv2).",
-  dinov2: "For any face, furry, anime and drawn ones included. Its scores run higher than the people setting's, and " +
+  arcface: "For people's faces. For anime, furry or drawn characters, pick Anime/furry/drawn.",
+  dinov2: "For anime, furry or drawn characters, and fursuits; it works on people too. Its scores run higher than the people setting's, and " +
     "the colours follow.",
-  clip: "Another way to compare any face. Try it if Any face (DINOv2) gets your character wrong.",
-  auto: "Fizgig looks at some of the pictures each time it scores: the people setting for a set of people, Any face " +
-    "(DINOv2) for anything else."};
+  auto: "Fizgig looks at some of the pictures each time it scores: People (the default) for a set of people, " +
+    "Anime/furry/drawn for anything else."};
 function faceSettingsShow(f, msg) {
   if (!f) return;
   S.prep.face = f;
@@ -3134,7 +3133,7 @@ function faceSettingsShow(f, msg) {
   $("prepYoloRow").style.display = f.detector === "insightface" ? "none" : "";
   $("prepDetectorHint").textContent = FACE_HINTS[f.detector] || "";
   $("prepIdentityHint").textContent = f.identity === "auto" && f.detector !== "auto" ?
-    `With this face finder that means ${f.detector === "yolo" ? "Any face (DINOv2)" : "People (ArcFace)"}.` :
+    `With this face finder that means ${f.detector === "yolo" ? "Anime/furry/drawn" : "People (the default)"}.` :
     LOOK_HINTS[f.identity] || "";
   $("prepYoloHint").textContent = `Blank: Fdetailer if it's saved as ${f.local_model}, otherwise a free anime head ` +
     "finder that downloads the first time it's used. docs/FACE_BACKENDS.md explains how to get Fdetailer.";
@@ -3153,7 +3152,7 @@ function faceSettingsWire() {
     if (det !== "insightface" && f.identity === "arcface") {
       const ident = det === "yolo" ? "dinov2" : "auto";
       return faceSettingsSave({detector: det, identity: ident}, `Look match changed to ${ident === "dinov2" ?
-        "Any face (DINOv2)" : "Decide for each set of pictures"}, so characters' faces get scored too.`);
+        "Anime/furry/drawn" : "Auto (Decide for each set)"}, so characters' faces get scored too.`);
     }
     faceSettingsSave({detector: det});
   });

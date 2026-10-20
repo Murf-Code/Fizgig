@@ -249,10 +249,10 @@
                   <span class="field-hint">% around the face</span>
                 </div>
                 <details class="tc-box prep-chars" id="prepChars">
-                  <summary>Furry, anime and drawn characters</summary>
+                  <summary>Anime/furry/drawn characters</summary>
                   <div class="field-hint">Face close-ups, the Look Filter and likeness scores are made for people's
-                    faces. For furry, anime or drawn characters (fursuits too), pick the YOLO face finder and Any face
-                    here. People's sets need nothing changed. More in docs/FACE_BACKENDS.md.</div>
+                    faces. For anime, furry or drawn characters (fursuits too), pick Anime/furry/drawn for both
+                    choices here. People's sets need nothing changed. More in docs/FACE_BACKENDS.md.</div>
                   <div class="field-row prep-opts">
                     <span class="field-label">Face finder:</span><select id="prepDetector" class="w-combo-lg"></select>
                   </div>
@@ -311,7 +311,7 @@
             <div class="card-title">Final step: Look Consistency Filter (faces)</div>
             <div class="card-desc">Run this last, after every other prep stage: it scores the finished training
               folder. Pick three baseline pictures that nail the look you want; every picture's face is scored against
-              all three and averaged (face similarity; for furry, anime or drawn characters see "Furry, anime and drawn
+              all three and averaged (face similarity; for anime, furry or drawn characters see "Anime/furry/drawn
               characters" in step 1), so no one photo's angle, expression or light sets the bar.
               It finds pictures that drifted off-look, the near-misses a loss curve can't see. Click pictures to mark
               them, or let Auto-Suggest flag the outliers, then move the marked ones out in one go (to an

@@ -107,7 +107,7 @@ class Watch:
             logger.warning(f"[look-warmup] could not load look scores ({e}) - warm-up off this run")
             return
         cut = look.get("cutoff")
-        # Scores carry the embedder that made them (ArcFace / DINOv2 / CLIP - different scales); the cutoff was
+        # Scores carry the embedder that made them (ArcFace / DINOv2 - different scales); the cutoff was
         # computed on that same scale when the scan ran, so it is used as is. Files from before the face backends
         # have no "embedder" and are ArcFace.
         emb = look.get("embedder_label") or look.get("embedder") or "ArcFace"

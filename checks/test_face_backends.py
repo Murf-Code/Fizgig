@@ -1,5 +1,5 @@
 """The face finder and look match (fizgig/face_utils.py) without any model: the defaults stay InsightFace + ArcFace and
-run exactly the steps Fizgig always ran, the opt-in YOLO / Auto finders and DINOv2 / CLIP look matches pick, merge and
+run exactly the steps Fizgig always ran, the opt-in YOLO / Auto finders and DINOv2 look match pick, merge and
 score as documented (docs/FACE_BACKENDS.md), YOLO ONNX outputs decode right, and saved scores record their embedder.
 InsightFace, onnxruntime and the embedding models are stood in for by small fakes, so this runs on any CPU with only
 checks/requirements.txt installed."""
@@ -37,7 +37,7 @@ def test_settings_defaults_prefs_and_env(monkeypatch, tmp_path):
                                                      "face_yolo_conf": "0.5", "face_identity": "CLIP"}))
     st = F.load_face_settings()
     assert (st["face_detector"], st["face_yolo_model"], st["face_yolo_conf"], st["face_identity"]) == \
-        ("yolo", "C:/m/f.onnx", 0.5, "clip")
+        ("yolo", "C:/m/f.onnx", 0.5, "dinov2")                  # CLIP was dropped: reads as DINOv2
     monkeypatch.setenv("FIZGIG_FACE_DETECTOR", "insightface")
     monkeypatch.setenv("FIZGIG_FACE_IDENTITY", "dinov2")
     st = F.load_face_settings()
@@ -64,7 +64,19 @@ def test_resolve_identity_auto():
     assert F.resolve_identity({"face_detector": "yolo", "face_identity": "auto"}) == "dinov2"
     assert F.resolve_identity({"face_detector": "auto", "face_identity": "auto"}) == "arcface"
     assert F.resolve_identity({"face_detector": "insightface", "face_identity": "auto"}) == "arcface"
-    assert F.resolve_identity({"face_detector": "insightface", "face_identity": "clip"}) == "clip"
+    assert F.resolve_identity({"face_detector": "insightface", "face_identity": "clip"}) == "dinov2"
+
+
+def test_retired_clip_falls_back_to_dinov2(monkeypatch):
+    assert "clip" not in F.IDENTITIES and "clip" not in F.IDENTITY_THRESHOLDS and not hasattr(F, "_Clip")
+    assert F.load_face_settings({"face_identity": "clip"})["face_identity"] == "dinov2"
+    monkeypatch.setenv("FIZGIG_FACE_IDENTITY", "CLIP")
+    assert F.load_face_settings({})["face_identity"] == "dinov2"
+    monkeypatch.delenv("FIZGIG_FACE_IDENTITY")
+    e = F.FaceEmbedder(backend="clip", settings={"face_detector": "yolo"})
+    assert e.name == "dinov2" and e.cache_id.startswith("dinov2@")
+    from fizgig.web import prep_jobs
+    assert "clip" not in prep_jobs.FACE_IDENTITY_LABELS
 
 
 # --------------------------------------------------------------------------------------------- the defaults = before
@@ -421,11 +433,11 @@ def test_pick_classes():
 
 # --------------------------------------------------------------------------------------------- identity embedder
 def test_thresholds_per_backend_and_verdicts():
-    th = {k: F.FaceEmbedder(backend=k, settings={}).thresholds for k in ("arcface", "dinov2", "clip")}
+    th = {k: F.FaceEmbedder(backend=k, settings={}).thresholds for k in ("arcface", "dinov2")}
     assert th["arcface"] == {"match": 0.45, "borderline": 0.30, "floor": 0.25}     # the old hard-coded values
     for t in th.values():
         assert t["match"] > t["borderline"] > t["floor"]
-    assert th["dinov2"]["match"] > th["arcface"]["match"] and th["clip"]["floor"] > th["dinov2"]["match"]
+    assert th["dinov2"]["match"] > th["arcface"]["match"]
     e = F.FaceEmbedder(backend="dinov2", settings={"face_detector": "yolo"})
     assert [e.verdict(s) for s in (0.7, 0.5, 0.3, None, float("nan"))] == \
         ["match", "borderline", "drift", "no face", "no face"]
@@ -448,10 +460,9 @@ def test_cache_id_and_settings_key_invalidate_across_backends():
     dino = F.FaceEmbedder(settings={"face_detector": "yolo", "face_yolo_model": "C:/m/fdetailer_v11.onnx",
                                     "face_identity": "auto"})
     dino_default = F.FaceEmbedder(settings={"face_detector": "yolo", "face_identity": "dinov2"})
-    clip = F.FaceEmbedder(settings={"face_detector": "yolo", "face_identity": "clip"})
     assert arc.cache_id == arc2.cache_id == "arcface" and arc.settings_key == arc2.settings_key
     assert dino.cache_id == "dinov2@yolo:fdetailer_v11.onnx" and dino_default.cache_id == "dinov2@yolo:default"
-    assert len({arc.cache_id, dino.cache_id, dino_default.cache_id, clip.cache_id}) == 4
+    assert len({arc.cache_id, dino.cache_id, dino_default.cache_id}) == 3
     assert F.same_embedder(None, "arcface") and F.same_embedder("arcface", "arcface")   # legacy files = ArcFace
     assert not F.same_embedder(None, dino.cache_id) and not F.same_embedder("arcface", dino.cache_id)
 
@@ -563,8 +574,8 @@ def test_look_match_mixed_set_uses_dinov2_for_all(dataset):
 def test_look_match_explicit_settings_bypass_the_probe(dataset):
     det = _ProbeDetector()
     paths = dataset(h=24)
-    assert F.decide_look_match(paths, {"face_detector": "auto", "face_identity": "clip"}, detector=det,
-                               log=None).identity == "clip"
+    assert F.decide_look_match(paths, {"face_detector": "auto", "face_identity": "dinov2"}, detector=det,
+                               log=None).identity == "dinov2"
     assert F.decide_look_match(paths, {"face_detector": "yolo", "face_identity": "auto"}, detector=det,
                                log=None).identity == "dinov2"
     assert F.decide_look_match(paths, {"face_detector": "insightface", "face_identity": "auto"}, detector=det,
@@ -651,6 +662,7 @@ def _warmup(tmp_path, payload):
 
 
 def test_loss_watch_warmup_with_embedder_scores(tmp_path, caplog):
+    pytest.importorskip("torch")
     import logging
     caplog.set_level(logging.INFO)
     keys = _warmup(tmp_path, {"embedder": "dinov2@yolo:fdetailer_v11.onnx", "embedder_label": "DINOv2",
@@ -661,6 +673,7 @@ def test_loss_watch_warmup_with_embedder_scores(tmp_path, caplog):
 
 
 def test_block_profile_report_names_the_embedder():
+    pytest.importorskip("torch")
     import inspect
     from fizgig.families import block_profile
     src = inspect.getsource(block_profile)

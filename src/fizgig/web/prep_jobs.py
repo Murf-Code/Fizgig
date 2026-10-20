@@ -1,7 +1,7 @@
 """The web UI's Image Prep: a prep run (resize / PNG / face close-ups) and the Look Consistency Filter's scan, each
 in a background thread on the Fizgig machine, with their state for the page to poll. The work itself is
 fizgig/dataset/prep.py - the same code the desktop app's Image Prep tab runs. Face tools run on the CPU, with the face
-finder and look match Image Prep's face settings pick (face_utils: InsightFace / YOLO / Auto, ArcFace / DINOv2 / CLIP).
+finder and look match Image Prep's face settings pick (face_utils: InsightFace / YOLO / Auto, ArcFace / DINOv2).
 """
 import base64
 import io
@@ -60,10 +60,10 @@ def session_embedder(paths, log=None):
 
 
 FACE_DETECTOR_LABELS = {"insightface": "People (InsightFace, the default)",
-                        "yolo": "Furry, anime and drawn (YOLO model)",
+                        "yolo": "Anime/furry/drawn (YOLO model)",
                         "auto": "Both, for sets with people and characters"}
-FACE_IDENTITY_LABELS = {"arcface": "People (ArcFace, the default)", "dinov2": "Any face (DINOv2)",
-                        "clip": "Any face (CLIP)", "auto": "Decide for each set of pictures"}
+FACE_IDENTITY_LABELS = {"arcface": "People (the default)", "dinov2": "Anime/furry/drawn",
+                        "auto": "Auto (Decide for each set)"}
 
 
 def face_settings():
@@ -80,7 +80,7 @@ def face_settings():
     return {"detector": st["face_detector"], "identity": st["face_identity"],
             "yolo_model": str(saved.get("face_yolo_model") or ""), "auto_threshold": st["face_auto_threshold"],
             "detectors": [[k, FACE_DETECTOR_LABELS[k]] for k in ("insightface", "yolo", "auto")],
-            "identities": [[k, FACE_IDENTITY_LABELS[k]] for k in ("arcface", "dinov2", "clip", "auto")],
+            "identities": [[k, FACE_IDENTITY_LABELS[k]] for k in ("arcface", "dinov2", "auto")],
             "defaults": {"detector": F.FACE_SETTING_DEFAULTS["face_detector"],
                          "identity": F.FACE_SETTING_DEFAULTS["face_identity"]},
             "finder": det.describe(), "has_gender": det.has_gender,
