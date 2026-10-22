@@ -780,10 +780,3 @@ def test_web_look_filter_uses_one_embedder_per_session(tmp_path, monkeypatch):
     assert by["b1.png"]["score"] == pytest.approx(0.6) and by["b1.png"]["verdict"] == "borderline"   # DINOv2 bands
     assert json.loads((tmp_path / "fizgig_look_scores.json").read_text())["embedder"] == "dinov2@auto:default"
 
-
-def test_fetch_models_lists_the_face_fallbacks():
-    from fizgig.scripts import fetch_models as fm
-    ids = [t[0] for t in fm.TOOLS]
-    head = [i for i in ids if "anime_head_detection" in i][0]
-    assert F.DEFAULT_YOLO["revision"] in head and F.DEFAULT_YOLO["file"] in head
-    assert any(i.startswith("hf-model:facebook/dinov2-base@" + F._DinoV2.revision) for i in ids)

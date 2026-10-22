@@ -134,11 +134,7 @@ The script turns off ultralytics' auto-install and update checks, exports at 640
 
 ### Built-in fallback: deepghs anime head v2.0_s (MIT)
 
-When `face_yolo_model` is blank and there's no `user_data/models/face/fdetailer_v11.onnx`, Fizgig uses [deepghs/anime_head_detection](https://huggingface.co/deepghs/anime_head_detection) `head_detect_v2.0_s/model.onnx` (MIT licence, a ready-made ONNX, pinned revision). It downloads once and is then loaded from the Hugging Face cache, offline. To pre-fetch it along with the DINOv2 weights:
-
-```
-python -m fizgig.scripts.fetch_models --family tools
-```
+When `face_yolo_model` is blank and there's no `user_data/models/face/fdetailer_v11.onnx`, Fizgig uses [deepghs/anime_head_detection](https://huggingface.co/deepghs/anime_head_detection) `head_detect_v2.0_s/model.onnx` (MIT licence, a ready-made ONNX, pinned revision). It downloads once, the first time you use it, and is then loaded from the Hugging Face cache, offline.
 
 This model finds **heads**, so its boxes include ears and hair. That's useful for the look match, but crops come out looser than Fdetailer's.
 
@@ -205,7 +201,7 @@ These thresholds come from a small set. Treat them as a starting point, and trus
 **Downloads.**
 
 - ArcFace comes with InsightFace.
-- DINOv2 (~350 MB of safetensors) downloads on first use or through `fetch_models --family tools`.
+- DINOv2 (~350 MB of safetensors) downloads the first time you use it.
 
 ### Cached scores record their embedder
 
