@@ -68,6 +68,10 @@ def state(samples_dir, dataset_dir):
     names = d.get("baselines") or []
     with _lock:
         running = samples_dir in _runs
+    if names and not running and dataset_dir and os.path.isdir(dataset_dir) \
+            and not all(os.path.exists(os.path.join(dataset_dir, os.path.basename(str(n)))) for n in names):
+        names = []                                    # another run's pick (a different dataset): not chosen yet
+        d["status"] = ""
     if len(names) == 3 and not running and dataset_dir and os.path.isdir(samples_dir)             and not str(d.get("status", "")).startswith("error"):     # a failed pick waits for a new one
         try:
             start(samples_dir, dataset_dir, names)    # opening the gallery claims it (the desktop's rule)

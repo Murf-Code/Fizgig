@@ -260,18 +260,22 @@ class _Wrapper(nn.Module):
         self.language_model = Qwen35TextModel(cfg)
 
 
-def read_text_state_dict(path, dtype=torch.bfloat16) -> dict:
+def read_text_state_dict(path, dtype=torch.bfloat16, want=None) -> dict:
     """language_model.* tensors from Comfy-Org's single file (model.language_model.*), MOSS-Image's shards
     (language_model.*) or ComfyUI's int8 ConvRot repack (decoded). The vision tower, LM head and MTP head are left
-    out. Cast to `dtype`, as the reference's from_pretrained(dtype=bfloat16)."""
+    out. Cast to `dtype`, as the reference's from_pretrained(dtype=bfloat16). want(name): only those tensors (one
+    layer, for an encoder read from the file layer by layer)."""
     from safetensors import safe_open
     from fizgig.moss_image.model import _files
     sd = {}
+    from fizgig.krea2.safetensors_utils import MemoryEfficientSafeOpen
     for f in _files(path):
-        with safe_open(f, "pt") as fh:
+        # a part of the file (want): plain reads - safe_open maps the whole file, which on Windows counts the file's
+        # size against the commit limit at every open, the RAM a layer-at-a-time read is there to save
+        with (MemoryEfficientSafeOpen(f) if want is not None else safe_open(f, "pt")) as fh:
             for k in fh.keys():
                 name = k[len("model."):] if k.startswith("model.language_model.") else k
-                if name.startswith("language_model."):
+                if name.startswith("language_model.") and (want is None or want(name)):
                     sd[name] = fh.get_tensor(k)
     quant = [k[: -len(".comfy_quant")] for k in sd if k.endswith(".comfy_quant")]
     if quant:
@@ -281,13 +285,72 @@ def read_text_state_dict(path, dtype=torch.bfloat16) -> dict:
             if conf.get("format") != "int8_tensorwise":
                 raise ValueError(f"{base}: unsupported comfy quant format {conf.get('format')!r}")
             q, sc = sd.pop(base + ".weight"), sd.pop(base + ".weight_scale").float().reshape(-1, 1)
-            sd[base + ".weight"] = dequantize_int8_convrot(q, sc, conf, out_dtype=dtype)
+            if want is not None and q.shape[0] > 16384:
+                # rows decode independently: in pieces, so the embedding (248k rows) doesn't spike ~8 GB of fp32
+                w = torch.empty(q.shape, dtype=dtype)
+                for i in range(0, q.shape[0], 16384):
+                    w[i:i + 16384] = dequantize_int8_convrot(q[i:i + 16384], sc[i:i + 16384], conf, out_dtype=dtype)
+                sd[base + ".weight"] = w
+            else:
+                sd[base + ".weight"] = dequantize_int8_convrot(q, sc, conf, out_dtype=dtype)
     if not sd:
         raise ValueError(f"{path}: no Qwen3.5 language-model weights (language_model.* / model.language_model.*)")
     return {k: v.to(dtype) if v.is_floating_point() else v for k, v in sd.items()}
 
 
+def from_file_wanted(total_ram_gb=None):
+    """Whether a streamed encoder reads its layers from the file at each pass instead of holding the whole file in
+    RAM (about 17 GB): on computers with less than 30 GB (16 and 24 GB), where holding it crashed or leaned on the
+    paging file. The DiT's file is read with plain reads then too (model.read_state_dict). FIZGIG_TE_FROM_FILE=1 / 0
+    forces it either way."""
+    import os
+    import psutil
+    force = os.environ.get("FIZGIG_TE_FROM_FILE", "").strip()
+    if force in ("0", "1"):
+        return force == "1"
+    total = psutil.virtual_memory().total / 1024 ** 3 if total_ram_gb is None else total_ram_gb
+    return total < 30.0
+
+
 STREAM_TOKENS = 1 << 18           # a streamed pass's captions: about 2 GB of bf16 hidden states at width 4096
+
+
+_RAM = {}                            # (path, mtime, dtype) -> the pinned state dict kept between workbench prompts
+
+
+def _kept_state_dict(path, dtype):
+    """read_text_state_dict, kept in pinned RAM for the next prompt (0.5 s to the GPU, about 6 s from the file) when
+    the computer has the room: the workbench loads the encoder for every new prompt."""
+    import os
+    import psutil
+    key = (os.path.abspath(path), os.path.getmtime(path), dtype)
+    if key in _RAM:
+        return _RAM[key]
+    drop_kept_state_dict()
+    sd = read_text_state_dict(path, dtype)
+    gb = sum(v.numel() * v.element_size() for v in sd.values()) / 1024 ** 3
+    if psutil.virtual_memory().available / 1024 ** 3 < gb + 8.0:
+        return sd
+    try:
+        sd = {k: v.contiguous().pin_memory() for k, v in sd.items()}
+    except RuntimeError:
+        sd = {k: v.contiguous() for k, v in sd.items()}
+    _RAM[key] = sd
+    logger.info(f"[text encoder] kept in RAM between prompts ({gb:.1f} GB)")
+    return sd
+
+
+def kept_gb(path):
+    """GB of the state dict kept for `path`, 0.0 when none is."""
+    import os
+    for (p, _, _), sd in _RAM.items():
+        if p == os.path.abspath(path):
+            return sum(v.numel() * v.element_size() for v in sd.values()) / 1024 ** 3
+    return 0.0
+
+
+def drop_kept_state_dict():
+    _RAM.clear()
 
 
 class MOSSTextEncoder:
@@ -295,14 +358,23 @@ class MOSSTextEncoder:
     runs layer-major - each of the 32 layers goes to the GPU once per group of captions and runs every caption in
     the group, as layer-major text caching did in @Murf-Code's PR #195. The same bf16 ops on the same device, so
     the output is the resident encoder's, bit for bit; one prompt (previews, the workbench) streams the 15 GB
-    once."""
+    once. from_file (with stream): the layers aren't held in RAM but read from the file as each pass reaches them,
+    for computers without the RAM to hold them - the same weights, so the same output."""
 
     def __init__(self, model_path, device="cuda", dtype=torch.bfloat16, int8=False, tokenizer=None, cfg=QWEN35_9B,
-                 stream=False):
+                 stream=False, keep_in_ram=False, from_file=False):
         with torch.device("meta"):
             wrapper = _Wrapper(cfg)
-        sd = read_text_state_dict(model_path, dtype)
+        self.from_file = bool(from_file and stream and not int8)
+        self.path, self.dtype = model_path, dtype
+        if self.from_file:          # the embedding and the final norm only; each pass reads the layers
+            sd = read_text_state_dict(model_path, dtype, want=lambda n: not n.startswith("language_model.layers."))
+        else:
+            sd = (_kept_state_dict(model_path, dtype) if keep_in_ram and not int8 and torch.cuda.is_available()
+                  else read_text_state_dict(model_path, dtype))
         missing, unexpected = wrapper.load_state_dict(sd, strict=False, assign=True)
+        if self.from_file:
+            missing = [k for k in missing if not k.startswith("language_model.layers.")]
         if missing or unexpected:
             raise ValueError(f"{model_path}: not the Qwen3.5-9B text encoder - missing {missing[:5]} "
                              f"({len(missing)}), unexpected {unexpected[:5]} ({len(unexpected)})")
@@ -313,6 +385,9 @@ class MOSSTextEncoder:
             logger.info(f"[text encoder] 8-bit weights: {n} language-model Linears (low-VRAM card); matmuls stay bf16")
         self.stream = bool(stream) and not int8
         model = wrapper.language_model.eval().requires_grad_(False)
+        if self.from_file:
+            logger.info("[text encoder] streamed from the file a layer at a time (this computer's RAM can't hold "
+                        "the whole encoder)")
         if self.stream:
             model.norm.to(self.device)      # the embedding and the layers stay on the CPU between passes
         else:
@@ -364,8 +439,13 @@ class MOSSTextEncoder:
         m = self.model
         xs = [m.embed_tokens(i).to(self.device) for i in ids]
         ropes = [m.rope(x.shape[1], x.device, x.dtype) for x in xs]
-        for layer in m.layers:
+        for li, layer in enumerate(m.layers):
+            if self.from_file:      # this layer's weights from the file, straight in; strict, so a gap fails loudly
+                pre = f"language_model.layers.{li}."
+                sd = read_text_state_dict(self.path, self.dtype, want=lambda n: n.startswith(pre))
+                layer.load_state_dict({k[len(pre):]: v for k, v in sd.items()}, strict=True, assign=True)
+                del sd
             layer.to(self.device)
             xs = [layer(x, c, s) for x, (c, s) in zip(xs, ropes)]
-            layer.to("cpu")
+            layer.to("meta" if self.from_file else "cpu")
         return [m.norm(x)[0].to(torch.bfloat16).cpu() for x in xs]

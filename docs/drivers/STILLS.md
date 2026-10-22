@@ -144,6 +144,7 @@ class MyModelDriver(FamilyDriver):
 
 - **Objective.** Flow matching (Klein, Krea 2, Qwen: `x_t = (1 - t)·x0 + t·noise`, target `noise - x0`) or a DDPM-style epsilon / v-prediction for older models. Nothing outside the driver assumes either.
 - **Timestep sampling.** Use the distribution the model was trained with: logit-normal, a resolution-dependent shift, uniform. Then scale it into `[min_t, max_t]` so the Timestep Range control works.
+- **Measure the clean-end share.** Call your timestep sampler 100,000 times and count how many `t` fall below 0.5. That is the share of steps on nearly-clean images, where faces and fine detail are learned; the rest go to layout and composition. For reference: Krea 2 18–28% (1 MP to 0.25 MP), MiniMax H3's reference 8% and MOSS-Image's 11%. Fizgig trains H3 at 60% and MOSS-Image at 60% falling to 30% by default, because their own schedules gave slow likeness and previews whose composition jumped from epoch to epoch. Put the figure in the pull request. If it's low and your likeness test runs show either sign, say so too, and the share can be set the way MOSS-Image's is (`lownoise_pct`, `mu_for_clean_share` in `moss_image/driver.py`).
 - **Return** `(loss, {"t": t})`, with `t` on the 0–1 scale where 0 is clean. The per-image loss watch buckets by it. You may also return `info["lr_mult"]` to scale this step's learning rate.
 
 ### The block map

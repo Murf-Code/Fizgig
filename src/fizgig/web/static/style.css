@@ -250,6 +250,35 @@ body {
   margin: 0 36px 16px 36px;
   padding: 0;
 }
+/* a row that explains a switch with a big effect (the Samples tab's Turbo LoRA strength): its own full-width box */
+.section-card[id^="sec-"] .form-row.row-boxed { grid-column: 1 / -1; padding: 10px 12px; border-radius: 8px;
+  border: 1px solid rgba(245, 158, 11, 0.45); background: rgba(245, 158, 11, 0.06); }
+.section-card[id^="sec-"] .form-row.row-boxed .field-label { color: #FCD9A0; }
+.section-card[id^="sec-"] .form-row.row-boxed .field-row > input { flex: 0 0 140px; max-width: 140px; }
+.section-card[id^="sec-"] .form-row.row-boxed .field-hint { white-space: normal; font-style: normal; line-height: 1.45; }
+
+/* the Previews so far card: what the previews render with */
+.preview-mode { margin: 8px 0 10px; padding: 7px 11px; border-radius: 6px; font-size: 12.5px;
+  color: var(--text-explain); background: rgba(138, 155, 174, 0.10); border: 1px solid var(--border); }
+.preview-mode.turbo { color: #FCD9A0; background: rgba(245, 158, 11, 0.10); border-color: rgba(245, 158, 11, 0.45); }
+
+/* the Start tab's News card: a soft lilac panel */
+.section-card.news-card {
+  background: linear-gradient(135deg, rgba(200, 172, 255, 0.24), rgba(160, 130, 240, 0.12) 55%, rgba(120, 100, 200, 0.07));
+  border: 1px solid rgba(196, 167, 255, 0.35); border-left: 3px solid #C4A7FF;
+  box-shadow: 0 0 22px rgba(167, 139, 250, 0.10);
+}
+.section-card.news-card > .card-title { color: #D8C7FF; display: flex; align-items: center; gap: 8px; }
+.section-card.news-card > .card-title::before {
+  content: ""; width: 8px; height: 8px; border-radius: 50%; background: #C4A7FF; box-shadow: 0 0 8px #C4A7FF;
+}
+.news-item + .news-item { margin-top: 14px; padding-top: 12px; border-top: 1px solid rgba(196, 167, 255, 0.18); }
+.news-head b { color: var(--text-primary); font-size: 14px; }
+.news-head .field-hint { color: #B9A6E8; font-style: normal; }
+.news-text { color: var(--text-explain); margin: 6px 0 0; line-height: 1.5; }
+.news-links { margin-top: 6px; display: flex; gap: 14px; flex-wrap: wrap; }
+.section-card.news-card .news-links a.inline-link { color: #D4C2FF; }
+.section-card.news-card .news-links a.inline-link:hover { color: #EEE6FF; }
 .section-card.accent-card {
   border-color: var(--accent);
 }
@@ -310,6 +339,7 @@ body {
 .tc-verdict { margin: 10px 0 6px; font-weight: 600; }      /* Check a trigger word's answer */
 .tc-good { color: var(--success); }
 .tc-warn { color: var(--warning); }
+.family-status { color: var(--warning); font-weight: 600; margin-top: 6px; }
 .tc-bad { color: var(--danger); }
 .sec-video {        /* a card's help video: a link across the top of the card */
   display: flex; align-items: center; gap: 14px; margin: 12px 0 14px 0; padding: 10px 16px 10px 12px;
@@ -1069,6 +1099,18 @@ input[type="range"] {
 .card-content.collapsed { display: none; }
 .collapsible-header { cursor: pointer; user-select: none; }
 .form-row { margin: 2px 0; }
+/* a control worth noticing (FamilyOption featured): a soft accent panel with a bright edge */
+.form-row.row-featured {
+  padding: 8px 10px; margin: 4px 0; border-radius: 8px;
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.16), rgba(59, 130, 246, 0.04));
+  border: 1px solid rgba(96, 165, 250, 0.35); border-left: 3px solid var(--accent-hover);
+  box-shadow: 0 0 14px rgba(59, 130, 246, 0.12);
+}
+.section-card[id^="sec-"] .form-row.row-featured .field-label, .form-row.row-featured .field-label { color: var(--accent-hover); font-weight: 600; }
+.form-row.row-featured .field-label::after {
+  content: "New"; margin-left: 8px; padding: 1px 7px; border-radius: 999px; vertical-align: 1px;
+  font-size: 7.5pt; font-weight: 600; letter-spacing: 0.04em; color: #fff; background: var(--accent);
+}
 .form-row textarea, .caption-card textarea {
   width: 100%; max-width: 720px; background: var(--bg-inset); color: var(--text-primary);
   border: 1px solid var(--border); font-family: var(--font-family); font-size: 10pt; padding: 6px;
@@ -1090,7 +1132,17 @@ input[type="range"] {
 .gallery-item audio { width: 100%; }
 .gallery-item figcaption { color: var(--text-secondary); font-size: 8.5pt; word-break: break-all; margin-top: 4px; }
 .picker-list { max-height: 420px; overflow: auto; border: 1px solid var(--border); margin-top: 8px; }
-.picker-item { padding: 4px 10px; cursor: pointer; }
+.picker-item { padding: 4px 10px; cursor: pointer; display: grid; grid-template-columns: 1fr 150px 80px; gap: 10px; }
+.picker-item > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.picker-item .m, .picker-head span:not(:first-child) { color: var(--text-secondary); font-size: 0.9em; }
+.picker-item .z, .picker-head span:last-child { text-align: right; }
+.picker-head { display: grid; grid-template-columns: 1fr 150px 80px; gap: 10px; padding: 4px 10px; margin-top: 8px;
+  border: 1px solid var(--border); border-bottom: 0; font-weight: 600; }
+.picker-head span { cursor: pointer; user-select: none; }
+.picker-head span.on::after { content: " ▲"; font-size: 0.75em; }
+.picker-head span.on.desc::after { content: " ▼"; }
+.picker-head + .picker-list { margin-top: 0; }
+@media (max-width: 560px) { .picker-item, .picker-head { grid-template-columns: 1fr 80px; } .picker-item .m, .picker-head span:nth-child(2) { display: none; } }
 .picker-item:hover { background: var(--bg-hover); }
 .picker-item.dir { color: var(--accent-hover); }
 .run-badge { color: var(--text-secondary); font-weight: 600; padding: 0 12px; display: flex; align-items: center; }
@@ -1593,6 +1645,9 @@ input[type="radio"] { accent-color: var(--accent); width: 16px; height: 16px; ma
   align-items: center; justify-content: center; gap: 12px; padding: 16px; box-sizing: border-box; }
 .lightbox-figure { margin: 0; display: flex; flex-direction: column; align-items: center; min-width: 0; }
 /* the window's size whatever the picture's (a 414 px dataset crop fills it too), its shape kept */
+/* how the enlarged preview was made (the family's words): one line over it */
+.lightbox-mode { color: var(--text-primary); background: var(--bg-surface); border: 1px solid var(--border);
+  border-radius: 8px; padding: 6px 12px; margin-bottom: 8px; font-size: 10pt; max-width: calc(100vw - 140px); }
 .lightbox-figure img { width: calc(100vw - 140px); height: calc(100vh - 80px); object-fit: contain; cursor: zoom-out; }
 .lightbox-figure figcaption { color: var(--text-secondary); font-size: 9pt; margin-top: 8px; overflow-wrap: anywhere;
   text-align: center; }
@@ -2092,3 +2147,17 @@ input[type="radio"] { accent-color: var(--accent); width: 16px; height: 16px; ma
 .note-lines { color: var(--text-explain); }   /* the Subjects card's caption preview: an explanation, not a warning */
 /* Studio (H3): the Clip row's ticks after Steps / Turbo - a gap before each, so every box reads with its own word */
 #stVideoRows .st-inline .checkbox-label { margin-left: 14px; }
+
+/* How often to preview: one panel, a sentence of small boxes that wraps on a phone */
+.section-card[id^="sec-"] .form-row.kind-cadence { grid-column: 1 / -1; padding: 10px 12px; border-radius: 8px;
+  border: 1px solid var(--border); }
+.kind-cadence .cad-title { font-weight: 600; margin-bottom: 6px; }
+.kind-cadence .cad-line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin: 4px 0; }
+.kind-cadence .cad-pair { display: inline-flex; align-items: center; gap: 6px; }
+.kind-cadence .cad-tick { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.section-card[id^="sec-"] .form-row.kind-cadence input.cad-num { width: 64px; min-width: 0; max-width: 64px; flex: 0 0 64px; text-align: center; }
+.kind-cadence .cad-num:disabled { opacity: 0.45; }
+.kind-cadence .field-hint { margin-top: 6px; }
+
+/* a single choice greyed in a row of pills */
+.checkbox-label.choice-off { opacity: 0.4; cursor: not-allowed; }

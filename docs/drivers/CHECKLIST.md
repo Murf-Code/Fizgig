@@ -16,6 +16,7 @@ A family is ready when it trains, previews and saves correctly, and every abilit
 
 - [ ] **Parity with the reference implementation:** from the same starting noise and prompt, your `generate` matches the model's reference pipeline (diffusers, ComfyUI or the original repo) to bf16 precision. Measure it; a picture that "looks right" hides schedule and conditioning bugs. Compare stage by stage (text conditioning, one model prediction, the sigma schedule) from identical inputs. If your model code isn't the reference's code, compare in fp32: two correct bf16 implementations can differ by 1–2% per step, which compounds into a visibly different render.
 - [ ] A short run through the command line (cache latents, cache text, train two epochs with previews) finishes, and the previews move toward the training data.
+- [ ] **The clean-end share is measured:** the share of sampled training timesteps below 0.5, from 100,000 draws, is in the pull request. Below about 20%, check a likeness run for slow likeness and previews whose composition jumps between epochs ([STILLS.md](STILLS.md#the-training-step)).
 - [ ] **The LoRA loads in ComfyUI with every module.** ComfyUI's console lists any key it can't map ("lora key not loaded"); there must be none. The LoRA then changes ComfyUI's output the way the previews show.
 - [ ] Every built-in preset trains one epoch through the GUI (Load Preset, Start Training) and saves a LoRA.
 - [ ] `train_memory` figures are measured, at two resolutions per precision, from the trainer's logged peaks.

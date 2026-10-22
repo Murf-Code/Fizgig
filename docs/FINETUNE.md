@@ -18,17 +18,17 @@ On Krea 2 and Qwen the fine-tune card counts in rotations: **Train for N rotatio
 
 The "trains on 8 GB" figures elsewhere apply to **LoRA** training. Fine-tuning tiers itself to your card: the planner measures free VRAM at launch, picks the largest plan that fits, and prints what it chose and why. At the default training resolution:
 
-| Your card | Flux 3 Image Klein — photos | Krea 2 — photos | MiniMax H3 — photos | H3 — voice | H3 — video, confirmed | H3 — video on likeness blocks, expected |
-|---|---|---|---|---|---|---|
-| **16 GB** | ✅ | ✅ | ✅ | ✅ | ✅ up to **2.3 s** | up to **3.8 s** |
-| **24 GB** | ✅ | ✅ | ✅ | ✅ | ✅ up to **2.3 s** | up to **5.2 s** |
-| **32 GB** | ✅ | ✅ | ✅ | ✅ | ✅ up to **3.8 s** | up to **5.2 s** |
+| Your card | MOSS-Image — photos | Flux 3 Image Klein — photos | Krea 2 — photos | MiniMax H3 — photos | H3 — voice | H3 — video, confirmed | H3 — video on likeness blocks, expected |
+|---|---|---|---|---|---|---|---|
+| **16 GB** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ up to **2.3 s** | up to **3.8 s** |
+| **24 GB** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ up to **2.3 s** | up to **5.2 s** |
+| **32 GB** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ up to **3.8 s** | up to **5.2 s** |
 
 - Clip lengths follow Gizmo's grid: **2.3 s is the 56-frame slot**, confirmed by measured runs on every tier. **3.8 s is confirmed on 32 GB**, even with video training the whole model.
 - The expected column assumes **Training mode: Default** (the default), which confines clips to the likeness blocks; in our tests that trains video as well as the whole model and makes clips far lighter. Those figures are conservative arithmetic from measured constants, not individually measured.
 - Whole-model 5.2 s clips need more than 32 GB (measured).
 - With Training mode set to Off, one clip anywhere in the folder trains the **whole** model, so a mixed photos + clips dataset uses the clip column.
-- **16 GB is the fine-tune floor.** 12 GB cards train LoRAs only.
+- **16 GB is the fine-tune floor** for these families; 12 GB cards train LoRAs only. MOSS-Image is lighter: see below.
 - Measured 16 GB peaks: **8.8–12.3 GB for H3**, **up to 11.4 GB for Krea 2** (at 1 MP). Flux 3 Image Klein trains the whole model at once with a **14.0 GB** peak at 1 MP (12.6 GB at 0.25 MP), measured on a 32 GB card, so it fits 16 GB without splitting. The console prints your run's peak every epoch.
 - Too little VRAM refuses cleanly at launch instead of running out of memory mid-run.
 
@@ -61,6 +61,10 @@ A finished fine-tune checkpoint is a valid base for its family:
 ## Why fine-tune
 
 A LoRA constrains every update to a low-rank subspace, so concepts compete for the same few directions. That is why LoRAs tend to drag pose, framing and lighting toward the training set along with the likeness. A full-rank update can change how the model *represents* a concept, so it composes with what the model already knows. In our tests, multi-character and concept teaching landed at a much deeper level than LoRA training, with much better results. [Checkpoint to LoRA](#turn-it-back-into-a-lora) turns the result into a shareable file.
+
+## MOSS-Image
+
+Measured at 1 MP: training the whole model at once peaks at **12.6 GB** (all parts) or **8.3 GB** with **Train attention only**, so a 16 GB card fine-tunes the whole model with nothing rotating, and the planner fits an attention-only fine-tune on 12 GB. Fine-tune Base, not SFT. Details: [MOSS_IMAGE.md](MOSS_IMAGE.md#fine-tuning).
 
 ## Krea 2 and Qwen Image 2.1
 

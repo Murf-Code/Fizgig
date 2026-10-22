@@ -2,7 +2,7 @@
 
 [← Back to the README](../README.md) · [How to caption for it](MULTI_PERSON.md) · [Demo video](https://youtu.be/CNh4sN5vN_8) · [How to set it up](https://youtu.be/8uW5NdL5b20)
 
-Fizgig LoRA Isolation trains one or more people into a LoRA so that everyone else in a picture keeps their own face. A normal character LoRA spreads its subject's likeness onto other people: strangers in the background, a friend standing next to them, a crowd. With LoRA Isolation the subjects can stand together in one picture, or next to a person the model already knows well, and every face stays its own. Without the trigger word you get the model's own people, as before training.
+Fizgig LoRA Isolation trains two or more people into a LoRA so that everyone else in a picture keeps their own face. A normal character LoRA spreads its subject's likeness onto other people: strangers in the background, a friend standing next to them, a crowd. With LoRA Isolation the subjects can stand together in one picture, or next to a person the model already knows well, and every face stays its own. Without the trigger word you get the model's own people, as before training.
 
 It builds on DOP (Differential Output Preservation) from Ostris's AI-Toolkit and adds the layers described below. In Fizgig it's set up on the Training tab's **Subjects** card and works on every model except ACE-Step. It has been tested on Krea 2; more model testing is to follow.
 

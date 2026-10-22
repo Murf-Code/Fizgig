@@ -105,8 +105,14 @@ def dense_weight(handle, key: str, keyset, device) -> torch.Tensor:
 def is_lora_target(key: str, shape) -> bool:
     if not key.endswith(".weight") or len(shape) != 2:
         return False
-    low = key.lower()
-    return not any(s in low for s in _SKIP_SUBSTRINGS)
+    # by path component: "embed" in a stack of transformer blocks (MOSS-Image's text_embedder.blocks.N.qkv) is not an
+    # embedding - its Linears are the text adapter's, and a fine-tune changes them like any other block
+    parts = key.lower().split(".")
+    for i, p in enumerate(parts):
+        for s in _SKIP_SUBSTRINGS:
+            if s in p and not (s == "embed" and i + 1 < len(parts) and parts[i + 1] in ("blocks", "layers")):
+                return False
+    return True
 
 
 def lora_key(model_key: str, prefix: str = "") -> str:

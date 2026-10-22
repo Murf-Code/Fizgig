@@ -273,7 +273,11 @@ def build(subjects, ext=".txt", seed=42, log=print):
         photos = sorted(n for n in os.listdir(s["folder"]) if n.lower().endswith(_IMG))
         if not photos:
             raise ValueError(f"no photos in {s['folder']}")
-        sig = {"photos": photos, "fused": s["fused"], "n": PER_SUBJECT, "seed": seed, "index": s["index"],
+        stamps = []                              # a photo edited or replaced under the same name rebuilds them
+        for n in photos:
+            st = os.stat(os.path.join(s["folder"], n))
+            stamps.append([n, int(st.st_mtime), st.st_size])
+        sig = {"photos": stamps, "fused": s["fused"], "n": PER_SUBJECT, "seed": seed, "index": s["index"],
                "revision": REVISION, "ext": ext}
         mark = os.path.join(s["out"], "fizgig_mp_built.json")
         try:

@@ -52,4 +52,5 @@ def get_schema(ref_dit_set=False) -> Dict[str, Any]:
         fams.append(describe_family(f))
         if f.key == "minimax":
             fams.append(describe_refmod(f, ref_dit_set))
-    return {"families": fams, "order": [f["key"] for f in fams]}
+    from fizgig.web.news import NEWS
+    return {"families": fams, "order": [f["key"] for f in fams], "news": NEWS}

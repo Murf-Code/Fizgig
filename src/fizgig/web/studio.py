@@ -253,10 +253,18 @@ def plan(desc, prefs, pref_path, fast=True, samples=None, negative=None):
     fast = fast or follow
     dit, speed, use_ck, ck = paths["dit"], "", False, None
     have = lambda k: bool(k and look(k) and os.path.exists(look(k)))
+    # a workbench that follows its Samples tab renders where training previews do: the preview checkpoint only while
+    # the Samples tab's tick for it is on (every workbench tab plans through here, so they all agree)
+    ck_wanted = not (follow and desc.workbench_checkpoint_follows_tick and samples is not None
+                     and samples.get("checkpoint") is False)
     if fast:
         c = desc.preview_checkpoint()
-        if c is not None and have(c[0].pref_key):
+        if ck_wanted and c is not None and have(c[0].pref_key):
             dit, use_ck, ck = look(c[0].pref_key), True, c[1]
+            from fizgig.families.base_check import checkpoint_takes_speed
+            sp0 = desc.preview_speed()
+            if sp0 is not None and have(sp0.pref_key) and checkpoint_takes_speed(desc, dit):
+                speed = look(sp0.pref_key)          # Kromoss as the preview model: the Turbo LoRA can join it
         else:
             sp = desc.preview_speed()
             if sp is not None and have(sp.pref_key):
@@ -274,7 +282,8 @@ def plan(desc, prefs, pref_path, fast=True, samples=None, negative=None):
         steps = settings["steps"]
     swap = str(prefs.get("inference_blocks_to_swap") or "Auto").strip()
     kw = {"dit_path": dit, "vae_path": paths["vae"], "text_encoder_path": paths["text_encoder"],
-          "speed_lora_path": speed, "use_checkpoint_sampling": use_ck, "device": "cuda",
+          "speed_lora_path": speed, "use_checkpoint_sampling": use_ck, "speed_on_checkpoint": bool(use_ck and speed),
+          "device": "cuda",
           "precision": "int8" if str(prefs.get("inference_int8", "")).strip() in ("1", "True", "true") else "auto",
           "blocks_to_swap": "auto" if swap.lower().startswith("auto") else int(
               "".join(ch for ch in swap.split(" ")[0] if ch.isdigit()) or 0)}
@@ -803,10 +812,14 @@ def layout(desc, prefs, pref_path, samples=None):
             # a model that follows its Samples tab: what Studio renders with (the negative only matters above CFG 1)
             "follow_cfg": _num((samples or {}).get("cfg"), 1.0), "follow_steps": str((samples or {}).get("steps") or ""),
             "follow_turbo": (samples or {}).get("turbo_name", "") if (samples or {}).get("turbo_live") else "",
-            # the desktop's note: a preview checkpoint set in Preferences (Qwen's Turbo) renders at its own recipe
+            # a preview checkpoint in use (set in Preferences, its Samples-tab tick on): where Studio renders
             "follow_ck": (f"Previews on the {ck[0].label.split(' (')[0]} - {ck[1].steps} steps, CFG {ck[1].cfg:g}. "
-                          f"Clear it in Preferences to preview with the Samples tab's settings instead.")
-            if ck is not None and have(ck[0].pref_key) else ""}
+                          + (f"Untick \"{desc.preview_checkpoint_tick.split(' (')[0]}\" on the Samples tab to preview on "
+                             "the model you train on." if desc.workbench_checkpoint_follows_tick
+                             else "Clear it in Preferences to preview with the Samples tab's settings instead."))
+            if ck is not None and have(ck[0].pref_key) and not (desc.workbench_checkpoint_follows_tick and
+                                                                 (samples or {}).get("checkpoint", True) is False)
+            else ""}
 
 
 def _model_eq(desc, look):

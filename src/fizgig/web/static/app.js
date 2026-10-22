@@ -82,7 +82,8 @@ async function boot() {
     for (const f of S.schema.families) sel.append(el("option", {value: f.key, text: f.gui_label || f.display_name}));
   }
   await chooseFamily(st.family && S.schema.order.includes(st.family) ? st.family : S.schema.order[0]);
-  if (st.tab) showTab(st.tab);
+  showTab("start");                // Fizgig always opens on Start (its News card), never the last tab used
+  newsCard();
   wire();
   $("podsTabBtn").style.display = S.onPod ? "none" : "";      // on a pod there's nothing to connect to
   $("sideDeploy").style.display = S.onPod ? "none" : "";      // ...nor a pod to deploy
@@ -114,7 +115,9 @@ async function chooseFamily(key) {
     }
   }
   if (S.trigger !== undefined) S.values.CAPTION_TRIGGER_WORD = S.trigger;     // the folder's, not the model's
-  S.values.__SAMPLE_LIVE = false;            // a live preview change is for one run, never remembered
+  // on whenever a form loads: a change made here while a run trains goes to its next previews (only a change is
+  // sent, so a run started from the queue keeps its own prompts until you change something)
+  S.values.__SAMPLE_LIVE = true;
   renderAll();
   await refreshState();
   saveState();
@@ -135,12 +138,19 @@ const saveTriggerSoon = debounce((word) => api("/api/trigger", {folder: S.imageF
 
 function defaults() {
   const v = {};
-  for (const s of S.fam.form.sections) for (const r of s.rows) if (r.kind !== "note" && r.kind !== "shown") v[r.key] = r.default;
+  for (const s of S.fam.form.sections) for (const r of s.rows) if (r.kind !== "note" && r.kind !== "shown") {
+    v[r.key] = r.default;
+    for (const p of r.parts || []) v[p.key] = p.default;   // a control of several values (the preview cadence)
+  }
   return v;
 }
 
 function renderAll() {
   $("familyNotes").textContent = S.fam.model_note || "";
+  for (const st of document.querySelectorAll(".family-status")) {    // the model's status line (description status_note)
+    st.textContent = S.fam.status_note || "";
+    st.style.display = S.fam.status_note ? "" : "none";
+  }
   renderSections("samples", $("samplesForm"));
   renderSections("training", $("trainingForm"));
   renderPresets();
@@ -237,11 +247,20 @@ function renderSections(tab, host) {
 function renderRow(r) {
   // its kind sets its layout (style.css): boxes in the grid, switches as tiles, a choice of pills, files and notes
   // across the card - from the schema's row kind, so every model's form lays out the same way
-  const kind = {check: "check", radio: "radio", note: "note", text: "wide", path: "wide", folder: "wide", shown: "wide"}[r.kind] || "field";
-  const wrap = el("div", {class: "form-row kind-" + kind, "data-key": r.key});
+  const kind = {check: "check", radio: "radio", note: "note", text: "wide", path: "wide", folder: "wide", shown: "wide",
+    cadence: "cadence", split: "cadence"}[r.kind] || "field";
+  const wrap = el("div", {class: "form-row kind-" + kind + (r.featured ? " row-featured" : "") +
+    (r.boxed ? " row-boxed" : ""), "data-key": r.key});
   if (r.kind === "shown") {                       // a value from elsewhere (the Start tab's folder), read-only here
-    wrap.append(el("div", {class: "field-row"}, el("span", {class: "field-label", text: r.label + ":"}),
-      el("input", {type: "text", class: "w-path", id: "note_" + r.key, readonly: true, tabindex: -1})));
+    const shownRow = el("div", {class: "field-row"}, el("span", {class: "field-label", text: r.label + ":"}),
+      el("input", {type: "text", class: "w-path", id: "note_" + r.key, readonly: true, tabindex: -1}));
+    if (r.sets_training_folder) {                 // the training folder itself (an edit's Edited folder, #217): choosing
+      shownRow.append(el("button", {class: "btn", text: "Choose…",          // it here sets the Start tab's
+        title: "Pick from what is on the machine running Fizgig - it becomes the training folder on the Start tab",
+        onclick: () => pick(S.imageFolder, true, (p) => {
+          $("imageFolder").value = p; $("imageFolder").dispatchEvent(new Event("change")); })}));
+    }
+    wrap.append(shownRow);
     if (r.hint) wrap.append(el("div", {class: "field-hint", text: r.hint}));
     return wrap;
   }
@@ -255,6 +274,8 @@ function renderRow(r) {
   let input;
   const set = (val) => onValue(r, val);
   if (r.kind === "blocks") return blockPicker(r, wrap);
+  if (r.kind === "cadence") return cadenceRow(r, wrap);
+  if (r.kind === "split") return splitRow(r, wrap);
   if (r.kind === "check") {
     input = el("input", {type: "checkbox", id: "f_" + r.key, onchange: (e) => set(e.target.checked)});
     input.checked = !!v;
@@ -357,7 +378,135 @@ function renderRow(r) {
     if (r.hint.includes("\n")) h.style.whiteSpace = "pre-line";
     wrap.append(h);
   }
+  if (r.bold) wrap.append(el("div", {class: "field-hint"}, el("b", {text: r.bold})));   // a line the row stresses
   if (link) wrap.append(el("div", {class: "field-hint"}, link));
+  if (r.warn) wrap.append(el("div", {class: "field-hint tc-warn"}, r.warn, r.warn_link ? el("a", {class: "inline-link",
+    target: "_blank", rel: "noopener", href: r.warn_link, text: " Best values: the Reddit discussion →"}) : ""));
+  return wrap;
+}
+
+// How often to preview: one sentence of boxes - "Every [N] epochs", then (ticked) "then from epoch [10], every
+// [1] epochs" - each box its own value, greyed one by one (refreshState reads data-field / data-part). Ticking it
+// fills in the row's tick_fills (every 5) while the first box is still at its default, and unticking puts that back
+function cadenceRow(r, wrap) {
+  const [later, until, after] = r.parts.map((p) => p.key);
+  const num = (key) => {
+    const i = el("input", {type: "text", inputmode: "numeric", class: "cad-num", id: "f_" + key, "data-field": key,
+      oninput: (e) => onValue({key}, e.target.value)});
+    i.value = S.values[key] ?? "";
+    return i;
+  };
+  const tick = el("input", {type: "checkbox", id: "f_" + later, "data-field": later, onchange: (e) => {
+    S._cadFilled = S._cadFilled || {};            // what the tick filled in, so unticking undoes only that
+    for (const [k, v] of Object.entries(r.tick_fills || {})) {
+      if (e.target.checked && String(S.values[k] ?? "") === String(r.default)) {
+        S.values[k] = v; S._cadFilled[k] = v; syncInputs([k]);
+      } else if (!e.target.checked && S._cadFilled[k] !== undefined && String(S.values[k]) === String(v)) {
+        S.values[k] = r.default; syncInputs([k]);
+      }
+      if (!e.target.checked) delete S._cadFilled[k];
+    }
+    onValue({key: later}, e.target.checked);
+  }});
+  tick.checked = !!S.values[later];
+  wrap.append(el("div", {class: "cad-title", text: r.label}),
+    el("div", {class: "cad-line"}, el("span", {text: "Every"}), num(r.key), el("span", {text: "epochs"})),
+    el("div", {class: "cad-line", "data-part": later},
+      el("label", {class: "cad-tick"}, tick, el("span", {text: "then from epoch"})),
+      el("span", {class: "cad-pair"}, num(until)),
+      el("span", {class: "cad-pair"}, el("span", {text: "every"}), num(after), el("span", {text: "epochs"}))),
+    el("div", {class: "field-hint row-note", id: "note_" + r.key}),
+    el("div", {class: "field-hint", "data-part": later, text: r.hint}));
+  return wrap;
+}
+
+// An entry with a Split mode (MOSS-Image's Clean-end share): Single is one value, Split a value for the first
+// epochs and another for the rest, Slide (when the row has one) a value held to an epoch, then easing down to another
+// by a later epoch. It stays one text - "30", "75:5:40" or "75:6:40:10" - so presets, Last Train and the queue carry
+// it as any entry; each mode remembers its own numbers while you switch between them
+function splitRow(r, wrap) {
+  // a row without Split shows a split value (75:5:40) as a Slide that drops at once (75:5:40:5)
+  const modeOf = () => { const n = String(S.values[r.key] ?? "").split(":").length;
+    return (n === 4 || n === 5) && r.slide ? "Slide" : n === 3 ? (r.split ? "Split" : "Slide") : "Single"; };
+  const partsOf = () => { const p = String(S.values[r.key] ?? "").split(":");
+    return p.length === 3 && !r.split ? [...p, p[1]] : p; };
+  S._split = S._split || {};
+  const m0 = modeOf();
+  const mem = S._split[r.key] = S._split[r.key] || {
+    single: m0 === "Single" ? String(S.values[r.key] ?? "") : String(r.single ?? (String(r.default ?? "").includes(":") ? "" : r.default ?? "")),
+    split: m0 === "Split" ? partsOf() : (r.split || []).slice(), slide: m0 === "Slide" ? partsOf() : (r.slide || []).slice()};
+  if (mem.slide.length === 5) { mem.every = mem.slide[4]; mem.slide = mem.slide.slice(0, 4); }   // the tick's number apart
+  const unit = (r.suffix || "").split(" ")[0];
+  const write = () => {
+    const m = modeOf();
+    if (m === "Split") { mem.split = [first, until, rest].map((i) => i.value.trim()); onValue(r, mem.split.join(":")); }
+    else if (m === "Slide") {          // the refresh tick adds its "every N" as a fifth number
+      mem.slide = [sFirst, sHold, sRest, sBy].map((i) => i.value.trim());
+      mem.every = sEvery.value.trim() || mem.every || "3";
+      sFirstEcho.textContent = sFirst.value;     // "one epoch at 75%" follows the first box
+      sEvery.disabled = !sTick.checked;
+      onValue(r, [...mem.slide, ...(sTick.checked ? [mem.every] : [])].join(":"));
+    }
+    else { mem.single = one.value.trim(); onValue(r, mem.single); }
+  };
+  const box = () => el("input", {type: "text", inputmode: "numeric", class: "cad-num", oninput: write});
+  const one = box(), first = box(), until = box(), rest = box();
+  const sFirst = box(), sHold = box(), sRest = box(), sBy = box(), sEvery = box();
+  const sTick = el("input", {type: "checkbox", onchange: write});
+  const sFirstEcho = el("span");                   // "one epoch at 75%": the first share, as typed
+  const pills = el("div", {class: "radio-row"});
+  for (const c of ["Single", ...(r.split ? ["Split"] : []), ...(r.slide ? ["Slide"] : [])]) {
+    pills.append(el("label", {class: "checkbox-label"}, el("input", {type: "radio", name: "split_" + r.key, value: c,
+      onchange: () => { onValue(r, c === "Split" ? mem.split.join(":") : c === "Slide" ? [...mem.slide,
+          ...(mem.every && mem.slideTick !== false ? [mem.every] : [])].join(":") : mem.single);
+        show(); }}), " " + c));
+  }
+  const lineOne = el("div", {class: "cad-line"}, one, el("span", {text: r.suffix || ""}));
+  const lineSplit = el("div", {class: "cad-line"},
+    el("span", {class: "cad-pair"}, first, el("span", {text: unit + " for the first"})),
+    el("span", {class: "cad-pair"}, until, el("span", {text: "epochs, then"})),
+    el("span", {class: "cad-pair"}, rest, el("span", {text: unit})));
+  const lineSlide = el("div", {class: "cad-line"},
+    el("span", {class: "cad-pair"}, sFirst, el("span", {text: unit + " until epoch"})),
+    el("span", {class: "cad-pair"}, sHold, el("span", {text: "then down to"})),
+    el("span", {class: "cad-pair"}, sRest, el("span", {text: unit + " by epoch"})),
+    el("span", {class: "cad-pair"}, sBy));
+  const lineRefresh = (r.slide || []).length > 4 ? el("div", {class: "cad-line"},
+    el("label", {class: "cad-tick"}, sTick, el("span", {text: "then every"})),
+    el("span", {class: "cad-pair"}, sEvery, el("span", {}, "epochs, one epoch at ", sFirstEcho, unit))) : null;
+  const hintOne = el("div", {class: "field-hint", text: r.hint});
+  const hintSplit = el("div", {class: "field-hint", text: r.split_hint || r.hint});
+  const hintSlide = el("div", {class: "field-hint", text: r.slide_hint || r.hint});
+  function show() {
+    const m = modeOf();
+    pills.querySelectorAll("input").forEach((rb) => { rb.checked = rb.value === m; });
+    if (m === "Split") { mem.split = partsOf(); [first.value, until.value, rest.value] = mem.split; }
+    else if (m === "Slide") {
+      const p = partsOf();
+      mem.slide = p.slice(0, 4); [sFirst.value, sHold.value, sRest.value, sBy.value] = mem.slide;
+      sTick.checked = p.length === 5;
+      if (p.length === 5) mem.every = p[4];
+      sEvery.value = mem.every || (r.slide || [])[4] || "3";
+      sEvery.disabled = !sTick.checked;
+      sFirstEcho.textContent = sFirst.value;
+    }
+    else { one.value = S.values[r.key] ?? ""; mem.single = one.value; }
+    for (const [node, on] of [[lineOne, m === "Single"], [hintOne, m === "Single"], [lineSplit, m === "Split"],
+                              [hintSplit, m === "Split"], [lineSlide, m === "Slide"], [lineRefresh, m === "Slide"],
+                              [hintSlide, m === "Slide"]]) {
+      if (node) node.style.display = on ? "" : "none";
+    }
+  }
+  const sync = el("input", {type: "hidden", id: "f_" + r.key});    // syncInputs (a preset, Last Train) redraws it
+  sync._sync = show;
+  sTick.addEventListener("change", () => { mem.slideTick = sTick.checked; });
+  wrap.append(el("div", {class: "cad-title", text: r.label}), pills, lineOne, lineSplit, lineSlide, ...(lineRefresh ? [lineRefresh] : []),
+    hintOne, hintSplit,
+    hintSlide, sync,
+    el("div", {class: "field-hint row-note", id: "note_" + r.key}));
+  if (r.warn) wrap.append(el("div", {class: "field-hint tc-warn"}, r.warn, r.warn_link ? el("a", {class: "inline-link",
+    target: "_blank", rel: "noopener", href: r.warn_link, text: " Best values: the Reddit discussion →"}) : ""));
+  show();
   return wrap;
 }
 
@@ -390,7 +539,9 @@ function blockPicker(r, wrap) {
 function onValue(r, val) {
   S.values[r.key] = val;
   if (r.key === "__SAMPLE_LIVE" || (S.values.__SAMPLE_LIVE &&
-      ["SAMPLE_PROMPT", "SAMPLE_SEED", "SAMPLE_WIDTH", "SAMPLE_HEIGHT"].includes(r.key))) sampleLiveSoon();
+      ["SAMPLE_PROMPT", "SAMPLE_SEED", "SAMPLE_WIDTH", "SAMPLE_HEIGHT", "SAMPLE_STEPS", "SAMPLE_CFG_SCALE",
+       "FAMILY_TURBO_STRENGTH", "SAMPLE_EVERY_N_EPOCHS", "SAMPLE_LATER", "SAMPLE_UNTIL_EPOCH",
+       "SAMPLE_EVERY_AFTER", "FAMILY_PREVIEW_LOOK"].includes(r.key))) sampleLiveSoon();
   if (r.key === "CAPTION_TRIGGER_WORD") { S.trigger = String(val).trim(); $("capTrigger").value = S.trigger; saveTriggerSoon(S.trigger); }
   const extra = r.sets && r.sets[val];            // a kind of training that also sets others (Fine-tune's LR)
   if (extra) { Object.assign(S.values, extra); syncInputs(Object.keys(extra)); }
@@ -425,12 +576,14 @@ function syncInputs(keys) {
       fillCombo(i, row.choices, S.values[k], row.labels);
       continue;
     }
+    if (i._sync) { i._sync(); continue; }         // a control that draws itself from the value (splitRow)
     if (i.type === "checkbox") i.checked = !!S.values[k]; else i.value = S.values[k] ?? "";
   }
 }
 
 async function refreshState() {
   S.state = await api("/api/form/state", {family: S.family, values: S.values, image_folder: S.imageFolder});
+  if (S.state.poll) setTimeout(refreshStateSoon, 2000);     // a download under way: its note moves on
   const force = Object.keys(S.state.force || {});      // what a setting turns off (automagic3: Adaptive LR...)
   if (force.length) { Object.assign(S.values, S.state.force); syncInputs(force); saveStateSoon(); }
   const hidden = new Set(S.state.hidden), disabled = new Set(S.state.disabled);
@@ -445,12 +598,27 @@ async function refreshState() {
     const lab = row.querySelector(".field-label"), rowDef = (S.fam.form.sections.flatMap((s) => s.rows)
       .find((r) => r && r.key === k));
     if (lab && rowDef) lab.textContent = ((S.state.labels || {})[k] || rowDef.label) + ":";
-    row.querySelectorAll("input,select,textarea,button").forEach((i) => { i.disabled = disabled.has(k); });
+    // a control of several values greys and hides each of its parts by its own key
+    row.querySelectorAll("input,select,textarea,button").forEach((i) => { i.disabled = disabled.has(i.dataset.field || k); });
+    row.querySelectorAll("[data-part]").forEach((p) => { p.style.display = hidden.has(p.dataset.part) ? "none" : ""; });
+    // single choices greyed in a row of pills (Fizgig LoRA Isolation with one subject)
+    const off = ((S.state.disabled_choices || {})[k]) || {};       // {choice: why}, the why on hover
+    row.querySelectorAll(`input[type="radio"][name="f_${k}"]`).forEach((rb) => {
+      if (rb.value in off) rb.disabled = true;
+      const lab = rb.closest("label");
+      lab.classList.toggle("choice-off", rb.disabled);
+      lab.title = off[rb.value] || "";
+    });
     // a greyed box shows what that run will really use (the Distilled's steps / CFG), the form's own value kept
     const shown = (S.state.shown || {})[k], box = $("f_" + k);
     if (box && shown !== undefined && disabled.has(k)) { box.value = shown; box.dataset.shown = "1"; }
     else if (box && box.dataset.shown) { delete box.dataset.shown; syncInputs([k]); }
     const n = $("note_" + k);
+    if (n && k === "__SAMPLE_LIVE") {          // its note follows the run (liveNote), not the form's state
+      S._liveNoteFor = undefined;
+      liveNote(!!(S.run && (S.run.running || S.run.state === "starting")));
+      return;
+    }
     if (n) {
       if (n.tagName === "INPUT") { n.value = S.state.notes[k] || ""; return; }
       if (n.classList.contains("note-lines")) {    // one line each, "Label: text" with the label bold (Subjects card)
@@ -473,33 +641,60 @@ async function refreshState() {
 }
 
 // Steps and CFG follow the Turbo LoRA, as the desktop's Samples tab: its own (Qwen: 8 steps, CFG 1) while it renders -
-// file set in Preferences AND strength above 0 - else the plain model's (Qwen: 25, CFG 3). They switch on a first visit
-// or when the turbo turned on or off since last seen (the file set, or the strength moved across 0), and only a box
-// still on the other side's default, so a value you typed is never replaced.
+// file set in Preferences AND strength above 0 - else the plain model's (Qwen: 25, CFG 3). Only an empty box or one on
+// another of these defaults switches, so a value you typed is never replaced.
 // A preview-checkpoint tick (Klein's / Flux 3's distilled) does the same with its row's follow: ticked with the file
 // set, Steps shows the distilled's own count (Flux 3: 16), unticked the Base's (50).
+// A model with both (Qwen Image 2.1, MOSS-Image) gets one answer for the boxes they share: a ticked preview checkpoint's
+// own values, else a live Turbo's, else the plain model's. Each used to switch the boxes on its own, so an unticked
+// checkpoint put the plain model's 25 steps, CFG 3 back under a live Turbo LoRA (noisy previews). A box still on any
+// of the defaults is put right when the form loads, which also mends a form saved in that state; after that the boxes
+// move only when a switch changes, so steps typed by hand stay (they used to snap back to the mode's default).
 function turboFollow() {
-  for (const s of S.fam.form.sections) for (const row of s.rows) {
-    if (!row || !(row.turbo || row.follow)) continue;
-    let live, flag, sides;
-    if (row.turbo) {
+  const rows = [];
+  for (const s of S.fam.form.sections) for (const row of s.rows) if (row && (row.turbo || row.follow)) rows.push(row);
+  if (!rows.length) return;
+  const want = {}, known = {}, flags = {};
+  const note = (side) => { for (const [k, v] of Object.entries(side)) (known[k] = known[k] || []).push(parseFloat(v)); };
+  for (const row of rows) {
+    const sides = row.turbo || row.follow;
+    note(sides.on); note(sides.off);
+    Object.assign(want, sides.off);
+  }
+  // the later pass wins the boxes they share: normally the preview checkpoint's own values, but a checkpoint that
+  // takes the Turbo LoRA (Kromoss) renders a live Turbo's steps and CFG
+  const order = S.state && S.state.checkpoint_turbo ? ["follow", "turbo"] : ["turbo", "follow"];
+  for (const pass of order) for (const row of rows) {
+    if (!row[pass]) continue;
+    let live;
+    if (pass === "turbo") {
       const raw = S.values.FAMILY_TURBO_STRENGTH;
       const strength = parseFloat(raw === undefined || raw === "" ? row.default : raw);
-      live = !!S.state.turbo_file && strength > 0; flag = "__turbo_live"; sides = row.turbo;
+      live = !!S.state.turbo_file && strength > 0; flags.__turbo_live = live;
     } else {
       const v = S.values[row.key];
-      live = !!S.state.checkpoint_file && !!(v === undefined ? row.default : v);
-      flag = "__follow_" + row.key; sides = row.follow;
+      live = !!S.state.checkpoint_file && !!(v === undefined ? row.default : v); flags["__follow_" + row.key] = live;
     }
-    if (S.values[flag] === live) continue;
-    const want = live ? sides.on : sides.off, other = live ? sides.off : sides.on;
-    const moved = Object.keys(want).filter((k) => S.values[k] === undefined || S.values[k] === "" ||
-      parseFloat(S.values[k]) === parseFloat(other[k]));        // "3.0" is the default 3
-    for (const k of moved) S.values[k] = want[k];
-    S.values[flag] = live;
-    syncInputs(moved);
-    saveStateSoon();
+    if (live) Object.assign(want, row[pass].on);
   }
+  const moved = Object.keys(want).filter((k) => {
+    const v = S.values[k];
+    if (v === undefined || v === "") return true;
+    return parseFloat(v) !== parseFloat(want[k]) && known[k].includes(parseFloat(v));   // "3.0" is the default 3
+  });
+  const flagsChanged = Object.entries(flags).some(([f, live]) => S.values[f] !== live);
+  const loading = S._turboFollowFor !== S.fam;       // the first pass for this model's form
+  S._turboFollowFor = S.fam;
+  if (!flagsChanged && !loading) return;
+  if (!moved.length && !flagsChanged) return;
+  for (const k of moved) S.values[k] = want[k];
+  Object.assign(S.values, flags);
+  syncInputs(moved);
+  saveStateSoon();
+  if (S.values.__SAMPLE_LIVE && moved.length) sampleLiveSoon();
+  // what hangs on the moved values (the negative box shows only above CFG 1) is worked out again from them; the next
+  // pass finds nothing to move, so this settles after one round
+  if (moved.length) refreshStateSoon();
 }
 const refreshStateSoon = debounce(refreshState, 250);
 
@@ -667,15 +862,25 @@ function fetchRow(f) {
   const box = el("div", {class: "fetch-row"});
   const opt = f.fetch_optional_label ? el("input", {type: "checkbox"}) : null;
   const token = gated.length ? el("input", {type: "password", class: "w-path", placeholder: "hf_…"}) : null;
+  // a file offered with another build (MOSS-Image Base or Kromoss): a pick, starting on the one its path holds now
+  const picks = files.filter((m) => m.fetch_choice && m.fetch_choice.length === 2 && m.alt_repo && m.alt_path).map((m) => {
+    const sel = el("select", {}, el("option", {value: "main", text: m.fetch_choice[0]}),
+      el("option", {value: "alt", text: m.fetch_choice[1]}));
+    const cur = String(S.prefs[m.pref_key] || "").split(/[\\/]/).pop();
+    sel.value = cur && cur === m.alt_path.split("/").pop() ? "alt" : "main";
+    return {key: m.pref_key, sel, label: m.label};
+  });
   const btn = el("button", {class: "btn btn-accent", text: "⬇ Download models for me", onclick: async () => {
     try {
-      await api("/api/fetch", {family: f.key, token: token ? token.value.trim() : "", optional: opt ? opt.checked : false});
+      await api("/api/fetch", {family: f.key, token: token ? token.value.trim() : "", optional: opt ? opt.checked : false,
+        choices: Object.fromEntries(picks.map((p) => [p.key, p.sel.value]))});
       if (token) token.value = "";
       S.fetchError = null;
       watchFetch();
     } catch (e) { S.fetchError = {family: f.key, text: e.message}; paintFetch(); }
   }});
   const line = el("div", {class: "field-row"}, btn);
+  for (const p of picks) line.append(el("label", {class: "fetch-opt"}, p.label + ": ", p.sel));
   if (opt) line.append(el("label", {class: "fetch-opt"}, opt, " " + f.fetch_optional_label));
   box.append(line);
   if (token) {
@@ -768,6 +973,8 @@ function gpuPickCard() {
 // where uploads go: Preferences' training data folder (the desktop's Input Directories > Training images), else
 // training_data inside Fizgig
 function showUploadRoot() {
+  // on the machine running Fizgig, Choose… picks the folder itself: uploading would only copy it
+  $("uploadCard").style.display = pageIsElsewhere() ? "" : "none";
   api("/api/upload/root").then((d) => {
     S.uploadRoot = d;
     if (!S.onPod) $("imageFolder").placeholder = d.root + (d.root.includes("\\") ? "\\" : "/") + "my_subject";
@@ -1050,9 +1257,9 @@ async function check() {
   } catch (e) { showProblems([e.message]); }
 }
 
-async function start(path) {
+async function start(path, body) {
   try {
-    const r = await api(path, path === "/api/start" ? runBody() : {});
+    const r = await api(path, path === "/api/start" ? runBody() : (body || {}));
     showProblems(r.problems || (r.error ? [r.error] : []));    // stays up: the run line below refreshes itself
     pollRun();
   } catch (e) { showProblems([e.message]); }
@@ -1064,13 +1271,22 @@ async function start(path) {
 const SIZE_KEYS = {DATASET_MEGAPIXELS: "Target Megapixels", CLIP_MEGAPIXELS: "Clip Megapixels"};
 async function resumeClick() {
   const r = S.run || {}, was = r.values || {}, box = $("resumeChoice");
+  // the previews as the Samples tab has them now (prompts, seed, size, steps, CFG, Turbo strength, the preview
+  // checkpoint tick), block swap, the save schedule and the learning rate go with the resume
+  const samples = r.family === S.family ? Object.fromEntries(["SAMPLE_PROMPT", "SAMPLE_SEED", "SAMPLE_WIDTH",
+    "SAMPLE_HEIGHT", "SAMPLE_STEPS", "SAMPLE_CFG_SCALE", "FAMILY_TURBO_STRENGTH", "SAMPLE_CHECKPOINT", "BLOCKS_SWAP",
+    "FAMILY_PREVIEW_LOOK",
+    "SAMPLE_EVERY_N_EPOCHS", "SAMPLE_LATER", "SAMPLE_UNTIL_EPOCH", "SAMPLE_EVERY_AFTER",
+    "SAVE_EVERY_N_EPOCHS", "SAVE_LATER", "SAVE_UNTIL_EPOCH", "SAVE_EVERY_AFTER",
+    "LEARNING_RATE", "ADAPTIVE_LR_MIN", "ADAPTIVE_LR_MAX"]
+    .filter((k) => k in S.values).map((k) => [k, S.values[k]])) : {};
   const diff = r.family === S.family ? Object.keys(SIZE_KEYS).filter((k) => S.values[k] !== undefined &&
     String(S.values[k]).trim() !== "" && Number(S.values[k]) !== Number(was[k])) : [];
-  if (!diff.length) { box.style.display = "none"; return start("/api/resume"); }
+  if (!diff.length) { box.style.display = "none"; return start("/api/resume", {samples}); }
   const say = diff.map((k) => `${SIZE_KEYS[k]} ${was[k] || "?"} → ${S.values[k]}`).join(", ");
   const go = (body) => async () => {
     box.style.display = "none";
-    try { const x = await api("/api/resume", body); showProblems(x.problems || (x.error ? [x.error] : [])); }
+    try { const x = await api("/api/resume", {...body, samples}); showProblems(x.problems || (x.error ? [x.error] : [])); }
     catch (e) { showProblems([e.message]); }
     pollRun();
   };
@@ -1094,6 +1310,7 @@ async function pollRun() {
   $("podStopKeep").textContent = ps.counting ? "Keep the pod running" : "OK";      // a result note: dismissed
   $("podStopText").textContent = ps.counting ? `Stopping this pod in ${ps.left} s so it stops billing.` : ps.note || "";
   const r = S.run, live = r.running || r.state === "starting";
+  liveNote(live);
   const label = RUN_LABELS[r.state] || r.state;
   $("runStatus").textContent = r.lora ? `${label}: ${r.lora}${r.stage ? " · " + r.stage : ""}` : label;
   $("runBadge").textContent = label;
@@ -1111,6 +1328,10 @@ async function pollRun() {
   renderWebQueue(r.web_queue || {items: []});
   queueSummary(r.web_queue || {items: []}, r);
   runLossTick(live);
+  // Per-image loss on the run card while a run with the per-image loss tick trains (Runs & outputs has it after)
+  const ilOn = live && r.history_id && (r.values || {}).KREA2_LOSS_WATCH;
+  $("btnImageLoss").style.display = ilOn ? "" : "none";
+  if (!ilOn) $("runImageLoss").style.display = "none";
   // Sample now / Save now: while a LoRA trains (a fine-tune saves and previews at whole rotations)
   const runDesc = S.schema.families.find((f) => f.key === r.family);
   const ftRun = r.values && r.values.FAMILY_KIND && /fine-tune/i.test(String(r.values.FAMILY_KIND));
@@ -1161,9 +1382,12 @@ function queueSummary(q, r) {
   const items = q.items || [], n = items.length;
   const side = $("sideQueue"), up = $("runUpNext");
   side.style.display = up.style.display = n ? "" : "none";
-  if (!n) return;
+  if (!n) { S.queueSumSig = null; return; }
   const text = q.held ? `Queue held: ${q.reason || "press Start queue to carry on"}` :
     q.waiting ? `Queue waiting: ${q.waiting}` : "";
+  const sig = JSON.stringify([text, q.held, q.reason, q.waiting, items.map((it) => [it.id, it.lora])]);
+  if (sig === S.queueSumSig) return;              // as renderWebQueue: a rebuild mid-click drops Start queue's click
+  S.queueSumSig = sig;
   side.classList.toggle("held", !!q.held);
   const badge = $("sideQueueBadge");
   badge.textContent = q.held ? "Held" : q.waiting ? "Waiting" : `${n} queued`;
@@ -1194,6 +1418,11 @@ function renderWebQueue(q) {
   $("webQueueHold").style.display = q.held || !items.length ? "none" : "";
   $("webQueueClear").style.display = items.length ? "" : "none";
   S.queueIds = items.map((it) => it.id);
+  // rebuilt only when the queue changes: rebuilding on every poll replaced a button between press and release, and
+  // the browser dropped that click (Remove sometimes did nothing)
+  const sig = JSON.stringify(items.map((it) => [it.id, it.lora, it.family, it.image_folder, it.queued_at]));
+  if (sig === S.queueSig) return;
+  S.queueSig = sig;
   const famName = (k) => ((S.schema.families.find((f) => f.key === k) || {}).display_name) || k;
   const host = $("webQueueList");
   host.innerHTML = "";
@@ -1222,19 +1451,29 @@ function renderWebQueue(q) {
 function followLog() {
   const src = S.logSrc = new EventSource(`/api/log?since=${S.logSince}&t=${encodeURIComponent(TOKEN)}`);
   const out = $("console");
+  // the console as finished lines (body) and the line still being written (tail: a progress bar's latest state),
+  // drawn at most every 50 ms. A new tab replays the run's backlog (up to 5000 lines) at once, and rewriting the
+  // whole console and laying it out again for every line froze the page on a long run
+  const t0 = out.textContent, nl = t0.lastIndexOf("\n");
+  let body = t0.slice(0, nl + 1), tail = t0.slice(nl + 1), done = [], queued = false;
+  const flush = () => {
+    queued = false;
+    const atEnd = out.scrollTop + out.clientHeight >= out.scrollHeight - 30;
+    if (done.length) { body = (body + done.join("")).slice(-200000); done = []; }
+    out.textContent = body + tail;
+    if (atEnd) out.scrollTop = out.scrollHeight;
+  };
   src.onmessage = (e) => {
     S.logSince = Number(e.lastEventId) || S.logSince;
     const line = JSON.parse(e.data);
-    if (line === "\u0000clear\n") { out.textContent = ""; return; }   // a new run: its own log from here
-    const atEnd = out.scrollTop + out.clientHeight >= out.scrollHeight - 30;
-    // a progress bar redraws itself with \r: keep only its latest state
-    const text = out.textContent;
-    if (line.includes("\r") && !line.endsWith("\n")) {
-      out.textContent = text.slice(0, text.lastIndexOf("\n") + 1) + line.split("\r").pop();
-    } else {
-      out.textContent = (text + line.split("\r").pop()).slice(-200000);
+    if (line === "\u0000clear\n") { body = tail = ""; done = []; }   // a new run: its own log from here
+    else if (line.includes("\r") && !line.endsWith("\n")) tail = line.split("\r").pop();   // a progress bar redraws
+    else {
+      const all = tail + line.split("\r").pop(), cut = all.lastIndexOf("\n") + 1;
+      if (cut) done.push(all.slice(0, cut));
+      tail = all.slice(cut);
     }
-    if (atEnd) out.scrollTop = out.scrollHeight;
+    if (!queued) { queued = true; setTimeout(flush, 50); }
   };
   src.onerror = () => { src.close(); if (S.logSrc === src) setTimeout(followLog, 3000); };
 }
@@ -1291,11 +1530,19 @@ function previewLabel(it) {
   return [`Epoch ${it.epoch}`, `Prompt ${it.idx + 1}`, it.strength != null && `strength ${it.strength}`]
     .filter(Boolean).join(" · ");
 }
-function previewFigure(it, prompts, eager) {
-  const prompt = it.idx != null && prompts ? prompts[it.idx] : "";
-  return el("figure", {class: "gallery-item", title: it.name}, mediaFor(it, eager && eager.has(it)),
+function previewFigure(it, prompts, eager, byEpoch) {
+  // its own epoch's prompt (recorded by the trainer, so a mid-run change shows), else the run's
+  const own = byEpoch && it.epoch != null && byEpoch[String(it.epoch)];
+  const prompt = it.idx == null ? "" : (own && own[it.idx]) || (prompts ? prompts[it.idx] : "");
+  return withMode(el("figure", {class: "gallery-item", title: it.name}, mediaFor(it, eager && eager.has(it)),
     el("figcaption", {}, el("b", {text: previewLabel(it)}), prompt ? el("span", {class: "preview-prompt", text: prompt}) : null,
-      el("span", {class: "preview-file", text: it.name})));
+      el("span", {class: "preview-file", text: it.name}))), it);
+}
+// the family's line on how this preview was made (the run's record), shown over it in the lightbox
+function withMode(fig, it) {
+  const L = S.galleryLabels;
+  if (L && it.epoch != null && (!it.run || it.run === L.run)) fig._mode = L.labels[String(it.epoch)] || "";
+  return fig;
 }
 
 // prompts as rows, epochs as columns (full-strength pictures; a slider's strip is its own picture)
@@ -1311,9 +1558,9 @@ function previewGrid(items, prompts, eager) {
       el("th", {class: "prompt-head"}, el("b", {text: `Prompt ${i + 1}`}),
         prompts[i] ? el("span", {class: "preview-prompt", text: prompts[i]}) : null),
       ...epochs.map((e) => { const it = at.get(e + ":" + i);
-        return el("td", {}, it ? el("figure", {class: "gallery-item", title: it.name}, mediaFor(it, eager && eager.has(it)),
+        return el("td", {}, it ? withMode(el("figure", {class: "gallery-item", title: it.name}, mediaFor(it, eager && eager.has(it)),
           el("figcaption", {class: "visually-hidden"}, el("b", {text: previewLabel(it)}),
-            prompts[i] ? el("span", {text: " · " + prompts[i]}) : null)) : null); })));
+            prompts[i] ? el("span", {text: " · " + prompts[i]}) : null)), it) : null); })));
   }
   return el("div", {class: "gallery prompt-grid-wrap"}, table);
 }
@@ -1333,6 +1580,8 @@ async function loadGallery() {
   let g = await get(want);
   let run = want;
   if (!g.items.length && g.runs.length && !g.runs.includes(want)) { run = g.runs[0]; g = await get(run); }
+  previewMode(g.preview_mode);
+  S.galleryLabels = {run, labels: g.preview_labels || {}};        // the lightbox's line per epoch (previewFigure)
   const sel = $("galleryRun");
   sel.innerHTML = "";
   // "this run" while it trains; once it has ended it is the last run
@@ -1354,7 +1603,7 @@ async function loadGallery() {
   const top = epochs.length ? Math.max(...epochs) : null;
   const eager = new Set((top != null ? g.items.filter((it) => it.epoch === top) : g.items.slice(0, 3)).slice(0, 8));
   if (view === "grid" && g.items.length) host.append(previewGrid(g.items, g.prompts || [], eager));
-  else for (const it of g.items.slice(0, 120)) host.append(previewFigure(it, g.prompts || [], eager));
+  else for (const it of g.items.slice(0, 120)) host.append(previewFigure(it, g.prompts || [], eager, g.epoch_prompts));
   S.gal = {items: g.items, run, sig};
   likenessShow(dir, g.items, run, view);
   const others = g.runs.filter((r) => r !== run).length;
@@ -1434,7 +1683,7 @@ async function likenessPicker() {
   grid.innerHTML = "";
   $("likModal").classList.add("active");
   if (!folder) return;
-  const r = await api(`/api/captions?folder=${encodeURIComponent(folder)}&ext=${encodeURIComponent(capExt())}`).catch(() => ({items: []}));
+  const r = await api(`/api/captions?folder=${encodeURIComponent(folder)}&ext=${encodeURIComponent(capExt())}&family=${encodeURIComponent(S.family || "")}`).catch(() => ({items: []}));
   for (const it of r.items.filter((x) => LIK_PICS.test(x.name))) {
     const fig = el("figure", {title: it.name, onclick: () => {
       const i = S.lik.picked.indexOf(it.name);
@@ -1610,6 +1859,39 @@ async function loadCheckpoints() {
       onclick: (e) => { e.preventDefault(); S.ckptAll = !S.ckptAll; loadCheckpoints(); }}) : document.createTextNode(""));
 }
 
+// the Previews so far card: what this run's previews render with (recorded by the trainer when the run started)
+function previewMode(m) {
+  const box = $("galleryMode");
+  if (!box) return;
+  box.className = "preview-mode" + (m && m.turbo ? " turbo" : "");
+  if (!m) { box.style.display = "none"; return; }
+  const how = `${m.steps} steps, CFG ${Number(m.cfg).toFixed(1).replace(/\.0$/, "")}`;
+  box.textContent = m.turbo
+    ? `⚡ Turbo LoRA in use: ${m.turbo} at strength ${m.strength}, ${how}. ${m.turbo_note ? m.turbo_note + " " : ""}` +
+      "For full-quality previews, set Turbo " +
+      "LoRA strength to 0 above (Steps and CFG go back with it); tick Change the previews of the run going now " +
+      "for it to apply from this run's next preview."
+    : `Previews render on ${m.model || "the model being trained"}: ${how}, no Turbo LoRA.`;
+  box.style.display = "";
+}
+
+// ---- Start tab: the News card (fizgig/web/news.py, newest first) ----------------------------------------------
+function newsCard() {
+  const host = $("newsCard");
+  const items = (S.schema.news || []).slice(0, 3);
+  host.style.display = items.length ? "" : "none";
+  const body = $("newsBody");
+  body.innerHTML = "";
+  for (const it of items) {
+    const item = el("div", {class: "news-item"},
+      el("div", {class: "news-head"}, el("b", {text: it.title}), el("span", {class: "field-hint", text: " · " + it.date})));
+    for (const para of String(it.body || "").split("\n\n")) item.append(el("p", {class: "news-text", text: para}));
+    if (it.links && it.links.length) item.append(el("div", {class: "news-links"}, ...it.links.map((l) =>
+      el("a", {class: "inline-link", target: "_blank", rel: "noopener", href: l.href, text: l.text + " →"}))));
+    body.append(item);
+  }
+}
+
 // ---- Start tab: your training data (the folders in the training data folder) ---------------------------------
 async function loadDatasets() {
   try { S.datasets = await api("/api/datasets"); } catch (e) { return; }
@@ -1621,7 +1903,7 @@ async function loadDatasets() {
 
 // a dataset's pictures in the viewer, stepping through them all
 async function datasetPictures(d) {
-  const r = await api(`/api/captions?folder=${encodeURIComponent(d.path)}&ext=${encodeURIComponent(capExt())}`)
+  const r = await api(`/api/captions?folder=${encodeURIComponent(d.path)}&ext=${encodeURIComponent(capExt())}&family=${encodeURIComponent(S.family || "")}`)
     .catch(() => ({items: []}));
   const q = (p) => `/api/media?path=${encodeURIComponent(p)}&t=${encodeURIComponent(TOKEN)}`;
   const pics = r.items.filter((it) => /\.(png|jpe?g|webp|bmp|avif|gif)$/i.test(it.name))
@@ -1834,7 +2116,7 @@ function imageLossPanel(box, d, run) {
   const sort = el("select", {class: "w-combo"}, ...[["hard", "Hardest now first"], ["easy", "Easiest now first"],
     ["verdict", "By verdict"], ["name", "By name"]].map(([v, t]) => el("option", {value: v, text: t})));
   const show = el("select", {class: "w-combo"}, el("option", {value: "all", text: "All images"}),
-    el("option", {value: "problems", text: "Problems only (excluded, stuck, suspect, watch)"}));
+    el("option", {value: "problems", text: "Worth a look (excluded, stuck, suspect, watching)"}));
   const grid = el("div", {class: "il-grid"}), pager = el("div", {class: "field-row"});
   let page = 0;
   const draw = () => {
@@ -1846,7 +2128,7 @@ function imageLossPanel(box, d, run) {
     const pages = Math.max(1, Math.ceil(list.length / IL_PAGE));
     page = Math.min(page, pages - 1);
     grid.replaceChildren(...list.slice(page * IL_PAGE, (page + 1) * IL_PAGE).map((im) => imageLossTile(im, ymax, run, d.live)));
-    if (!list.length) grid.append(el("div", {class: "field-hint", text: "No image has a problem verdict."}));
+    if (!list.length) grid.append(el("div", {class: "field-hint", text: "No image needs a look right now."}));
     pager.replaceChildren(...(pages > 1 ? [
       el("button", {class: "btn btn-sm", text: "‹ Prev", disabled: page === 0, onclick: () => { page--; draw(); }}),
       el("span", {class: "field-hint", text: `page ${page + 1} of ${pages}`}),
@@ -1905,7 +2187,7 @@ function imageLossCaption(im, run, live) {
     box.style.display = "";
     box.replaceChildren(el("div", {class: "field-hint", text: "Loading…"}));
     let r;
-    try { r = await api(`/api/runs/caption?id=${encodeURIComponent(run.id)}&key=${encodeURIComponent(im.key)}&ext=${encodeURIComponent(capExt())}`); }
+    try { r = await api(`/api/runs/caption?id=${encodeURIComponent(run.id)}&key=${encodeURIComponent(im.key)}&ext=${encodeURIComponent(capExt())}&family=${encodeURIComponent(S.family || "")}`); }
     catch (e) { box.replaceChildren(el("div", {class: "problems", text: e.message})); return; }
     const ta = el("textarea", {rows: 5, class: "il-cap-text"});
     ta.value = r.caption;
@@ -2058,6 +2340,7 @@ async function rySheet(confirm) {
     }
     if (r.family !== $("ryFamily").value) await royaleFamily(r.family);
     $("ryCSheet").style.display = "none";
+    $("ryCStatus").textContent = "Starting…";    // the Render it button goes, so the poll's progress shows (#215)
     ryRemember(); ryTravelPoll();
   } catch (e) { $("ryCStatus").textContent = e.message; }
 }
@@ -2071,7 +2354,8 @@ async function ryTravelPoll() {
     running = running || t.state === "rendering";
     if (mode === "sheet") {
       $("ryCGo").disabled = t.state === "rendering";
-      if (t.status) $("ryCStatus").textContent = t.status;
+      // not over the big sheet's Render it button (#215, @Nessa2026691)
+      if (t.status && !$("ryCStatus").querySelector("button")) $("ryCStatus").textContent = t.status;
       if (t.state === "done" && t.sheet && S.ry.tr.sheet !== t.gen) {
         S.ry.tr.sheet = t.gen;
         $("ryCImg").src = `/api/royale/travel/image?mode=sheet&g=${t.gen}&t=${encodeURIComponent(TOKEN)}`;
@@ -2883,18 +3167,32 @@ async function runLossTick(training) {
   host.replaceChildren(lossGraph(d));
 }
 
-// the Samples tab's "Change the previews of the run going now": its prompts, seed and size go to the run as the
+// the Samples tab's "Change the previews of the run going now": its prompts, seed, size, steps, CFG and Turbo
+// strength go to the run as the
 // trainer's sample override while ticked (sent again on every change), and come off when it's unticked
 const sampleLiveSoon = debounce(async () => {
   const v = S.values, note = $("note___SAMPLE_LIVE");
   try {
     const r = await api("/api/run/sample_override", {on: !!v.__SAMPLE_LIVE, prompts: v.SAMPLE_PROMPT || "",
-      seed: v.SAMPLE_SEED, width: v.SAMPLE_WIDTH, height: v.SAMPLE_HEIGHT});
+      seed: v.SAMPLE_SEED, width: v.SAMPLE_WIDTH, height: v.SAMPLE_HEIGHT, steps: v.SAMPLE_STEPS,
+      cfg: v.SAMPLE_CFG_SCALE, turbo: v.FAMILY_TURBO_STRENGTH, every: v.SAMPLE_EVERY_N_EPOCHS,
+      until: v.SAMPLE_LATER ? v.SAMPLE_UNTIL_EPOCH : 0, after: v.SAMPLE_LATER ? v.SAMPLE_EVERY_AFTER : 0,
+      look: !!v.FAMILY_PREVIEW_LOOK});
     if (note) note.textContent = r.on ? "Sent: the run's next previews use these." : "The run is back on its own prompts.";
   } catch (e) {
-    if (note) note.textContent = e.message;
+    if (note) note.textContent = S.run && (S.run.running || S.run.state === "starting") ? e.message : liveIdleText();
   }
 }, 700);
+
+// the tick's note follows the run: what a change would do now, never an old message from before the run started
+const liveIdleText = () => "On: a change here goes to a run while it trains, from its next preview.";
+function liveNote(live) {
+  const note = $("note___SAMPLE_LIVE");
+  if (!note || S._liveNoteFor === live) return;
+  S._liveNoteFor = live;
+  note.textContent = !S.values.__SAMPLE_LIVE ? "" : live ?
+    "On: a change here goes to the run training now, from its next preview." : liveIdleText();
+}
 
 // a run's model, training folder and settings into the form (Start again, a queued run's Edit)
 async function loadIntoForm(s) {
@@ -2904,7 +3202,11 @@ async function loadIntoForm(s) {
   // a run recorded before it had a Turbo value: its steps and CFG follow the Turbo on now (refreshState)
   if (!("FAMILY_TURBO_STRENGTH" in kept)) delete S.values.__turbo_live;
   S.all[S.family] = S.values;
-  if (s.image_folder) { $("imageFolder").value = s.image_folder; S.imageFolder = s.image_folder; await loadTrigger(); }
+  if (s.image_folder) {
+    const was = S.imageFolder;
+    $("imageFolder").value = s.image_folder; S.imageFolder = s.image_folder; await loadTrigger();
+    if (S.imageFolder !== was) lookForget();
+  }
   renderSections("samples", $("samplesForm"));
   renderSections("training", $("trainingForm"));
   await refreshState();
@@ -2928,7 +3230,7 @@ async function runFiles(run) {
       .catch(() => ({items: [], prompts: []})),
     api("/api/checkpoints?dir=" + encodeURIComponent(run.output_dir)).catch(() => ({items: []}))]);
   const shots = g.items.slice(0, 12);
-  if (shots.length) out.push(el("div", {class: "gallery run-gallery"}, shots.map((it) => previewFigure(it, g.prompts))));
+  if (shots.length) out.push(el("div", {class: "gallery run-gallery"}, shots.map((it) => previewFigure(it, g.prompts, null, g.epoch_prompts))));
   const size = (b) => b >= 2 ** 30 ? (b / 2 ** 30).toFixed(1) + " GB" : (b / 2 ** 20).toFixed(0) + " MB";
   const ckpts = c.items.filter((it) => it.run === run.lora);
   if (ckpts.length) out.push(el("div", {class: "checkpoint-list"}, ckpts.map((it) => el("div", {class: "checkpoint-row"},
@@ -3186,6 +3488,14 @@ function prepTest() {
 }
 
 // ---- the Look Filter ----
+function lookForget() {
+  // a new training folder starts with no baselines or marks (#218); its own last scan, if any, comes back with the poll
+  Object.assign(S.prep, {bases: [], marked: new Set(), page: 0, picking: false});
+  $("lookPicker").style.display = "none";
+  lookBasesShow();
+  lookPoll();
+}
+
 async function lookPickOpen() {
   const host = $("lookPicker");
   if (S.prep.picking) { S.prep.picking = false; host.style.display = "none"; return; }
@@ -3193,7 +3503,7 @@ async function lookPickOpen() {
   S.prep.picking = true;
   host.style.display = "";
   host.replaceChildren(el("div", {class: "field-hint", text: "Loading the folder's pictures…"}));
-  const r = await api(`/api/captions?folder=${encodeURIComponent(S.imageFolder)}&ext=${encodeURIComponent(capExt())}`).catch(() => ({items: []}));
+  const r = await api(`/api/captions?folder=${encodeURIComponent(S.imageFolder)}&ext=${encodeURIComponent(capExt())}&family=${encodeURIComponent(S.family || "")}`).catch(() => ({items: []}));
   const pics = r.items.filter((it) => /\.(png|jpe?g|webp|bmp)$/i.test(it.name));
   host.replaceChildren(el("div", {class: "field-hint look-pick-hint", text: "Click the 3 pictures that best nail the look you want."}),
     ...pics.map((it) => el("button", {class: "look-tile pick" + (S.prep.bases.includes(it.path) ? " chosen" : ""),
@@ -3224,15 +3534,18 @@ async function lookScan() {
 
 async function lookPoll() {
   clearTimeout(S.prep.lookTimer);
+  if (S.prep.intro == null) S.prep.intro = $("lookStatus").textContent;    // the card's own words, for a new folder
   const r = await api("/api/look/status").catch(() => null);
   if (!r) return;
   S.prep.look = r;
   $("lookDecision").textContent = r.decision ? r.decision.replace("[faces] ", "") : "";
+  const mine = r.folder === S.imageFolder;        // the last scan may be of another folder
   if (r.state === "running") {
     $("lookStatus").textContent = r.progress[0] ? `Scoring faces… ${r.progress[0]}/${r.progress[1]}` :
       "Loading the face model and choosing the look match (the first time downloads about 300 MB)…";
     S.prep.lookTimer = setTimeout(lookPoll, 1000);
   } else if (r.state === "failed") $("lookStatus").textContent = r.error;
+  else if (r.state === "done" && r.rows.length && !mine) $("lookStatus").textContent = S.prep.intro;
   else if (r.state === "done" && r.rows.length) {
     if (!S.prep.bases.length) { S.prep.bases = r.baselines; lookBasesShow(); }
     const faces = r.rows.filter((x) => x.score != null).length;
@@ -5211,7 +5524,7 @@ async function capRun(path, body) {
 // while captioning runs: the captions written so far fill in every few seconds - never over one you're editing
 async function captionsLive() {
   if (!S.imageFolder || !document.querySelector("#tab-captions.active")) return;
-  const r = await api(`/api/captions?folder=${encodeURIComponent(S.imageFolder)}&ext=${encodeURIComponent(capExt())}`)
+  const r = await api(`/api/captions?folder=${encodeURIComponent(S.imageFolder)}&ext=${encodeURIComponent(capExt())}&family=${encodeURIComponent(S.family || "")}`)
     .catch(() => null);
   if (!r || !r.items) return;
   const now = new Map(r.items.map((i) => [i.name, i]));
@@ -5279,7 +5592,7 @@ async function loadCaptions() {
     "Choose the training folder on the Start tab first.";
   if (!S.imageFolder) { $("captionsSummary").textContent = "Choose the training folder on the Start tab."; return; }
   const ext = $("captionExt").value.trim() || ".txt";
-  const r = await api(`/api/captions?folder=${encodeURIComponent(S.imageFolder)}&ext=${encodeURIComponent(ext)}`);
+  const r = await api(`/api/captions?folder=${encodeURIComponent(S.imageFolder)}&ext=${encodeURIComponent(ext)}&family=${encodeURIComponent(S.family || "")}`);
   S.cap.items = r.items;
   renderCaptions();
 }
@@ -5982,16 +6295,50 @@ async function browse(path) {
   places.innerHTML = "";
   for (const p of r.places || []) places.append(el("button", {class: "btn btn-sm", text: p.name, title: p.path,
     onclick: () => browse(p.path)}));
+  S.pickListing = r;
+  $("pickerFilter").value = "";
+  pickerRender();
+}
+
+// the picker's list: folders first, then files, sorted by the chosen column (remembered), filtered by name
+const pickSort = {key: "name", desc: false};
+try { Object.assign(pickSort, JSON.parse(localStorage.getItem("fizgig.pickSort") || "{}")); } catch (e) { /* none saved */ }
+function pickerRender() {
+  const r = S.pickListing;
+  if (!r) return;
+  const q = $("pickerFilter").value.trim().toLowerCase();
+  const ext = (n) => (n.includes(".") ? n.slice(n.lastIndexOf(".") + 1) : "").toLowerCase();
+  const cmpName = (a, b) => a.name.localeCompare(b.name, undefined, {numeric: true, sensitivity: "base"});
+  const k = pickSort.key;
+  const cmp = (a, b) => {
+    let c = k === "name" ? 0 : k === "type" ? ext(a.name).localeCompare(ext(b.name)) : (a[k] ?? -1) - (b[k] ?? -1);
+    c = c || cmpName(a, b);
+    return pickSort.desc ? -c : c;
+  };
+  const when = (t) => t ? new Date(t * 1000).toLocaleString([], {year: "numeric", month: "short", day: "numeric",
+    hour: "2-digit", minute: "2-digit"}) : "";
+  const size = (n) => n == null ? "" : n < 1024 ? n + " B" : n < 2 ** 20 ? (n / 1024).toFixed(0) + " KB"
+    : n < 2 ** 30 ? (n / 2 ** 20).toFixed(1) + " MB" : (n / 2 ** 30).toFixed(2) + " GB";
+  const shown = (xs) => xs.filter((x) => !q || x.name.toLowerCase().includes(q)).sort(cmp);
+  const row = (x, dir, go) => el("div", {class: "picker-item" + (dir ? " dir" : ""), title: x.path, onclick: go}, [
+    el("span", {text: (dir ? "📁 " : "") + x.name}), el("span", {class: "m", text: when(k === "ctime" ? x.ctime : x.mtime)}),
+    el("span", {class: "z", text: dir ? "" : size(x.size)})]);
   const list = $("pickerList");
-  list.innerHTML = "";
-  for (const d of r.dirs) list.append(el("div", {class: "picker-item dir", text: "📁 " + d.name, onclick: () => browse(d.path)}));
-  if (!pickDir) {
-    for (const f of r.files) {
-      list.append(el("div", {class: "picker-item", text: f.name, onclick: () => {
-        $("pickerModal").classList.remove("active"); pickDone(f.path);
-      }}));
-    }
+  list.replaceChildren(...shown(r.dirs).map((d) => row(d, true, () => browse(d.path))),
+    ...(pickDir ? [] : shown(r.files).map((f) => row(f, false, () => { $("pickerModal").classList.remove("active"); pickDone(f.path); }))));
+  $("pickerSort").value = k;
+  $("pickerDir").textContent = pickSort.desc ? "↓" : "↑";
+  for (const h of document.querySelectorAll(".picker-head span")) {
+    h.classList.toggle("on", h.dataset.sort === k || (k === "ctime" && h.dataset.sort === "mtime"));
+    h.classList.toggle("desc", pickSort.desc);
   }
+  document.querySelector('.picker-head span[data-sort="mtime"]').textContent = k === "ctime" ? "Date created" : "Date modified";
+}
+function pickerSortBy(key, flip) {
+  if (flip && pickSort.key === key) pickSort.desc = !pickSort.desc;
+  else { pickSort.key = key; pickSort.desc = key !== "name" && key !== "type"; }   // dates and sizes: newest / biggest first
+  try { localStorage.setItem("fizgig.pickSort", JSON.stringify(pickSort)); } catch (e) { /* private window */ }
+  pickerRender();
 }
 
 // ---- Open on your phone: a QR code with a one-time pass (the server's /api/phone_link). It shows for 30 s when asked
@@ -6658,6 +7005,8 @@ function lightboxShow(i) {
   }
   $("lightboxImg").src = pic.src;
   $("lightboxName").textContent = pic.name;
+  $("lightboxMode").textContent = pic.mode || "";
+  $("lightboxMode").style.display = pic.mode ? "" : "none";
   $("lightboxPrev").style.visibility = i > 0 ? "" : "hidden";
   $("lightboxNext").style.visibility = i < S.lb.list.length - 1 ? "" : "hidden";
   $("lightbox").style.display = "";
@@ -6688,7 +7037,8 @@ function wireLightbox() {
       const fig = i.closest(".gallery-item, .caption-card");
       const cap = fig && fig.querySelector("figcaption, .caption-card-title");
       const label = cap ? [...cap.childNodes].map((n) => n.textContent).filter(Boolean).join(" · ") : "";
-      return {src: fullPicture(i.currentSrc || i.src), name: label || i.alt, cap: fig && fig._cap};
+      return {src: fullPicture(i.currentSrc || i.src), name: label || i.alt, cap: fig && fig._cap,
+              mode: (fig && fig._mode) || ""};
     });
     lightboxShow(imgs.indexOf(img));
   });
@@ -6758,6 +7108,14 @@ function wire() {
   wireStudio();
   wirePrep();
   $("presetSave").addEventListener("click", presetSaveOpen);
+  $("btnImageLoss").addEventListener("click", async () => {      // the same view as Runs & outputs, for the run going now
+    const box = $("runImageLoss"), id = S.run && S.run.history_id;
+    if (!id) return;
+    if (box.style.display !== "none") { box.style.display = "none"; return; }
+    box.style.display = ""; box.textContent = "Loading…";
+    try { imageLossPanel(box, await api("/api/runs/image_loss?id=" + encodeURIComponent(id)), {...S.run, id}); }
+    catch (e) { box.replaceChildren(el("div", {class: "problems", text: e.message})); }
+  });
   document.querySelectorAll(".tab-item").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
   document.querySelectorAll("[data-goto]").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.goto)));
   // the sidebar's run opens the run card itself (it sits under the Training form)
@@ -6768,7 +7126,11 @@ function wire() {
   for (const sel of document.querySelectorAll(".family-pick"))
     sel.addEventListener("change", (e) => chooseFamily(e.target.value));
   const folder = $("imageFolder");
-  const setFolder = () => { S.imageFolder = folder.value.trim(); loadTrigger(); refreshStateSoon(); saveStateSoon(); };
+  const setFolder = () => {
+    const was = S.imageFolder;
+    S.imageFolder = folder.value.trim(); loadTrigger(); refreshStateSoon(); saveStateSoon();
+    if (S.imageFolder !== was) lookForget();
+  };
   folder.addEventListener("change", setFolder);
   $("uploadFiles").addEventListener("change", (e) => { uploadFiles([...e.target.files]); e.target.value = ""; });
   $("uploadDir").addEventListener("change", (e) => {
@@ -6813,6 +7175,11 @@ function wire() {
     finally { $("pickerUpload").classList.remove("disabled"); }
   });
   $("pickerPath").addEventListener("change", (e) => browse(e.target.value));
+  $("pickerFilter").addEventListener("input", pickerRender);
+  $("pickerSort").addEventListener("change", (e) => pickerSortBy(e.target.value, false));
+  $("pickerDir").addEventListener("click", () => pickerSortBy(pickSort.key, true));
+  for (const h of document.querySelectorAll(".picker-head span"))
+    h.addEventListener("click", () => pickerSortBy(h.dataset.sort === "mtime" && pickSort.key === "ctime" ? "ctime" : h.dataset.sort, true));
   // New folder: made in the folder on show, then opened (Use this folder picks it)
   const newRow = (on) => { $("pickerNewRow").style.display = on ? "" : "none"; if (on) $("pickerNewName").focus(); };
   $("pickerNew").addEventListener("click", () => { $("pickerNewMsg").textContent = ""; $("pickerNewName").value = ""; newRow(true); });

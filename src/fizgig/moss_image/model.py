@@ -206,6 +206,7 @@ class MOSSImageDiT(nn.Module):
 
     # ---- forward ------------------------------------------------------------------------------------------------
     def _io_dtype(self, lin):
+        lin = getattr(lin, "base", lin)                 # a LoRA-wrapped Linear (a full-model difference wraps this one)
         dt = lin.weight.dtype
         return dt if dt.is_floating_point else torch.bfloat16
 
@@ -283,9 +284,17 @@ def read_state_dict(path, dtype=torch.bfloat16) -> dict:
     A "diffusion_model." / "model.diffusion_model." prefix is stripped; rope.bands (a derived constant) and ComfyUI's
     attention-kernel hints are dropped."""
     from safetensors.torch import load_file
+    from fizgig.moss_image.embedder import from_file_wanted
     sd = {}
     for f in _files(path):
-        sd.update(load_file(f, device="cpu"))
+        if from_file_wanted():
+            # a computer under 30 GB of RAM: plain reads - load_file maps the whole file, which Windows counts against
+            # the commit limit on top of the copies
+            from fizgig.krea2.safetensors_utils import MemoryEfficientSafeOpen
+            with MemoryEfficientSafeOpen(f) as fh:
+                sd.update({k: fh.get_tensor(k) for k in fh.keys()})
+        else:
+            sd.update(load_file(f, device="cpu"))
     for p in ("model.diffusion_model.", "diffusion_model."):
         if any(k.startswith(p) for k in sd):
             sd = {(k[len(p):] if k.startswith(p) else k): v for k, v in sd.items()}

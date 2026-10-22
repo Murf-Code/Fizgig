@@ -19,7 +19,7 @@ import numpy as np
 import torch
 from safetensors.torch import save_file
 
-from fizgig.dataset.image_dataset import ItemInfo, MemoryEfficientSafeOpen, dtype_to_str
+from fizgig.dataset.image_dataset import ItemInfo, MemoryEfficientSafeOpen, dtype_to_str, source_stamp
 from fizgig.training.metadata import ARCHITECTURE_MINIMAX
 
 logger = logging.getLogger(__name__)
@@ -96,6 +96,7 @@ def save_latent_cache_minimax(item_info: ItemInfo, latent: torch.Tensor,
         "height": str(item_info.original_size[1]),
         "dtype": dtype_to_str(latent.dtype),
         "format_version": "2.0.0",
+        "source": source_stamp(item_info.item_key),
     }
     os.makedirs(os.path.dirname(item_info.latent_cache_path), exist_ok=True)
     save_file(sd, item_info.latent_cache_path, metadata=metadata)

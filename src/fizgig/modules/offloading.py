@@ -47,6 +47,16 @@ def _synchronize_device(device: torch.device):
 # Standalone weight-transfer helpers
 # ---------------------------------------------------------------------------
 
+def _streamed_linears(layer: nn.Module):
+    """{name: module} for the Linears a swap streams, keyed with LoRA wrappers' ".base" dropped, so a block whose
+    Linears carry a LoRA pairs with one whose don't (#199)."""
+    out = {}
+    for name, m in layer.named_modules():
+        if hasattr(m, "weight") and m.weight is not None and m.__class__.__name__.endswith("Linear"):
+            out[name[:-5] if name.endswith(".base") else name] = m
+    return out
+
+
 def swap_weight_devices_no_cuda(device: torch.device, layer_to_cpu: nn.Module, layer_to_cuda: nn.Module):
     """
     Swap weights between two layers without CUDA streams (fallback path).
@@ -54,8 +64,10 @@ def swap_weight_devices_no_cuda(device: torch.device, layer_to_cpu: nn.Module, l
     assert layer_to_cpu.__class__ == layer_to_cuda.__class__
 
     weight_swap_jobs = []
-    for module_to_cpu, module_to_cuda in zip(layer_to_cpu.modules(), layer_to_cuda.modules()):
-        if hasattr(module_to_cpu, "weight") and module_to_cpu.weight is not None:
+    modules_to_cuda = _streamed_linears(layer_to_cuda)
+    for name, module_to_cpu in _streamed_linears(layer_to_cpu).items():
+        module_to_cuda = modules_to_cuda.get(name)
+        if module_to_cuda is not None:
             weight_swap_jobs.append((module_to_cpu, module_to_cuda, module_to_cpu.weight.data, module_to_cuda.weight.data))
 
     # device -> cpu
@@ -154,21 +166,16 @@ class Offloader:
         weight_swap_jobs = []
 
         with T.section("find modules"):
-            modules_to_cpu = {k: v for k, v in layer_to_cpu.named_modules()}
-            for module_to_cuda_name, module_to_cuda in layer_to_cuda.named_modules():
-                if (
-                    hasattr(module_to_cuda, "weight")
-                    and module_to_cuda.weight is not None
-                    and module_to_cuda.__class__.__name__.endswith("Linear")
-                ):
-                    module_to_cpu = modules_to_cpu.get(module_to_cuda_name, None)
-                    if module_to_cpu is not None and module_to_cpu.weight.shape == module_to_cuda.weight.shape:
-                        weight_swap_jobs.append(
-                            (module_to_cpu, module_to_cuda, module_to_cpu.weight.data, module_to_cuda.weight.data)
-                        )
-                    else:
-                        if module_to_cuda.weight.data.device.type != device.type:
-                            module_to_cuda.weight.data = module_to_cuda.weight.data.to(device)
+            modules_to_cpu = _streamed_linears(layer_to_cpu)
+            for module_to_cuda_name, module_to_cuda in _streamed_linears(layer_to_cuda).items():
+                module_to_cpu = modules_to_cpu.get(module_to_cuda_name, None)
+                if module_to_cpu is not None and module_to_cpu.weight.shape == module_to_cuda.weight.shape:
+                    weight_swap_jobs.append(
+                        (module_to_cpu, module_to_cuda, module_to_cpu.weight.data, module_to_cuda.weight.data)
+                    )
+                else:
+                    if module_to_cuda.weight.data.device.type != device.type:
+                        module_to_cuda.weight.data = module_to_cuda.weight.data.to(device)
 
         with T.section("synchronize before swap"):
             # Ensures the offloading layer's computation is done before we touch its buffers

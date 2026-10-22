@@ -242,6 +242,31 @@ def timestep_flags(inputs):
     return out
 
 
+def uncached_pictures(toml_text):
+    """How many pictures in the dataset TOML's folders have no latent or no text cache in their cache folder (a
+    resume skips caching, so a cache deleted by hand would leave it nothing to train on)."""
+    import toml   # not tomllib: that's Python 3.11+, and 3.10 installs are supported
+    from fizgig.dataset.image_dataset import AUDIO_EXTENSIONS, IMAGE_EXTENSIONS, VIDEO_EXTENSIONS
+    exts = {e.lower() for e in (*IMAGE_EXTENSIONS, *VIDEO_EXTENSIONS, *AUDIO_EXTENSIONS)}
+    try:
+        sets = toml.loads(toml_text or "").get("datasets") or []
+    except toml.TomlDecodeError:
+        return 0
+    n = 0
+    for ds in sets:
+        img, cdir = ds.get("image_directory"), ds.get("cache_directory")
+        if not img or not cdir or not os.path.isdir(img):
+            continue
+        names = os.listdir(cdir) if os.path.isdir(cdir) else []
+        # <stem>_<WxH>_<arch>.safetensors and <stem>_<arch>_te.safetensors: the stem is all but the last two parts
+        te = {"_".join(f[:-len(".safetensors")].split("_")[:-2]) for f in names if f.endswith("_te.safetensors")}
+        lat = {"_".join(f.split("_")[:-2]) for f in names
+               if f.endswith(".safetensors") and not f.endswith("_te.safetensors")}
+        n += sum(1 for f in os.listdir(img) if os.path.splitext(f)[1].lower() in exts
+                 and (os.path.splitext(f)[0] not in lat or os.path.splitext(f)[0] not in te))
+    return n
+
+
 def caches(desc, inputs):
     """Whether the cache stages run: not on a resume (the cache is already built) unless it trains at a different
     size from now on (recache: the latents that still fit are kept), not for a prompt slider (no photos), not with
@@ -614,6 +639,11 @@ def train_command(desc, inputs, plan):
            "--network_dim", str(st["NETWORK_DIM"]), "--network_alpha", str(st["NETWORK_ALPHA"]),
            "--learning_rate", str(st["LEARNING_RATE"]), "--max_train_epochs", str(st["MAX_TRAIN_EPOCHS"]),
            "--save_every_n_epochs", str(st["SAVE_EVERY_N_EPOCHS"]), "--seed", str(st["SEED"])]
+    # How often to save, switched on (a fine-tune saves at whole rotations)
+    later = [_s(st.get(k)) for k in ("SAVE_UNTIL_EPOCH", "SAVE_EVERY_AFTER")] \
+        if st.get("SAVE_LATER") and not ft_on(desc, st) else []
+    if later and all(x.isdigit() and int(x) > 0 for x in later):     # How often to save, switched on
+        cmd += ["--save_until_epoch", later[0], "--save_every_n_epochs_after", later[1]]
     cmd += _state_flags(st)
     if _s(st.get("RESUME_TRAINING")) and not ft_on(desc, st):
         cmd += ["--resume", _s(st["RESUME_TRAINING"])]
@@ -803,12 +833,14 @@ def _preview_flags(desc, st, plan, cmd):
                 ts = float(str(st.get("FAMILY_TURBO_STRENGTH", "") or dflt))
         except ValueError:
             ts = dflt
-        if ts > 0:                              # strength 0 = previews without the turbo: don't load it
+        if ts > 0:
             out += ["--speed_lora", speed_path]
             if abs(ts - dflt) > 1e-9:
                 out += ["--speed_lora_strength", f"{max(0.0, min(2.0, ts)):g}"]
         else:
             turbo_steps = None
+            if not desc.samples_turbo_pace:     # strength 0: known to the run, loaded at the first preview that asks
+                out += ["--speed_lora", speed_path, "--speed_lora_strength", "0"]
     samples_dir = st.get("samples_dir") or os.path.join(_s(st.get("LORA_OUTPUT_DIR")), "sample")
     prompts = None
     if edit_on(desc, st):              # edit previews: the edit instruction, not the Samples-tab prompts
@@ -849,6 +881,9 @@ def _preview_flags(desc, st, plan, cmd):
         except (TypeError, ValueError):
             pass
     if prompts and every.isdigit() and int(every) > 0:
+        later = [str(sm.get(k) or "").strip() for k in ("until", "after")] if sm.get("later") else []
+        if later and all(x.isdigit() and int(x) > 0 for x in later):   # Then preview less often (off = nothing)
+            out += ["--sample_until_epoch", later[0], "--sample_every_n_epochs_after", later[1]]
         out += ["--sample_prompts", prompts, "--sample_every_n_epochs", every,
                 "--vae", _model(st, desc, "vae"),
                 "--text_encoder", _model(st, desc, "text_encoder"),
@@ -900,7 +935,21 @@ def _preview_flags(desc, st, plan, cmd):
                         "--preview_checkpoint_cache", _s(sm.get("checkpoint_cache")) or "auto"]
                 if sm.get("int8"):
                     out.append("--preview_int8")
+        look = desc.preview_look()
+        if look is not None and st.get("FAMILY_PREVIEW_LOOK") and "--preview_checkpoint" not in out:
+            # on the training model's previews only; a file still downloading is picked up at a later preview
+            out += ["--preview_lora", look_path(desc, st), "--preview_lora_strength", f"{desc.preview_look_strength:g}"]
     return out
+
+
+def look_path(desc, st):
+    """Where the preview look LoRA is: its Preferences path when set, else where its download puts it."""
+    look = desc.preview_look()
+    p = _s((st.get("models") or {}).get(look.pref_key))
+    if p:
+        return p
+    from fizgig.user_data import MODELS_DIR
+    return os.path.join(MODELS_DIR, look.local_name or os.path.basename(look.path))
 
 
 def _sample_image(desc, sm):
@@ -1252,6 +1301,12 @@ def plan(desc, inputs):
         for f, s, w in people:
             cmd += ["--subject", f, s["fused"], w]
         p.stages.append(Stage("Multi-person composites", cmd))
+    resuming = inputs.get("resuming") or bool(_s(inputs.get("RESUME_TRAINING")))
+    if resuming and not inputs.get("recache") and inputs.get("enable_cache", True):
+        n = uncached_pictures(p.dataset_toml)
+        if n:                           # a resume expects its cache; deleted by hand, it's made again (only what's gone)
+            inputs["recache"] = True
+            p.console.append(f"[cache] {n} picture(s) have no cache - caching them before the run resumes.\n")
     if caches(desc, inputs):
         p.stages += [Stage("Cache Preparation", cache_command(desc, inputs, "latents")),
                      Stage("Text Encoder Caching", cache_command(desc, inputs, "text"))]

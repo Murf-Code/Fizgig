@@ -290,6 +290,17 @@ class ItemInfo:
 # Cache I/O — Fizgig-native format
 # ---------------------------------------------------------------------------
 
+def source_stamp(path) -> str:
+    """"size:mtime" of the picture a latent cache was made from, kept in the cache's metadata ("source"): any change
+    re-encodes it, older or newer - a copied-in photo keeps its own date, so "newer than the cache" misses a folder
+    refilled with someone else's photos under the same names. "" when the file can't be read."""
+    try:
+        st = os.stat(path)
+        return f"{st.st_size}:{int(st.st_mtime)}"
+    except (OSError, TypeError):
+        return ""
+
+
 def save_latent_cache(
     item_info: ItemInfo,
     latent: torch.Tensor,
@@ -313,6 +324,7 @@ def save_latent_cache(
         "height": str(item_info.original_size[1]),
         "dtype": dtype_to_str(latent.dtype),
         "format_version": "2.0.0",
+        "source": source_stamp(item_info.item_key),
     }
 
     # NaN guard

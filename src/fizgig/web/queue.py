@@ -145,6 +145,14 @@ def release(starter):
     start_next(starter)
 
 
+def resumed():
+    """The paused run the queue was held for is training again: the queue waits for it as for any run, and carries on
+    after it finishes (not held, no Start queue)."""
+    with _lock:
+        if _q["held"] and _q["for_pause"]:
+            _q.update(held=False, reason="", for_pause=False)
+
+
 def on_run_ended(result, lora, starter):
     """A web run ended: the next one starts shortly after a finish; anything else holds the queue, saying why."""
     if result == "finished":

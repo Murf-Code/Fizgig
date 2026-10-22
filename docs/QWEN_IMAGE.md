@@ -122,7 +122,7 @@ Qwen Image 2.1 is released under the Qwen Research License: non-commercial use o
 
 ## The per-image loss watch
 
-The four Training-tab toggles work on Qwen as on Krea 2 (see [Krea 2](KREA2.md)): problem-image detection, per-image LR, look-outlier warm-up, and auto-recaption. Auto-recaption uses the same Qwen3-VL-4B captioner as the Captions tab. Picking Automagic as the optimizer turns Adaptive LR, per-image LR and the look warm-up off, since Automagic sets its own rate; detection keeps running.
+The four Training-tab toggles work on Qwen as on Krea 2 (see [Krea 2](KREA2.md)): tracking how each image trains, per-image LR, look-outlier warm-up, and auto-recaption. Auto-recaption uses the same Qwen3-VL-4B captioner as the Captions tab. Picking Automagic as the optimizer turns Adaptive LR, per-image LR and the look warm-up off, since Automagic sets its own rate; detection keeps running.
 
 ## Command line
 

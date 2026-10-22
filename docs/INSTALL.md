@@ -125,7 +125,10 @@ Linux ROCm cache scripts import `fizgig.rocm.cache_exit` only when `FIZGIG_GPU_B
 ```bash
 python install_fizgig.py
 ./launch_fizgig.sh            # its own window (./launch_fizgig_browser.sh: in your web browser)
+./update_fizgig.sh            # later: update (git pull + dependencies)
 ```
+
+The installer also puts Qt in Fizgig's venv for the app window; without it, Fizgig opens in your browser. On Linux AMD, update by running `./install_fizgig_rocm.sh` again (`update_fizgig.sh` installs CUDA packages).
 
 Run it from your system Python, not a conda environment (`conda deactivate` first): conda bundles its own Tk, which can't see the system's fonts, so the app comes up with missing text. The installer refuses when conda is active; `FIZGIG_ALLOW_CONDA=1` overrides it.
 

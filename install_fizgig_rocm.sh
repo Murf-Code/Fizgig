@@ -859,6 +859,12 @@ DISABLE_CUDA=1 python -m uv pip install --index-strategy unsafe-best-match \
 rm -f "$SHARED_REQS"
 
 echo
+echo "Installing Qt for Fizgig's app window..."
+# pywebview finds no window engine inside the venv otherwise (the distro's GTK bindings aren't visible there)
+python -m uv pip install "pywebview[qt]>=5,<7" \
+    || echo "NOTE: Qt for the app window didn't install; launch_fizgig_amd.sh opens Fizgig in your browser instead."
+
+echo
 echo "Installing bitsandbytes (ROCm — matched to installed torch when possible)..."
 # PyPI bnb declares torch>=2.4 — would pull CUDA torch and nvidia-* libs over our ROCm wheel.
 python -m uv pip install --no-deps -U "bitsandbytes>=0.50.0"

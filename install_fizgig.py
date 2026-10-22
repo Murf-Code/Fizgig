@@ -302,8 +302,23 @@ def install_dependencies():
     from uv_install_deps import install_requirements
     if install_requirements(REQUIREMENTS_FILE, VENV_DIR, python_path):
         print("Dependencies installed successfully.")
+        install_linux_window(python_path)
         return True
     return False
+
+
+def install_linux_window(python_path):
+    """Linux: Qt WebEngine for the app window (launch_fizgig.sh). pywebview finds no engine inside the venv otherwise
+    (a distro's GTK bindings aren't visible there) and the web UI opens in the browser instead. Not in requirements.txt:
+    the pod image installs that and never opens a window. A failure here only means the browser."""
+    if platform.system() != "Linux":
+        return
+    print("Installing Qt for Fizgig's app window on Linux...")
+    r = subprocess.run([str(python_path), "-m", "uv", "pip", "install", "--python", str(python_path),
+                        "pywebview[qt]>=5,<7"])
+    if r.returncode != 0:
+        print("NOTE: Qt for the app window didn't install. launch_fizgig.sh will open Fizgig in your browser instead "
+              "(or use launch_fizgig_browser.sh).")
 
 
 def verify_cuda():

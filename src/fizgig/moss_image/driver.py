@@ -8,8 +8,8 @@
 * training: flow matching on the Base checkpoint, x_t = (1 - sigma) x0 + sigma noise, target noise - x0, the DiT told
   1000 * sigma; sigma drawn from the final pretraining stage's distribution (technical report Appendix A.2, Table 6:
   truncated logit-normal, mu -1.09, s 0.95, cutoff 0.95 rescaled onto the 1000-step grid, 1% uniform), not AI
-  Toolkit's shift-5 uniform. The LoRA leaves block 22 alone, as AI Toolkit's does: the negative branch skips that
-  block, so CFG's contrast there stays the base model's
+  Toolkit's shift-5 uniform. The LoRA trains all 42 blocks, block 22 included (leaving it out, as AI Toolkit does,
+  cost likeness in A/B runs: the positive branch always runs it)
 * sampling: the reference's snapped shift-5 schedule, Euler, CFG 3 with block 22 skipped in the negative branch
 
 No edit training: the released checkpoints are text-to-image only (technical report section 8, "does not directly
@@ -31,10 +31,31 @@ logger = logging.getLogger(__name__)
 N_BLOCKS = 42                 # transformer/config.json num_layers
 N_TEXT_BLOCKS = 2             # the text adapter's blocks (pipeline _TextProjection)
 BLOCK_MODULES = ("proj.q", "proj.k", "proj.v", "proj.o", "proj.ffn_up_gate", "proj.ffn_down")
+ATTN_MODULES = ("proj.q", "proj.k", "proj.v", "proj.o")
 TEXT_MODULES = ("qkv", "proj", "ffn_gate", "ffn_up", "ffn_down")
 
 # technical report Appendix A.2, Table 6, the last Stage 3 interval (steps 274,001-310,000, the released weights)
 T_MU, T_S, T_CUTOFF, T_UNIFORM = -1.09, 0.95, 0.95, 0.01
+
+
+def _t_cdf(x, mu):
+    """P(S <= x) for S = 1 - sigmoid(Z), Z ~ N(mu, T_S^2)."""
+    return 1.0 - 0.5 * math.erfc(-((math.log((1 - x) / x) - mu) / T_S) / math.sqrt(2))
+
+
+def mu_for_clean_share(pct):
+    """The Z mean that puts `pct`% of training steps below sigma 0.5 (the clean end), the 1% uniform included; the
+    curve keeps the reference's shape and width. The reference's own mu -1.09 gives about 11%."""
+    want = (float(pct) / 100.0 - T_UNIFORM * 0.5) / (1.0 - T_UNIFORM)
+    want = min(max(want, 1e-4), 1.0 - 1e-4)
+    lo, hi = -12.0, 12.0
+    for _ in range(80):                       # share rises with mu: bisect
+        mid = 0.5 * (lo + hi)
+        if _t_cdf(0.5 * T_CUTOFF, mid) / _t_cdf(T_CUTOFF, mid) < want:
+            lo = mid
+        else:
+            hi = mid
+    return 0.5 * (lo + hi)
 
 
 class MOSSImageDriver(FamilyDriver):
@@ -119,10 +140,22 @@ class MOSSImageDriver(FamilyDriver):
         the free VRAM with room to run, else streamed layer-major from the CPU (embedder.MOSSTextEncoder) - still
         exact bf16, which OpenMOSS ask for (their text encoder is "much more unstable than DiT"), not 8-bit."""
         from fizgig.families.quant import free_vram_gb
-        from fizgig.moss_image.embedder import MOSSTextEncoder, TOKENIZER_REPO
+        from fizgig.moss_image.embedder import MOSSTextEncoder, TOKENIZER_REPO, from_file_wanted
         from transformers import AutoTokenizer
         tok = self.from_pretrained(AutoTokenizer, TOKENIZER_REPO, subfolder="tokenizer")
-        return MOSSTextEncoder(path, device=device, stream=free_vram_gb() < 18.0, tokenizer=tok)
+        stream = free_vram_gb() < 18.0
+        # streamed on a computer without the RAM to hold it (16 / 24 GB): read from the file, a layer at a time
+        return MOSSTextEncoder(path, device=device, stream=stream, tokenizer=tok,
+                               keep_in_ram=self.keep_text_encoder, from_file=stream and from_file_wanted())
+
+    def text_encoder_gb(self, path):
+        """The language model alone once it has loaded (the file also holds the vision tower and heads)."""
+        from fizgig.moss_image.embedder import kept_gb
+        return kept_gb(path) or super().text_encoder_gb(path)
+
+    def drop_text_encoder(self):
+        from fizgig.moss_image.embedder import drop_kept_state_dict
+        drop_kept_state_dict()
 
     def cache_stage(self, stage, datasets, args, device, aux):
         """The shared text cache, with the dataset's captions in large groups so a streamed encoder moves each layer
@@ -144,10 +177,16 @@ class MOSSImageDriver(FamilyDriver):
     def ft_spec(self, dit):
         # each block's six Linears are the parts (attention q / k / v / o ~0.018 GB each, the fused MLP up+gate 0.094,
         # the down projection 0.047 in bf16). ComfyUI's file fuses q / k / v into one proj.qkv = [q; k; v] tensor; the
-        # diffusers shards keep them apart. The text adapter, embedders, modulations and the final layer stay frozen.
-        # Memory figures are not measured yet (no GPU in the driver's session): the cautious defaults apply.
+        # diffusers shards keep them apart. The text adapter, embedders, modulations and the final layer stay frozen,
+        # as for a LoRA; on SFT or a fine-tune of it (lora_sft) only attention trains, as for a LoRA.
+        # Memory: measured 19 Oct on an H100 at 1 MP, the whole model in one window: all six parts peaked 12.6 GB,
+        # attention only 8.3 GB. overhead_gb is fitted to each in the planner's frame (4.5 = 0.6 GB above the full
+        # run's fit; 6.0 attention only, whose window is credited the whole 4-bit trunk though the FFN stays in it).
+        # act_gb_per_mp is not measured yet (2.0, as Anima and Flux 3).
         from fizgig.families.ft import FTSpec
-        return FTSpec(blocks="layers", components=BLOCK_MODULES,
+        sft = str(self.options.get("lora_sft", "")) == "1"
+        return FTSpec(blocks="layers", components=ATTN_MODULES if sft else BLOCK_MODULES,
+                      overhead_gb=6.0 if sft else 4.5, calib_mp=1.0, act_gb_per_mp=2.0,
                       file_layout=(("proj.q.weight", "proj.qkv.weight", 0, 3),
                                    ("proj.k.weight", "proj.qkv.weight", 1, 3),
                                    ("proj.v.weight", "proj.qkv.weight", 2, 3)))
@@ -170,23 +209,53 @@ class MOSSImageDriver(FamilyDriver):
 
     # ---- training -------------------------------------------------------------------------------
     @staticmethod
-    def _sample_t(generator, min_t, max_t):
+    def _sample_t(generator, min_t, max_t, mu=T_MU):
         """The final pretraining interval's sigma (report eq. 4): with probability 0.01 uniform over the grid j / 1000,
-        else S = 1 - sigmoid(Z), Z ~ N(-1.09, 0.95^2), truncated to S <= 0.95 (inverse CDF), rescaled by 1 / 0.95 and
-        taken to the grid point whose cell holds it. Then scaled into [min_t, max_t] (the Timestep Range)."""
+        else S = 1 - sigmoid(Z), Z ~ N(mu, 0.95^2) (mu -1.09 unless a clean-end share moves it), truncated to
+        S <= 0.95 (inverse CDF), rescaled by 1 / 0.95 and taken to the grid point whose cell holds it. Then scaled into [min_t, max_t] (the Timestep Range)."""
         T = S.TRAIN_STEPS
         u = torch.rand(2, generator=generator)
         if float(u[0]) < T_UNIFORM:
             sigma = (math.floor(float(u[1]) * T) + 1) / T
         else:
-            # F(x) = P(S <= x) = 1 - Phi((log((1 - x) / x) - mu) / s); draw F(S) uniformly in (0, F(cutoff)]
-            def cdf(x):
-                return 1.0 - 0.5 * math.erfc(-((math.log((1 - x) / x) - T_MU) / T_S) / math.sqrt(2))
-            p = max(float(u[1]), 1e-12) * cdf(T_CUTOFF)
-            z = T_MU + T_S * float(torch.special.ndtri(torch.tensor(1.0 - p, dtype=torch.float64)))
+            # draw F(S) uniformly in (0, F(cutoff)], F = _t_cdf
+            p = max(float(u[1]), 1e-12) * _t_cdf(T_CUTOFF, mu)
+            z = mu + T_S * float(torch.special.ndtri(torch.tensor(1.0 - p, dtype=torch.float64)))
             s = 1.0 / (1.0 + math.exp(z))                 # S = 1 - sigmoid(Z) = sigmoid(-Z)
             sigma = min(max(math.ceil(T * s / T_CUTOFF), 1), T) / T
         return min_t + (max_t - min_t) * sigma
+
+    def _t_mu(self):
+        """lownoise_pct=P (the share of steps below sigma 0.5) moves the curve's centre; unset = the reference's.
+        Split, "A:N:B": A% for the first N epochs, then B%. Slide, "A:H:B:E": A% until epoch H, then in a straight
+        line down to B% by epoch E (and B% after); "A:H:B:E:R": and every R epochs after E, one epoch at A% again."""
+        pct = str(self.options.get("lownoise_pct", "") or "").replace("%", "").strip()
+        if not pct:
+            return T_MU
+        if ":" in pct:
+            try:
+                parts = [float(x) for x in pct.split(":")]
+                if len(parts) not in (3, 4, 5):
+                    raise ValueError
+            except ValueError:
+                raise RuntimeError(f"Clean-end share '{pct}': give share:epochs:share (75:5:40 = 75% for the first 5 "
+                                   "epochs, then 40%) or share:epoch:share:epoch (75:6:40:10 = 75% until epoch 6, "
+                                   "then down to 40% by epoch 10; a fifth number R = every R epochs after that, one "
+                                   "epoch at the first share)") from None
+            first, until, rest = parts[:3]
+            end = parts[3] if len(parts) >= 4 else until
+            every = int(parts[4]) if len(parts) == 5 else 0
+            e = self.epoch
+            share = first if e <= until else rest if e >= end else first + (rest - first) * (e - until) / (end - until)
+            if every > 0 and e > end and (e - end) % every == 0:
+                share = first                     # a refresh epoch at the first share
+            pct = f"{round(share, 2):g}"
+        cached = getattr(self, "_mu_cached", None)
+        if cached is None or cached[0] != pct:
+            cached = self._mu_cached = (pct, mu_for_clean_share(pct))
+            logger.info(f"MOSS-Image: {pct}% of training steps at the clean end (sigma < 0.5) from epoch {self.epoch}, "
+                        f"Z mean {cached[1]:.2f} (reference -1.09, about 11%)")
+        return cached[1]
 
     def _forward(self, dit, xt, t, cond):
         hidden = cond["hidden_states"]
@@ -200,7 +269,7 @@ class MOSSImageDriver(FamilyDriver):
             raise RuntimeError("MOSS-Image has no edit (reference-image) conditioning")
         x0 = latents.float()
         noise = torch.randn(x0.shape, generator=generator).to(x0.device)
-        t = self._sample_t(generator, min_t, max_t)
+        t = self._sample_t(generator, min_t, max_t, self._t_mu())
         xt = (1 - t) * x0 + t * noise
         pred = self._forward(dit, xt, t, cond).float()
         target = noise - x0
@@ -221,7 +290,7 @@ class MOSSImageDriver(FamilyDriver):
     def noise_latents(self, latents, generator, *, min_t=0.0, max_t=1.0):
         x0 = latents.float()
         noise = torch.randn(x0.shape, generator=generator).to(x0.device)
-        t = self._sample_t(generator, min_t, max_t)
+        t = self._sample_t(generator, min_t, max_t, self._t_mu())
         return {"xt": (1 - t) * x0 + t * noise, "t": t}
 
     def predict(self, dit, state, cond):
@@ -260,7 +329,8 @@ class MOSSImageDriver(FamilyDriver):
         skip = tuple(opts.get("uncond_skip", S.UNCOND_SKIP) or ())
         return S.sample(dit, self._real_tokens(cond), height, width, steps=steps, seed=seed, cfg=cfg, neg_text=neg,
                         noise=noise, on_step=on_step, sigmas=sigmas, shift=float(opts.get("shift", S.SHIFT)),
-                        uncond_skip=skip, sampler=str(opts.get("sampler", "euler")))
+                        uncond_skip=skip, sampler=str(opts.get("sampler", "euler")),
+                        scheduler=str(opts.get("schedule", "reference")), slg_end=float(opts.get("slg_end", 1.0)))
 
     def pad_conditioning(self, conds):
         """Prompt travel (LoRA Royale): prompts zero-padded to one length with a mask of each one's real tokens.
@@ -302,9 +372,19 @@ class MOSSImageDriver(FamilyDriver):
         return [BlockGroup("Blocks", main), BlockGroup("Text adapter", text)]
 
     def lora_target_names(self, dit):
-        """The 42 blocks' Linears except the blocks the negative branch skips (block 22), as AI Toolkit trains
-        MOSS-Image: there CFG contrasts the base block with itself skipped, so a LoRA on it would move that contrast.
-        The text adapter stays frozen with the text encoder (OpenMOSS's guide: keep the text encoder frozen;
-        @Murf-Code, PR #195). Repair Studio still shows both, for LoRAs from trainers that do adapt them."""
-        skip = tuple(f"layers.{i}." for i in S.UNCOND_SKIP)
-        return [m for m in super().lora_target_names(dit) if m.startswith("layers.") and not m.startswith(skip)]
+        """The 42 blocks' Linears, block 22 included: the negative branch skips it, but the positive one always runs
+        it, and training it gave clearly better likeness than leaving it out as AI Toolkit does. The text adapter
+        stays frozen with the text encoder (OpenMOSS's guide: keep the text encoder frozen; @Murf-Code, PR #195;
+        training it exaggerated expressions epoch by epoch). Repair Studio still shows it, for LoRAs from trainers
+        that do adapt it. On SFT or a fine-tune of it (the lora_sft option) only attention trains: its feed-forward
+        layers trained gave body horror within a few epochs."""
+        names = [m for m in super().lora_target_names(dit) if m.startswith("layers.")]
+        if str(self.options.get("lora_sft", "")) == "1":
+            names = [m for m in names if m.endswith(ATTN_MODULES)]
+        return names
+
+    def quant_target_names(self, dit):
+        """Every block Linear, whichever of them the LoRA trains (an SFT base's feed-forward layers too): block swap
+        pairs blocks layer by layer, so every block must hold the same dtype - block 22 left bf16 among INT8 blocks
+        got INT8 weights swapped into a plain Linear (#201)."""
+        return [m for m in super().lora_target_names(dit) if m.startswith("layers.")]

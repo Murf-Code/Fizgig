@@ -464,7 +464,10 @@ def _log(msg):
             f.write(time.strftime("%Y-%m-%d %H:%M:%S ") + str(msg).rstrip() + "\n")
     except OSError:
         pass
-    print(msg, flush=True)
+    try:
+        print(msg, flush=True)
+    except (OSError, ValueError):     # the terminal that started it has closed (launch_fizgig.sh runs it in the background)
+        pass
 
 
 def _log_pywebview():
@@ -596,8 +599,54 @@ def main():
 
         left = [""]                       # the pod this window was last on, for Switch to the pod
 
+        zoom_keys_done = [False]
+
+        def _install_zoom_keys():
+            """Add Ctrl+= / Ctrl+- / Ctrl+0: WebKitGTK ships no zoom shortcuts of its own."""
+            try:
+                from webview.platforms import gtk as _g
+                inst = _g.BrowserView.instances.get(window.uid)
+                if inst is None:
+                    return                                 # the window isn't up yet: retry on the next load
+            except Exception:
+                zoom_keys_done[0] = True                   # no GTK here: not worth retrying on every load
+                return
+            from gi.repository import Gtk, Gdk, GLib
+            # loaded() runs off the GTK main thread, and add_accel_group isn't thread-safe: post to the main loop
+            def _install(*_a):
+                try:
+                    wv, level = inst.webview, [1.0]
+
+                    def _step(delta, *_x):
+                        level[0] = max(0.5, min(3.0, round(level[0] + delta, 2)))
+                        wv.set_zoom_level(level[0])
+
+                    def _reset(*_x):
+                        level[0] = 1.0
+                        wv.set_zoom_level(1.0)
+
+                    ag = Gtk.AccelGroup()
+                    inst.window.add_accel_group(ag)
+                    ag.connect(Gdk.KEY_plus, Gdk.ModifierType.CONTROL_MASK, 0,
+                               lambda *_x: _step(0.1))
+                    ag.connect(Gdk.KEY_equal, Gdk.ModifierType.CONTROL_MASK, 0,
+                               lambda *_x: _step(0.1))
+                    ag.connect(Gdk.KEY_minus, Gdk.ModifierType.CONTROL_MASK, 0,
+                               lambda *_x: _step(-0.1))
+                    ag.connect(Gdk.KEY_0, Gdk.ModifierType.CONTROL_MASK, 0, _reset)
+                    for kc, d in ((Gdk.KEY_KP_Add, 0.1), (Gdk.KEY_KP_Subtract, -0.1)):
+                        ag.connect(kc, Gdk.ModifierType.CONTROL_MASK, 0, lambda *_x, d=d: _step(d))
+                    _log("[app] zoom keys installed: Ctrl+= / Ctrl+- / Ctrl+0, numpad too")
+                except Exception as e:
+                    _log(f"[app] zoom keys not installed: {e}")
+                return False                               # an idle callback: run once
+            GLib.idle_add(_install)
+            zoom_keys_done[0] = True
+
         def loaded():
             try:
+                if not zoom_keys_done[0]:
+                    _install_zoom_keys()
                 cur = window.get_current_url() or ""
                 if _is_local(cur, port):
                     window.set_title("Fizgig")
@@ -635,12 +684,26 @@ def main():
         window.events.loaded += loaded
 
         def keep():
+            # window.width & get_current_url deadlock here: the GTK backend answers such asks through the main loop,
+            # and this handler runs inside it (the delete-event); the native objects allow the same asks, so ask them
+            inst = None
             try:
-                _remember({"width": window.width, "height": window.height, "x": window.x, "y": window.y})
+                from webview.platforms import gtk as _g
+                inst = _g.BrowserView.instances.get(window.uid)
+            except Exception:
+                inst = None
+            try:
+                if inst is not None:
+                    w, h = inst.window.get_size()
+                    x, y = inst.window.get_position()
+                    _remember({"width": w, "height": h, "x": x, "y": y})
+                else:
+                    _remember({"width": window.width, "height": window.height, "x": window.x, "y": window.y})
             except Exception:
                 pass
             try:
-                cur = window.get_current_url() or ""
+                cur = inst.get_current_url() if inst is not None else window.get_current_url()
+                cur = cur or ""
                 _remember_last("" if _is_local(cur, port) else cur.split("#")[0])
             except Exception:
                 pass
@@ -677,9 +740,15 @@ def main():
         except Exception:
             pass
         page_ready = threading.Event()
+        started = threading.Event()       # webview.start came back (or failed: no engine) - the watchdog stands down
 
         def watchdog():                    # a window that never appears ends, its server with it, not left unseen
-            if not window.events.shown.wait(120):
+            for _ in range(120):
+                if window.events.shown.wait(1):
+                    break
+                if started.is_set():       # no window at all: the browser took over and the server must stay up
+                    return
+            else:
                 _stop(own)
                 os._exit(1)
             # a window that appears but never runs the page (a white window: a broken WebView2, its sandbox on a
@@ -694,15 +763,19 @@ def main():
                     pass
         threading.Thread(target=watchdog, daemon=True).start()
         profile = user_file("app_profile")
-        webview.start(private_mode=False, storage_path=profile, icon=_icon(profile))
+        try:
+            webview.start(private_mode=False, storage_path=profile, icon=_icon(profile))
+        finally:
+            started.set()
         if fallback[0]:
             raise RuntimeError(fallback[0])
     except Exception as e:
         # no engine here (a Linux machine without GTK/WebKit or Qt, Windows without WebView2) or a window that never
         # showed the page: the browser, and how to get the window
         how = (f"For the window, install Microsoft Edge WebView2 Runtime: {WEBVIEW2_URL}" if os.name == "nt" else
-               "For the window on Linux: install your distro's WebKitGTK (e.g. gir1.2-webkit2-4.1 and python3-gi) "
-               "or `pip install pywebview[qt]` in Fizgig's venv.")
+               "For the window on Linux, in Fizgig's venv: `venv/bin/pip install \"pywebview[qt]\"`, or WebKitGTK: "
+               "your distro's gir1.2-webkit2-4.1 and libgirepository dev packages, then `venv/bin/pip install "
+               "PyGObject` (the distro's python3-gi isn't seen inside the venv).")
         _log(f"[app] no app window ({e}) - opening the web UI in your browser instead. {how}")
         webbrowser.open(url)
         if own is not None:

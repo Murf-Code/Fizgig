@@ -94,7 +94,7 @@ def start(source, family, lora, output_dir, image_folder, values, resume=False):
                     if _same_run(r, lora, output_dir):
                         if r.get("result") != "paused":
                             break
-                        r.update(result="running", ended_at=None, resumed_at=time.time(),
+                        r.update(result="running", ended_at=None, resumed_at=time.time(), server_pid=os.getpid(),
                                  values=values or r.get("values") or {})    # e.g. a new Target Megapixels
                         _write(runs)
                         return r["id"]
@@ -102,7 +102,7 @@ def start(source, family, lora, output_dir, image_folder, values, resume=False):
             pass
     rec = {"id": uuid.uuid4().hex[:12], "source": source, "family": family, "lora": lora, "output_dir": output_dir,
            "image_folder": image_folder, "values": values or {}, "started_at": time.time(), "ended_at": None,
-           "result": "running", "progress": None}
+           "result": "running", "progress": None, "server_pid": os.getpid()}
     try:
         with _Lock():
             runs = _read()
@@ -206,15 +206,27 @@ def remove(run_id):
         pass
 
 
+def _server_alive(pid):
+    """Whether the Fizgig server with this pid still runs (another one, not this process)."""
+    if not pid or pid == os.getpid():
+        return False
+    try:
+        import psutil
+        return "python" in psutil.Process(int(pid)).name().lower()
+    except Exception:
+        return False
+
+
 def close_orphans():
     """At the server's start: a run still recorded as running has nothing behind it now (its server stopped or
-    crashed, and the training process went with it), so it is recorded as stopped. Returns how many."""
+    crashed, and the training process went with it), so it is recorded as stopped - unless the server that started it
+    is still running (a second Fizgig server on another port must not close a live run). Returns how many."""
     n = 0
     try:
         with _Lock():
             rs = _read()
             for r in rs:
-                if r.get("result") == "running":
+                if r.get("result") == "running" and not _server_alive(r.get("server_pid")):
                     r["result"] = "stopped"
                     r["ended_at"] = r.get("ended_at") or time.time()
                     n += 1

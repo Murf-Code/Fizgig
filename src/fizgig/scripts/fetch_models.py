@@ -52,6 +52,8 @@ class Weight:
         self.optional = optional
         self.gated = gated
         self.replaces = tuple(replaces)          # earlier versions of this file: a pref on one moves to this one
+        self.alt = None                          # the other build offered beside it (ModelFile.fetch_choice)
+        self.switch_from = ""                    # picked over that build: a pref on it moves to this one
 
 
 # The Captions tab captions ANY dataset with the Krea 2 Qwen3-VL text encoder — it follows an
@@ -159,10 +161,18 @@ def _described_families():
     for d in _REG.values():
         if not d.training_ready:
             continue
-        ws = [Weight(f.pref_key, f.repo, f.path, f.size_gb, f.label + (" — " + f.note if f.note else ""),
-                     optional=f.fetch_is_optional, gated=f.gated, local_name=f.local_name or None,
-                     replaces=f.replaces)
-              for f in d.model_files if f.repo and f.path and f.bulk_fetch]
+        ws = []
+        for f in d.model_files:
+            if not (f.repo and f.path and f.bulk_fetch):
+                continue
+            w = Weight(f.pref_key, f.repo, f.path, f.size_gb, f.label + (" — " + f.note if f.note else ""),
+                       optional=f.fetch_is_optional, gated=f.gated, local_name=f.local_name or None,
+                       replaces=f.replaces)
+            if f.fetch_choice and f.alt_repo and f.alt_path:
+                w.alt = Weight(f.pref_key, f.alt_repo, f.alt_path, f.alt_size_gb or f.size_gb,
+                               f"{f.label} — {f.fetch_choice[1]}", optional=w.optional, gated=f.gated,
+                               replaces=f.replaces)
+            ws.append(w)
         out[d.key] = ws + ([] if any(w.pref_key == _CAPTION_TE.pref_key for w in ws) else [_CAPTION_TE]) + [_STRANGERS]
     return out
 
@@ -319,11 +329,17 @@ def fetch_weight(w, models_dir, prefs, token=None, log=print, dry_run=False):
     # every one of those would have been "too small", silently re-downloaded, and the user's
     # path overwritten with ours.
     current = str(prefs.get(w.pref_key) or "").strip()
+    if current and w.switch_from and os.path.basename(current) == w.switch_from:
+        log(f"  [pick] {w.pref_key}: {os.path.basename(current)} -> {w.filename} (your choice on the download card)")
+        current = ""
     if current and os.path.basename(current) in w.replaces:
-        log(f"  [new]  {w.pref_key}: {os.path.basename(current)} has a newer version, {w.filename}")
+        log(f"  [new]  {w.pref_key}: {os.path.basename(current)} is replaced by {w.filename}")
         current = ""                             # an earlier version of ours: fetch the new one and point at it
     if current and os.path.isfile(current):
-        if os.path.basename(current) != w.filename:
+        if os.path.basename(current) != w.filename and w.switch_from:
+            log(f"  [keep] {w.pref_key} -> {os.path.basename(current)}: your own file, so {w.filename} was not "
+                "downloaded. To use the pick, clear that row in Preferences, then download again.")
+        elif os.path.basename(current) != w.filename:
             log(f"  [keep] {w.pref_key} -> {os.path.basename(current)} (your own choice, not replacing it)")
         else:
             log(f"  [ok]   {w.filename} — already set up")
@@ -433,9 +449,23 @@ def fetch_tool(spec, log=print, dry_run=False):
         return False
 
 
+def _chosen(w, choices):
+    """The build to fetch for a file with a choice: {pref_key: "main" | "alt"} picks one and lets it replace the other
+    (so a pref on the other moves); without a pick, the main file as before, the user's own file kept."""
+    pick = (choices or {}).get(getattr(w, "pref_key", ""))
+    if getattr(w, "alt", None) is None or pick not in ("main", "alt"):     # the strangers pack has no build to pick
+        return w
+    use, other = (w.alt, w) if pick == "alt" else (w, w.alt)
+    import copy
+    use = copy.copy(use)
+    use.switch_from = other.filename
+    return use
+
+
 def fetch(families, models_dir=None, repo_dir=REPO_DIR, token=None, include_optional=False,
-          log=print, dry_run=False):
-    """Fetch every asset for the named families. Returns True if nothing failed."""
+          log=print, dry_run=False, choices=None):
+    """Fetch every asset for the named families. Returns True if nothing failed. choices: {pref_key: "main" | "alt"}
+    for files offered with an alternative build (ModelFile.fetch_choice)."""
     models_dir = os.path.abspath(models_dir or os.path.join(repo_dir, "user_data", "models"))
     if os.path.normcase(os.path.abspath(repo_dir)) == os.path.normcase(REPO_DIR):
         from fizgig import user_data
@@ -446,7 +476,7 @@ def fetch(families, models_dir=None, repo_dir=REPO_DIR, token=None, include_opti
     prefs = _load_prefs(prefs_file)
     prefs_before = json.dumps(prefs, sort_keys=True)
 
-    planned = [w for fam in families if fam in FAMILIES for w in FAMILIES[fam]
+    planned = [_chosen(w, choices) for fam in families if fam in FAMILIES for w in FAMILIES[fam]
                if include_optional or not w.optional]
     total = sum(w.gb for w in planned) + (
         sum(g for _, g, _ in TOOLS) if "tools" in families else 0)
@@ -470,7 +500,7 @@ def fetch(families, models_dir=None, repo_dir=REPO_DIR, token=None, include_opti
             ok = False
             continue
         log(f"{fam}:")
-        for w in FAMILIES[fam]:
+        for w in (_chosen(x, choices) for x in FAMILIES[fam]):     # the download card's pick, where a file has one
             if w.optional and not include_optional:
                 log(f"  [skip] {w.filename} (~{w.gb:g} GB) — optional: {w.note}")
                 continue
@@ -503,6 +533,8 @@ def main():
     p.add_argument("--models-dir", default=None, help="Default: <repo>/models")
     p.add_argument("--token", default=None, help="HuggingFace token for gated repos (or HF_TOKEN).")
     p.add_argument("--dry-run", action="store_true", help="Show what would be fetched.")
+    p.add_argument("--choose", action="append", default=[], metavar="PREF=main|alt",
+                   help="For a file offered with another build (MOSS-Image Base or Kromoss): which one to fetch.")
     p.add_argument("--progress", action="store_true",
                    help="Emit machine-readable '[progress] done total name' lines instead of "
                         "huggingface_hub's progress bar. Used by the GUI.")
@@ -523,8 +555,9 @@ def main():
     if not families:
         p.error("pick --family krea2|klein|tools (repeatable), or --all")
 
+    choices = dict(c.split("=", 1) for c in a.choose if "=" in c)
     ok = fetch(families, models_dir=a.models_dir, token=a.token,
-               include_optional=a.include_optional, dry_run=a.dry_run)
+               include_optional=a.include_optional, dry_run=a.dry_run, choices=choices)
     sys.exit(0 if ok else 1)
 
 

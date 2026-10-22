@@ -188,9 +188,9 @@ No, unless you are testing it. The refiner is the model's bridge from the text e
 
 You can. The training adapter (a de-distillation LoRA, Circlestone by default for every H3 LoRA run) is available under Fine-tune with the same contract: it rides frozen at 1.0 for every training step so the gradient is about your subject rather than about undoing H3's distillation, it switches off for previews, and it is never written into the checkpoint — the file you get is a plain H3 fine-tune. It is on by default under Fine-tune as it is for LoRA runs; the LoRA-mode numbers (faster likeness, higher peak, no frying with other Turbo LoRAs, measured with Ostris's adapter; Circlestone's trained sharper LoRAs again in later A/Bs on stills) are the reason, and an A/B on your own dataset — same seed, adapter on versus off — is how to check it for yourself. The file is the same one your LoRA runs use: the **Training adapter** dropdown picks Circlestone (one file for both bases — best for photos), Ostris (fl2va or ref2va file to match the base — best for videos) or Off; for a mixed dataset, choose by whether the photos or the videos are the priority.
 
-## Do the problem-image tools work on a fine-tune? (Krea 2)
+## Do the per-image tools work on a fine-tune? (Krea 2)
 
-Mostly, yes. **Detect problem images**, **per-image adaptive LR** and **look-outlier
+Mostly, yes. **Track how each image trains**, **per-image adaptive LR** and **look-outlier
 warmup** all work under a fine-tune — their throttles ride the same per-step loss scaling
 the regularisation multiplier uses, and detection judges each image against the rest of
 the dataset at the same epoch, so the rotation's epoch-to-epoch shifts cancel out.

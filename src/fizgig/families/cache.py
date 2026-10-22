@@ -27,7 +27,7 @@ from safetensors.torch import save_file  # noqa: E402
 
 from fizgig.dataset.config import (BlueprintGenerator, ConfigSanitizer,  # noqa: E402
                                    generate_dataset_group_by_blueprint, load_user_config)
-from fizgig.dataset.image_dataset import dtype_to_str  # noqa: E402
+from fizgig.dataset.image_dataset import dtype_to_str, source_stamp  # noqa: E402
 from fizgig.families.registry import get  # noqa: E402
 
 logger = logging.getLogger(__name__)
@@ -59,7 +59,7 @@ def save_latents(desc, item, latent, controls=(), extra=None):
         sd[f"latent_control_{i}_{c.shape[-2]}x{c.shape[-1]}"] = _clean(c, "control latent", item.item_key)
     save_file(sd, item.latent_cache_path, metadata={
         "architecture": desc.arch_id, "width": str(item.original_size[0]), "height": str(item.original_size[1]),
-        "dtype": dtype_to_str(latent.dtype), "format_version": FORMAT_VERSION})
+        "dtype": dtype_to_str(latent.dtype), "format_version": FORMAT_VERSION, "source": source_stamp(item.item_key)})
 
 
 def _ref_sizes(item):

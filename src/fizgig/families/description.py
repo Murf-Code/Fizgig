@@ -42,6 +42,10 @@ class ModelFile:
     alt_path: str = ""
     alt_label: str = ""
     alt_note: str = ""
+    # "Download models for me" offers a pick between this file and its alt (names for the two, e.g. ("MOSS-Image
+    # Base", "Kromoss")); the picked one is fetched and the pref moved to it. alt_size_gb: the alt's size
+    fetch_choice: tuple = ()
+    alt_size_gb: float = 0.0
     gated: bool = False               # the repo needs an accepted licence + a Hugging Face token to download
     # earlier versions of this file (names in models/): a pref still pointing at one is moved to this file by the
     # downloads (fetch_models) and the updater, where any other file there is the user's own choice and kept
@@ -52,6 +56,9 @@ class ModelFile:
     # False: left out of "Download models for me" altogether - the row's own Download link only (a file nobody needs
     # by default, kept so a user can add it: MOSS-Image's Turbo LoRA)
     bulk_fetch: bool = True
+    # downloaded by the feature that uses it, the first time it is used (MOSS-Image's SFT look LoRA: its Samples
+    # tick), into the models folder with its Preferences row set; not by "Download models for me" (bulk_fetch False)
+    fetch_on_use: bool = False
     # a file added after most users set the family up: its line in the one-time "new model files" popup (shown when
     # the family's DiT is set but this file is not; description.announce_intro opens it). "" = never announced
     announce: str = ""
@@ -98,6 +105,7 @@ class SpeedLoRA:
     community_settings: tuple = ()    # (description, source) pairs: how people actually use it
     caveats: tuple = ()
     source: str = ""
+    gallery_note: str = ""            # shown in the samples gallery's Turbo line while it renders the previews
 
 
 @dataclass(frozen=True)
@@ -198,6 +206,9 @@ class FamilyOption:
     #                                   check: tokens sent when ticked
     default: str = ""                 # entry text / "1" for a ticked check; a choice defaults to its first label
     hint: str = ""                    # the grey line under the control
+    warn: str = ""                    # an amber line under the hint (web), with `warn_link` (an href) after it
+    warn_link: str = ""
+    featured: bool = False            # the row stands out (web): a soft accent panel, for a control worth noticing
     choice_hints: tuple = ()          # (label, amber line) shown while that choice is picked
     choice_notes: tuple = ()          # (label, grey line) shown in place of the hint while that choice is picked
     choice_values: tuple = ()         # choice: the old setting's value each choice stands for, in choice order
@@ -229,6 +240,17 @@ class FamilyOption:
     # a queued run's one-line summary shows this while the option is away from its default ("{}" = its value;
     # a check shows it while ticked); "" = never shown
     summary: str = ""
+    # entry: a Split mode beside the single value - (first value, epochs, value after) to start it with; the value
+    # is then "first:epochs:after" (one text, so presets, Last Train and the queue carry it as any entry), and
+    # `split_hint` replaces the hint while Split is picked
+    split: tuple = ()
+    split_hint: str = ""
+    # entry: a Slide mode (with or without Split) - (first value, hold to epoch, value after, reached by epoch[, every
+    # N epochs after]); the value is then "first:hold:after:by", a straight line from the hold epoch to the last, and
+    # with the tick ":N", every N epochs after it one epoch at the first value; `slide_hint` replaces the hint
+    slide: tuple = ()
+    slide_hint: str = ""
+    single: str = ""                  # Single's value to start with when the default is a Split or Slide value
 
     def choice_labels(self):
         return [c[0] for c in self.choices]
@@ -293,6 +315,8 @@ class FamilyDescription:
     # fetches)
     # a line under the Training tab's Base Model picker while the family is selected (e.g. what its previews are)
     model_note: str = ""
+    # an orange status line under the Training tab's model picker (e.g. support that is new and changing daily)
+    status_note: str = ""
     # a grey note beside Load Preset while that preset is the selection: (preset name, note) pairs
     preset_notes: tuple = ()
     # an edit family whose workbench reference has a strength (the latents scaled by it), and whose travel renders can
@@ -303,8 +327,8 @@ class FamilyDescription:
     # extracted at; an empty block list = every block. The tab adds Custom (a block pick). () = all blocks only
     extract_presets: tuple = ()
     # the Samples tab's wording for the family, as (place, text) pairs over the generic text - places: "banner",
-    # "advanced", "flow", "neg", "cfg", "steps", and "sampler" (added after the Steps line: the sampler and schedule
-    # previews use, for a family sensitive to them); samples_cfg_free: previews render without CFG on a fixed schedule,
+    # "advanced", "flow", "neg", "cfg", "steps", "sampler" (added after the Steps line: the sampler and schedule
+    # previews use, for a family sensitive to them) and "prompts" (a note above the Prompts box); samples_cfg_free: previews render without CFG on a fixed schedule,
     # so the Advanced card (flow shift, negative, CFG) and the sample-model / reference rows hide
     samples_text: tuple = ()
     samples_cfg_free: bool = False
@@ -401,6 +425,9 @@ class FamilyDescription:
     # adaptive Min LR) is at least `rate`, on more than `steps` steps an epoch, gets a tip suggesting a cooler rate,
     # so the best point doesn't fall between two saved epochs. None turns the hint off for the family
     lr_hint: tuple = (2e-4, 125)
+    # the Training tab's small-dataset hint: (pictures, text) - a standard LoRA whose training folder holds fewer than
+    # `pictures` gets the text (its {n}: the count) beside Max Epochs. () = none
+    small_dataset_hint: tuple = ()
     # the Training tab's long-run hint: (epochs, title, text) - a standard LoRA set to at least `epochs` epochs gets a
     # tip card beside Max Epochs (a playback tip: no button). () = none
     long_run_hint: tuple = ()
@@ -412,8 +439,31 @@ class FamilyDescription:
     # memory handoff (park_for_preview / load_preview_checkpoint / unpark_after_preview)
     train_preview_checkpoint: bool = False
     # its Samples tab tick: the label, whether it starts ticked (each family's choice is then kept), and the Steps note
+    # a LoRA for previews of the training model only (MOSS-Image's SFT look LoRA: on the Base, previews look more like
+    # SFT, without loading it): the Samples tab tick with this label, its hint, the strength it renders at. Its file
+    # is the model file with role "look_lora", downloaded the first time the tick is used. Never in training, never
+    # on a preview checkpoint; on CPU between previews
+    preview_look_tick: str = ""
+    preview_look_hint: str = ""
+    preview_look_bold: str = ""       # a bold line under that hint
+    # the gallery's lightbox: a line over an enlarged preview saying how it was made, from the run's record of each
+    # preview round - (setup, text) pairs for "checkpoint" (the preview checkpoint), "look" (the training model with
+    # the preview look LoRA), "base" (the training model alone) and "turbo" (put before the others' when the Turbo
+    # LoRA was on). Empty = no line (a family opts in)
+    preview_labels: tuple = ()
+    preview_look_strength: float = 1.0
     preview_checkpoint_tick: str = "Use Distilled model for samples (4-step, matches ComfyUI)"
     preview_checkpoint_on: bool = True
+    # (tensor name, sum) that identifies the model's own released Base (families/base_check.py): with any other Base
+    # DiT (a fine-tune of it, SFT) the preview-checkpoint tick defaults off - previews render on the model the LoRA
+    # will be used on. () = no check
+    standard_base: tuple = ()
+    # a changed default moved in saved forms: ((key, old value, new value[, only while this key is above 0]), ...).
+    # Each form moves once (a marker is saved with it), so a value chosen after that stays
+    value_moves: tuple = ()
+    # the preview checkpoint that never takes the speed LoRA, as (tensor name, sum); any other preview checkpoint
+    # does (MOSS-Image: SFT doesn't, Kromoss does). () = previews on a checkpoint never take it
+    checkpoint_speed_except: tuple = ()
     preview_checkpoint_steps_note: str = "Base samples only — Distilled is locked at 4 steps"
     # measured training memory for the Auto plan: {precision: (peak GB with no block swap, GB saved per swapped
     # block)}; the peak may instead be ((megapixels, GB), ...) points, interpolated for the run's resolution.
@@ -486,6 +536,10 @@ class FamilyDescription:
     activation_cache: bool = False
     workbench_follows_samples: bool = False   # Repair Studio / Royale previews take the Samples tab's steps,
     #                                   CFG, negative prompt and turbo strength (else the family's fixed preview recipe)
+    # with workbench_follows_samples: the workbench renders on the preview checkpoint only while the Samples tab's tick
+    # for it is on, as training previews do - for a checkpoint that's another model to see the LoRA on (MOSS-Image's
+    # SFT). Off: a set checkpoint is always used (a speed checkpoint: Qwen's Turbo DiT, Flux 3's distilled)
+    workbench_checkpoint_follows_tick: bool = False
     preview_cfg: float = 1.0
     preview_width: int = 1024
     preview_height: int = 1024
@@ -633,6 +687,13 @@ class FamilyDescription:
 
     def block_ids(self) -> list:
         return [f"{self.block_prefix}_{i}" for i in range(self.n_blocks)]
+
+    def preview_look(self):
+        """The Preferences row (ModelFile, role "look_lora") of the LoRA the Samples tab's preview_look_tick puts on
+        previews of the training model, or None."""
+        if not self.preview_look_tick:
+            return None
+        return next((m for m in self.model_files if m.role == "look_lora"), None)
 
     def preview_speed(self):
         """The SpeedLoRA used for in-training previews, or None."""

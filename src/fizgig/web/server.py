@@ -454,8 +454,14 @@ def _studio_samples(desc):
     neg = v.get("SAMPLE_NEGATIVE")
     if neg is None:                     # never saved: the Samples tab's own default, as its box shows it
         neg = desc.preview_negative or ""
+    # the Samples tab's preview-checkpoint tick (MOSS-Image's Use the SFT model for samples): the workbench renders
+    # where training previews do - on the checkpoint while it's ticked, on the training model when it isn't
+    ck = v.get("SAMPLE_CHECKPOINT")
+    if blank(ck):
+        ck = desc.preview_checkpoint_on
+    ck = ck if isinstance(ck, bool) else str(ck).strip().lower() in ("1", "true", "yes", "on")
     return {"steps": str(steps), "cfg": str(cfg), "turbo": str(turbo), "negative": neg,
-            "turbo_live": live, "turbo_name": sp.name if sp is not None else ""}
+            "turbo_live": live, "turbo_name": sp.name if sp is not None else "", "checkpoint": ck}
 
 
 def _gpu_training():
@@ -872,6 +878,15 @@ def _plan(family_key, values, image_folder, resume="", ft_continue=None):
 
 
 _SIZE_KEYS = ("DATASET_MEGAPIXELS", "CLIP_MEGAPIXELS")
+# the settings a Resume takes from the form as it is now: the Samples tab's, block swap (memory only, the results
+# are the same), the save schedule (when checkpoints are written) and the learning rate (the run trains on at the
+# new one, logged); the rest trains on as it was
+_RESUME_SAMPLE_KEYS = ("SAMPLE_PROMPT", "SAMPLE_SEED", "SAMPLE_WIDTH", "SAMPLE_HEIGHT", "SAMPLE_STEPS",
+                       "SAMPLE_CFG_SCALE", "FAMILY_TURBO_STRENGTH", "SAMPLE_CHECKPOINT",   # + previews on the checkpoint
+                       "FAMILY_PREVIEW_LOOK",                                              # + the SFT look tick
+                       "SAMPLE_EVERY_N_EPOCHS", "SAMPLE_LATER", "SAMPLE_UNTIL_EPOCH", "SAMPLE_EVERY_AFTER",
+                       "BLOCKS_SWAP", "SAVE_EVERY_N_EPOCHS", "SAVE_LATER", "SAVE_UNTIL_EPOCH", "SAVE_EVERY_AFTER",
+                       "LEARNING_RATE", "ADAPTIVE_LR_MIN", "ADAPTIVE_LR_MAX")
 
 
 # a prompt slider's live prompts: the request the web UI writes, and what the trainer took (fizgig.families.train's
@@ -1276,6 +1291,13 @@ def _folder_problem(e, out_dir) -> str:
             f"(Output), or set the default in Preferences > LoRA output.")
 
 
+def _resumed(result):
+    """A resume that started: the queue held for that paused run stops showing as held."""
+    if isinstance(result, dict) and not result.get("error") and not result.get("problems"):
+        webqueue.resumed()
+    return result
+
+
 def _start(family_key, values, image_folder, resume="", ft_continue=None, note=""):
     if studio.holding_gpu():                    # Repair Studio's model leaves the GPU for the run
         append_log("Unloading Repair Studio's model to free the GPU for this run.\n")
@@ -1569,6 +1591,23 @@ def _audio_seconds(path):
 _SAMPLE_NAME = re.compile(r"^(?P<run>.+)_e(?P<epoch>\d{6})_(?P<idx>\d{2})_\d+_\d+(?:_s(?P<s>\d{3}))?\.\w+$")
 
 
+def preview_labels(mode) -> dict:
+    """{epoch: the line over that epoch's enlarged previews} from the run's record (rounds) and its family's words
+    (description preview_labels); {} for a family that declares none or a run from before the record."""
+    desc = get_family(mode.get("family", "")) if isinstance(mode, dict) else None
+    words = dict(getattr(desc, "preview_labels", ()) or ())
+    if not words:
+        return {}
+    out = {}
+    for ep, r in (mode.get("rounds") or {}).items():
+        line = words.get("checkpoint" if r.get("checkpoint") else "look" if r.get("look") else "base", "")
+        if r.get("turbo") and words.get("turbo"):
+            line = (words["turbo"] + " " + line).strip()
+        if line:
+            out[str(ep)] = line
+    return out
+
+
 def sample_info(name) -> dict:
     """What a preview's name says: its run, epoch, prompt number and strength (None = full)."""
     m = _SAMPLE_NAME.match(name)
@@ -1586,6 +1625,45 @@ def run_prompts(out_dir, name) -> list:
             text = str((r.get("values") or {}).get("SAMPLE_PROMPT") or "")
             return [ln.strip() for ln in text.splitlines() if ln.strip()]
     return []
+
+
+def epoch_prompts(sample_dir, name) -> dict:
+    """The prompts each epoch's previews used, as the trainer recorded them ({"4": [prompt, ...]}); {} for runs from
+    before it recorded them, which show the run's settings instead."""
+    try:
+        with open(os.path.join(sample_dir, f".prompts_{name}.json"), encoding="utf-8") as f:
+            data = json.load(f)
+        return ({str(k): list(v) for k, v in data.items() if str(k).isdigit() and isinstance(v, list)}
+                if isinstance(data, dict) else {})
+    except (OSError, ValueError):
+        return {}
+
+
+def _caption_media_filter(names, family):
+    """Which of a folder's files the family trains on: an image family's captions list leaves out the folder's
+    recordings and clips. A song's waveform picture and a clip's still and sound stay, for their cards."""
+    try:
+        desc = _files_family(family) if family else None
+    except Exception:
+        desc = None
+    if desc is None:
+        return lambda n: True
+    media = set(desc.media)
+    stems = lambda exts: {os.path.splitext(n)[0] for n in names if os.path.splitext(n)[1].lower() in exts}
+    clip_stems = stems({".mp4"}) if "clip" in media else set()
+    song_stems = stems(_AUDIO) if "voice" in media else set()
+
+    def keep(n):
+        stem, e = os.path.splitext(n)
+        e = e.lower()
+        if stem in clip_stems:
+            return True
+        if e in _AUDIO:
+            return "voice" in media
+        if e in (".mp4", ".webm"):
+            return "clip" in media
+        return "photo" in media or stem in song_stems
+    return keep
 
 
 def pair_songs(entries):
@@ -2033,7 +2111,7 @@ def _fetch_status() -> dict:
     return out
 
 
-def _start_fetch(family, token="", optional=False):
+def _start_fetch(family, token="", optional=False, choices=None):
     """The family's model files plus the helper models, into <repo>/models (a pod links that to its volume), paths
     written to Preferences by the fetcher. A token is passed to that one download only, never written to disk."""
     desc = _files_family(family)
@@ -2049,6 +2127,10 @@ def _start_fetch(family, token="", optional=False):
     cmd = [sys.executable, "-m", "fizgig.scripts.fetch_models", "--progress", "--family", "tools", "--family", family]
     if optional or not desc.fetch_optional_label:
         cmd.append("--include-optional")          # no optional tick on the family: its whole list, as the desktop
+    offered = {f.pref_key for f in desc.model_files if f.fetch_choice}
+    for key, pick in (choices or {}).items():   # the card's pick for a file offered with another build
+        if key in offered and pick in ("main", "alt"):
+            cmd += ["--choose", f"{key}={pick}"]
     env = os.environ.copy()
     env.update(PYTHONIOENCODING="utf-8", PYTHONUNBUFFERED="1", PYTHONPATH=os.path.join(BASE_DIR, "src"))
     if token:
@@ -2060,6 +2142,66 @@ def _start_fetch(family, token="", optional=False):
     with _lock:
         _fetch.update(proc=proc, state="running", family=family, file="", done=0, total=0, lines=[])
     threading.Thread(target=_fetch_watch, args=(proc,), daemon=True).start()
+
+
+_on_use = {}          # pref key -> {"state": "running" | "failed" | "done", "at": time}: files fetched on first use
+
+
+def _fetch_on_use(f):
+    """One model file declared fetch_on_use, downloaded the first time its feature is used: into the models folder
+    on a worker thread, its Preferences row set once it is complete (hf_hub_download writes the final name only
+    then). A failed download is tried again 30 s on, not on every form change. Returns "running" / "failed" / ""."""
+    with _lock:
+        st = _on_use.get(f.pref_key)
+        if st and (st["state"] == "running" or (st["state"] == "failed" and time.time() - st["at"] < 30)):
+            return st["state"]
+        _on_use[f.pref_key] = {"state": "running", "at": time.time()}
+
+    def work():
+        try:
+            from huggingface_hub import hf_hub_download
+            got = hf_hub_download(repo_id=f.repo, filename=f.path, local_dir=user_data.MODELS_DIR)
+            dest = os.path.join(user_data.MODELS_DIR, f.local_name or os.path.basename(f.path))
+            if os.path.normcase(os.path.abspath(got)) != os.path.normcase(os.path.abspath(dest)):
+                os.replace(got, dest)             # a file in a repo subfolder: to the models folder itself
+            update_prefs({f.pref_key: dest})
+            with _lock:
+                _on_use[f.pref_key] = {"state": "done", "at": time.time()}
+            logger.info(f"Downloaded {os.path.basename(dest)} on first use")
+        except Exception as e:
+            with _lock:
+                _on_use[f.pref_key] = {"state": "failed", "at": time.time()}
+            logger.warning(f"Couldn't download {f.path} from {f.repo}: {e}")
+
+    threading.Thread(target=work, daemon=True).start()
+    return "running"
+
+
+def _on_use_gb(f):
+    """How much of a first-use download has arrived, in GB: hf_hub_download's part file in the models folder's
+    .cache (a hashed name ending .incomplete) until it is complete - the largest there, as a resumed one may sit
+    beside an older leftover."""
+    d = os.path.join(user_data.MODELS_DIR, ".cache", "huggingface", "download", os.path.dirname(f.path))
+    try:
+        return max((os.path.getsize(os.path.join(d, n)) for n in os.listdir(d) if n.endswith(".incomplete")),
+                   default=0) / 2 ** 30
+    except OSError:
+        return 0.0
+
+
+def _look_fetch(desc, values, path):
+    """The preview look LoRA (MOSS-Image's SFT look LoRA), ticked on the Samples tab: its own download
+    (_fetch_on_use) when it is not on disk. Returns (state, GB arrived of GB): state "running" / "failed" / "done"
+    (just finished: the note says so) / "" (nothing to say)."""
+    look = desc.preview_look()
+    if look is None or not look.fetch_on_use or not values.get("FAMILY_PREVIEW_LOOK"):
+        return "", None
+    if path and os.path.isfile(path):
+        with _lock:
+            st = _on_use.get(look.pref_key) or {}
+        return ("done" if st.get("state") == "done" and time.time() - st["at"] < 120 else ""), None
+    state = _fetch_on_use(look)
+    return state, ((_on_use_gb(look), look.size_gb) if state == "running" else None)
 
 
 def _fetch_watch(proc):
@@ -2706,7 +2848,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.json({"error": "not a checkpoint"}, 404)
             return self._stream(p)
         if path == "/api/captions":
-            return self._captions((qs.get("folder") or [""])[0], (qs.get("ext") or [".txt"])[0])
+            return self._captions((qs.get("folder") or [""])[0], (qs.get("ext") or [".txt"])[0],
+                                  (qs.get("family") or [""])[0])
         return self.json({"error": "not found"}, 404)
 
     def _log_stream(self, since):
@@ -2752,7 +2895,17 @@ class Handler(BaseHTTPRequestHandler):
             for e in sorted(os.scandir(target), key=lambda e: e.name.lower()):
                 if e.name.startswith("."):
                     continue
-                (dirs if e.is_dir() else files).append({"name": e.name, "path": e.path})
+                isdir = e.is_dir()
+                item = {"name": e.name, "path": e.path}
+                try:                                 # dates and size for the picker's columns (stat is cached on Windows)
+                    st = e.stat()
+                    item["mtime"] = st.st_mtime
+                    item["ctime"] = getattr(st, "st_birthtime", None) or (st.st_ctime if os.name == "nt" else None)
+                    if not isdir:
+                        item["size"] = st.st_size
+                except OSError:
+                    pass
+                (dirs if isdir else files).append(item)
         except OSError:
             pass
         parent = os.path.dirname(target)
@@ -2780,8 +2933,17 @@ class Handler(BaseHTTPRequestHandler):
         if run:
             items = [e for e in items if infos[e.name].get("run") == run]
         out = pair_songs([(e.name, e.path, {"time": e.stat().st_mtime, **infos[e.name]}) for e in items[:1500]])
-        return self.json({"items": out[:1000] if run else out[:300], "runs": runs,
-                          "prompts": run_prompts(os.path.dirname(folder.rstrip("\\/")), run) if run else []})
+        by_epoch = epoch_prompts(folder, run) if run else {}
+        try:
+            with open(os.path.join(folder, f".previews_{run}.json"), encoding="utf-8") as f:
+                mode = json.load(f) if run else None
+        except (OSError, ValueError):
+            mode = None
+        newest = by_epoch[max(by_epoch, key=int)] if by_epoch else None
+        return self.json({"items": out[:1000] if run else out[:300], "runs": runs, "epoch_prompts": by_epoch,
+                          "preview_mode": mode if isinstance(mode, dict) else None,
+                          "preview_labels": preview_labels(mode),
+                          "prompts": newest or (run_prompts(os.path.dirname(folder.rstrip("\\/")), run) if run else [])})
 
     def _checkpoints(self, folder):
         """The run's saved LoRAs / checkpoints in its output folder, newest first."""
@@ -2797,15 +2959,16 @@ class Handler(BaseHTTPRequestHandler):
                                      "time": e.stat().st_mtime, "kind": _checkpoint_kind(e.path),
                                      "run": base(e.name)} for e in items]})
 
-    def _captions(self, folder, ext):
+    def _captions(self, folder, ext, family=""):
         out = []
         try:
             names = sorted(os.listdir(folder))
         except OSError:
             return self.json({"items": []})
+        keep = _caption_media_filter(names, family)
         for n in names:
             stem, e = os.path.splitext(n)
-            if e.lower() not in MEDIA:
+            if e.lower() not in MEDIA or not keep(n):
                 continue
             cap = os.path.join(folder, stem + ext)
             try:
@@ -2925,10 +3088,16 @@ class Handler(BaseHTTPRequestHandler):
                 ck = desc.preview_checkpoint()
                 ckf = pref_path(prefs, ck[0].pref_key) if ck else ""
                 vals = b.get("values") or {}
+                lk = desc.preview_look()
+                lkf = launch.look_path(desc, {"models": {lk.pref_key: pref_path(prefs, lk.pref_key)}}) if lk else ""
+                dit = next((f.pref_key for f in desc.model_files if f.role == "dit"), "")
                 st = form.state(desc, vals, b.get("image_folder") or "",
                                 captioner=cap if cap and os.path.isfile(cap) else "",
                                 speed_file=bool(spf and os.path.isfile(spf)),
-                                checkpoint_file=bool(ckf and os.path.isfile(ckf)))
+                                checkpoint_file=bool(ckf and os.path.isfile(ckf)),
+                                base_file=pref_path(prefs, dit) if dit else "",
+                                checkpoint_path=ckf if ckf and os.path.isfile(ckf) else "",
+                                look_file=bool(lkf and os.path.isfile(lkf)), look_fetch=_look_fetch(desc, vals, lkf))
                 if st["kind"] in ("standard", "finetune"):     # the Subjects card: what each folder trains as
                     mpn = _multi_person_notes(vals, b.get("image_folder") or "",
                                               multi_person=st["kind"] == "standard" and
@@ -3076,6 +3245,10 @@ class Handler(BaseHTTPRequestHandler):
                 for k in _SIZE_KEYS:                     # Resume at the size the form has now: caches again first
                     if str(b.get(k) or "").strip():
                         last["values"][k] = str(b[k]).strip()
+                samples = b.get("samples") if isinstance(b.get("samples"), dict) else {}
+                for k in _RESUME_SAMPLE_KEYS:            # the previews as the Samples tab has them now
+                    if k in samples and samples[k] is not None and str(samples[k]).strip() != "":
+                        last["values"][k] = samples[k]
                 if last["resume_mode"] == "ft":
                     if not os.path.isfile(last["resume"]):
                         return self.json({"error": "The paused fine-tune's checkpoint isn't there any more: "
@@ -3088,15 +3261,15 @@ class Handler(BaseHTTPRequestHandler):
                                                    f"for is {v.get('FAMILY_FT_ROTATIONS')}: "
                                                    f"{os.path.basename(last['resume'])} is the finished model. To "
                                                    f"train it further, raise Train for and press Resume again."}, 400)
-                    return self.json(_start(last["family"], v, last["image_folder"],
+                    return self.json(_resumed(_start(last["family"], v, last["image_folder"],
                                             ft_continue={"continue": cont, "rotations": left},
                                             note=f"=== Resuming the fine-tune from {os.path.basename(last['resume'])}: "
-                                                 f"{left} rotation(s) left ==="))
+                                                 f"{left} rotation(s) left ===")))
                 if not os.path.isdir(last["resume"]):
                     return self.json({"error": "The paused run's saved state isn't there any more: "
                                                + last["resume"]}, 400)
-                return self.json(_start(last["family"], last["values"], last["image_folder"], resume=last["resume"],
-                                        note=f"=== Resuming from {last['resume']} ==="))
+                return self.json(_resumed(_start(last["family"], last["values"], last["image_folder"],
+                                                 resume=last["resume"], note=f"=== Resuming from {last['resume']} ===")))
             if path == "/api/run/slider_prompts":    # a prompt slider's new ends, taken at its next epoch boundary
                 with _lock:
                     running = _run["proc"] is not None and _run["proc"].poll() is None
@@ -3123,6 +3296,7 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/run/sample_override":   # the Samples tab's live previews: the run going now's override
                 with _lock:
                     out = _run["output_dir"] if _run["proc"] is not None and _run["proc"].poll() is None else ""
+                    fam = _run["family"]
                 if not out:
                     return self.json({"error": "Nothing is training right now."}, 400)
                 side = os.path.join(out, ".sample_override.json")
@@ -3133,8 +3307,23 @@ class Handler(BaseHTTPRequestHandler):
                     except OSError:
                         pass
                     return self.json({"ok": True, "on": False})
-                _write_json(side, {"prompts": prompts, "seed": _seed(b.get("seed"), 1234),
-                                   "width": _seed(b.get("width"), 1024), "height": _seed(b.get("height"), 1024)})
+                live = {"prompts": prompts, "seed": _seed(b.get("seed"), 1234),
+                        "width": _seed(b.get("width"), 1024), "height": _seed(b.get("height"), 1024)}
+                for k in ("steps", "cfg", "turbo", "every", "until", "after"):   # Steps, CFG, Turbo strength and
+                    # the preview cadence (until / after 0 = Then preview less often off), when given
+                    try:
+                        if str(b.get(k, "")).strip() != "":
+                            live[k] = float(b[k]) if k in ("cfg", "turbo") else int(float(b[k]))
+                    except (TypeError, ValueError):
+                        pass
+                desc = get_family(fam or "")
+                lk = desc.preview_look() if desc is not None and "look" in b else None
+                if lk is not None:      # the SFT look tick: its file's path when ticked ("" = off), at its strength
+                    live["look"] = launch.look_path(desc, {"models": {lk.pref_key: pref_path(load_prefs(),
+                                                                                            lk.pref_key)}}) \
+                        if b.get("look") else ""
+                    live["look_strength"] = desc.preview_look_strength
+                _write_json(side, live)
                 return self.json({"ok": True, "on": True})
             if path == "/api/run/now":               # Sample now / Save now: a request the trainer takes after a step
                 what = str(b.get("what") or "")
@@ -3164,7 +3353,8 @@ class Handler(BaseHTTPRequestHandler):
                 append_log("\n⏸ Pause requested: the run stops cleanly at the end of this epoch.\n")
                 return self.json({"ok": True})
             if path == "/api/fetch":
-                _start_fetch(b.get("family", ""), b.get("token", ""), bool(b.get("optional")))
+                _start_fetch(b.get("family", ""), b.get("token", ""), bool(b.get("optional")),
+                             b.get("choices") if isinstance(b.get("choices"), dict) else None)
                 return self.json({"ok": True})
             if path == "/api/fetch/cancel":
                 return self.json({"ok": _cancel_fetch()})

@@ -102,6 +102,10 @@
             <p>Train LoRAs and fine-tunes: pick a model and your training folder, set the previews,
               then start a run and watch it here.</p>
           </div>
+          <div class="section-card news-card" id="newsCard" style="display:none">
+            <div class="card-title">News</div>
+            <div class="card-content" id="newsBody"></div>
+          </div>
           <div class="section-card accent-card">
             <div class="card-title">Model</div>
             <div class="card-desc">What you're training. The Samples, Training and Preferences tabs follow it (Samples and
@@ -153,8 +157,6 @@
             <div class="card-title">Upload a training folder</div>
             <div class="card-desc">The folder above is on the machine running Fizgig. If your training data (pictures, clips or
               songs) is on the computer you're using now, upload it here, with the caption .txt files (a .zip works too).</div>
-            <div class="card-desc">On the computer running Fizgig? There's no need to use this: Choose… above picks
-              your folder directly.</div>
             <div class="card-content" id="uploadBody">
               <div class="field-row"><span class="field-label">New folder name:</span>
                 <input type="text" id="uploadName" class="w-combo-lg" placeholder="my_subject"></div>
@@ -487,6 +489,7 @@
                 <div class="lik-run" id="likRun"></div>
                 <canvas id="likChart" height="150"></canvas>
               </div>
+              <div class="preview-mode" id="galleryMode" style="display:none"></div>
               <div class="gallery" id="gallery"></div>
             </div>
           </div>
@@ -500,7 +503,8 @@
           <div class="section-card model-strip">
             <div class="card-content"><div class="field-row"><span class="field-label">Model:</span>
               <select class="w-combo-lg family-pick"></select>
-              <span class="field-hint">The same choice as the Start tab's: change it here or there.</span></div></div>
+              <span class="field-hint">The same choice as the Start tab's: change it here or there.</span></div>
+              <div class="family-status" style="display:none"></div></div>
           </div>
           <div class="section-card">
             <div class="card-title">Presets</div>
@@ -521,6 +525,7 @@
               <div class="run-bar run-bar-lg"><span id="runBar"></span></div>
               <div class="run-tiles" id="runTiles"></div>
               <div id="runLoss"></div>
+              <div class="il-box" id="runImageLoss" style="display:none"></div>
               <div class="field-row">
                 <button class="btn" id="btnCheck" title="Runs Start's checks without starting: lists anything missing or wrong, else the stages a run would go through">Check settings</button>
                 <button class="btn btn-primary" id="btnStart">Start Training</button>
@@ -528,6 +533,7 @@
                 <button class="btn btn-sm" id="btnQueueCancel" style="display:none">Cancel edit</button>
                 <button class="btn btn-warning" id="btnPause">Pause</button>
                 <button class="btn" id="btnSampleNow" style="display:none" title="Make the previews now, after the current training step, without waiting for the epoch to end">Sample now</button>
+                <button class="btn" id="btnImageLoss" style="display:none" title="Each training image's loss by epoch, against the rest of the dataset: which images are still being learned, which are done, and what the loss watch decided about each">Per-image loss</button>
                 <button class="btn" id="btnSaveNow" style="display:none" title="Save the LoRA as it is now, after the current training step (as name-stepNNNNNNN.safetensors)">Save now</button>
                 <button class="btn btn-primary" id="btnResume">Resume</button>
                 <button class="btn btn-danger" id="btnStop">Stop</button>
@@ -1581,7 +1587,7 @@
   </div>
 
   <div class="modal-backdrop" id="pickerModal">
-    <div class="modal-window" style="width: 640px;">
+    <div class="modal-window" style="width: 760px; max-width: 96vw;">
       <div class="modal-header"><span id="pickerTitle">Choose</span>
         <button class="btn" data-close="pickerModal">✕</button></div>
       <div class="modal-body">
@@ -1595,6 +1601,13 @@
           <button class="btn btn-primary" id="pickerNewMake">Create</button>
           <button class="btn" id="pickerNewCancel">Cancel</button></div>
         <div class="field-hint" id="pickerNewMsg"></div>
+        <div class="field-row"><input type="text" id="pickerFilter" placeholder="Filter names…" style="flex:1">
+          <span class="field-label">Sort by</span>
+          <select id="pickerSort"><option value="name">Name</option><option value="mtime">Date modified</option>
+            <option value="ctime">Date created</option><option value="size">Size</option><option value="type">Type</option></select>
+          <button class="btn btn-sm" id="pickerDir" title="Reverse the order">↑</button></div>
+        <div class="picker-head"><span data-sort="name">Name</span><span data-sort="mtime">Date modified</span>
+          <span data-sort="size">Size</span></div>
         <div id="pickerList" class="picker-list"></div>
       </div>
       <div class="modal-footer"><span class="field-hint upload-status" id="pickerUpMsg"></span>
@@ -1708,7 +1721,7 @@
   <div class="lightbox" id="lightbox" style="display:none">
     <button class="btn lightbox-close" id="lightboxClose" title="Close (Esc)">✕</button>
     <button class="btn lightbox-step" id="lightboxPrev" title="Previous (←)">‹</button>
-    <figure class="lightbox-figure"><img id="lightboxImg" alt=""><figcaption id="lightboxName"></figcaption>
+    <figure class="lightbox-figure"><div class="lightbox-mode" id="lightboxMode" style="display:none"></div><img id="lightboxImg" alt=""><figcaption id="lightboxName"></figcaption>
       <div class="lightbox-cap" id="lightboxCap" style="display:none">
         <textarea id="lightboxCapText" rows="3" spellcheck="true"></textarea>
         <div class="lightbox-cap-row"><button class="btn btn-primary btn-sm" id="lightboxCapSave"

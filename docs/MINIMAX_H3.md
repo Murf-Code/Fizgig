@@ -111,7 +111,7 @@ Every control has a hint in the app; the ones worth knowing:
 - **Weight averaging (EMA)** (default 0.98): checkpoints and previews are saved from a running average of the adapter's recent steps rather than whichever step the epoch ended on, so every checkpoint reflects the whole dataset instead of the tail of the shuffle. On a four-way A/B at 50 epochs, 0.98 sat five likeness points above EMA-off on the late epochs with half the epoch-to-epoch spread, and reached 50% just as fast. 0.99 smooths more without lifting the level; 0.995 lags and is for runs of a few hundred epochs only. Off is there for an A/B.
 - **Using the Turbo LoRA in ComfyUI? Skip its custom sampler.** ComfyUI samples H3 audio cleanly with stock Euler; community consensus is 8 steps, with `minimax_h3_turbo_v4_step600_ema` the strongest checkpoint.
 
-Settings are read at launch. Pause → Resume relaunches with your current settings, so a pause is the moment to change them mid-run.
+Settings are read at launch. Pause → Resume carries on with the run's own training settings; it takes the Samples tab's preview settings (prompts, seed, size, steps, CFG, Turbo strength), block swap and a new Target Megapixels from the form as they are now.
 
 ## Video and sound: how do I…
 
