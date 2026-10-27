@@ -290,6 +290,16 @@ https://ai.google.dev/edge/mediapipe/solutions/vision/image_segmenter
 
 ---
 
+## SkyTNT anime-seg (the character finder) — Apache License 2.0
+
+Make masks' **Drawn or furry characters** and **A mix** choices run SkyTNT's anime-seg model (`isnetis.onnx`,
+https://huggingface.co/skytnt/anime-seg, code at https://github.com/SkyTNT/anime-segmentation) with onnxruntime. The
+model file is **not** shipped with Fizgig: it is downloaded from Hugging Face (a pinned revision) when you press
+**Download the character finder** on the masks card, and checked against a pinned SHA-256. Fizgig's own code runs it;
+none of anime-segmentation's code is copied.
+
+---
+
 ## CLIP tokenizer (OpenAI) — MIT License
 
 `src/fizgig/assets/clip_tokenizer/` (the SAM 3.1 text encoder's vocabulary) is

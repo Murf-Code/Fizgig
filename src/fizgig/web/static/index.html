@@ -354,9 +354,15 @@
                 <div class="field-hint" id="maskInfo"></div>
                 <div class="mask-step">1. How the masks are made</div>
                 <input type="checkbox" id="maskSam" hidden>
-                <span class="seg" id="maskMethod"><button class="btn" data-sam="0">Person finder</button><button
+                <span class="seg" id="maskMethod"><button class="btn" data-sam="0">Quick finder</button><button
                   class="btn" data-sam="1">SAM 3.1: from words</button></span>
                 <div class="field-hint" id="maskMethodHint"></div>
+                <div id="maskWhoBox">
+                  <div class="field-row"><span class="field-label">Who's in your pictures:</span>
+                    <span class="seg" id="maskWho"></span></div>
+                  <div class="field-hint" id="maskWhoHint"></div>
+                  <div class="mask-sam-state" id="maskCharState" style="display:none"></div>
+                </div>
                 <div class="mask-sam-state" id="maskSamState" style="display:none"></div>
                 <div class="mask-step">2. What the masks show</div>
                 <div id="maskSamBox" style="display:none">
@@ -366,11 +372,14 @@
                     <input type="text" id="maskSamExclude" class="w-path" placeholder="optional, e.g. glasses, phone"></div>
                   <div class="field-hint">A few words for each thing, separated by commas. Everything in Mask these is
                     white, then anything in Leave these out is taken away.</div>
-                  <div class="field-row"><button class="btn" id="maskSamPreview">Preview on 2 random pictures</button>
-                    <span class="field-hint" id="maskSamPrevState"></span></div>
-                  <div class="mask-sam-previews" id="maskSamPreviews"></div>
+                  <label class="checkbox-label"><input type="checkbox" id="maskSamDrawn">
+                    My pictures are drawn or furry characters</label>
+                  <div class="field-hint radio-hint" id="maskSamDrawnHint"></div>
                 </div>
                 <div id="maskKinds"></div>
+                <div class="field-row"><button class="btn" id="maskSamPreview">Preview on 2 random pictures</button>
+                  <span class="field-hint" id="maskSamPrevState"></span></div>
+                <div class="mask-sam-previews" id="maskSamPreviews"></div>
                 <div class="mask-step">3. Options</div>
                 <label class="checkbox-label"><input type="checkbox" id="maskSubject">
                   Only my subject, when there are several people</label>

@@ -389,7 +389,14 @@ def _sam_info():
     """The masks card's SAM 3.1 line: the downloaded file ("" before the download) and how a download is going."""
     from fizgig.dataset import sammask
     return {"path": sammask.find_model(user_data.MODELS_DIR), "fetch": sammask.fetch_state(user_data.MODELS_DIR),
-            "gb": sammask.SIZE_GB}
+            "gb": sammask.SIZE_GB, "drawn_words": sammask.DRAWN_WORDS}
+
+
+def _char_info():
+    """The masks card's character finder line: the downloaded file ("" before the download) and how a download is
+    going."""
+    from fizgig.dataset import charmask
+    return charmask.info(user_data.MODELS_DIR)
 
 
 def update_prefs(changes: dict):
@@ -3059,7 +3066,7 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError as e:
                 return self.json({"error": str(e)}, 400)
         if path == "/api/masks/info":              # Image Prep's Make masks card: what's there for this folder
-            from fizgig.dataset import automask
+            from fizgig.dataset import automask, charmask
             folder = (qs.get("folder") or [""])[0]
             pics = automask.pictures(folder) if folder and os.path.isdir(folder) else []
             have = sum(1 for p in pics if mask_for_stem(folder, os.path.splitext(os.path.basename(p))[0]))
@@ -3067,7 +3074,8 @@ class Handler(BaseHTTPRequestHandler):
                               "model_here": os.path.isfile(automask.model_path(user_data.MODELS_DIR)),
                               "model_mb": automask.MODEL_MB, "pictures": len(pics), "with_mask": have,
                               "baselines": bool(prep_jobs.look_baselines(folder)) if folder else False,
-                              "faces": prep_jobs.faces_available(), "sam": _sam_info(), "tagger": _tagger_info()})
+                              "faces": prep_jobs.faces_available(), "sam": _sam_info(), "tagger": _tagger_info(),
+                              "chars": _char_info(), "who": charmask.WHO, "drawn_kinds": charmask.KIND_LABELS_DRAWN})
         if path == "/api/prep/summary":            # the What will happen card
             from fizgig.dataset import prep as _prep
             g = lambda k, d="": (qs.get(k) or [d])[0]
@@ -4131,6 +4139,32 @@ class Handler(BaseHTTPRequestHandler):
                 from fizgig.dataset import sammask
                 sammask.download(user_data.MODELS_DIR)
                 return self.json({"ok": True, "sam": _sam_info()})
+            if path == "/api/masks/char_fetch":     # the character finder for drawn / furry pictures (176 MB, once)
+                from fizgig.dataset import charmask
+                charmask.download(user_data.MODELS_DIR)
+                return self.json({"ok": True, "chars": _char_info()})
+            if path == "/api/masks/quick_preview":  # the quick finder on two random pictures, nothing written
+                import base64
+                import io
+                folder = str(b.get("folder") or "")
+                if not folder or not os.path.isdir(folder):
+                    return self.json({"error": "Choose the training folder on the Start tab first."}, 400)
+                try:
+                    shots, fresh = prep_jobs.quick_preview(folder, str(b.get("kind") or "person"),
+                                                           str(b.get("who") or "photo"), shown=b.get("shown") or [])
+                except ValueError as e:
+                    return self.json({"error": str(e)}, 400)
+                except Exception as e:
+                    logger.exception("mask preview")
+                    return self.json({"error": f"The finder couldn't run: {type(e).__name__}: {e}"}, 400)
+                from fizgig.dataset import sammask
+                pics = []
+                for name, pic, cover, found_by in shots:
+                    buf = io.BytesIO()
+                    pic.save(buf, "JPEG", quality=88)
+                    pics.append({"name": name, "cover": round(cover, 3), "by": found_by,
+                                 "src": "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()})
+                return self.json({"ok": True, "pictures": pics, "fresh": fresh, "of": len(sammask.pictures(folder))})
             if path == "/api/masks/edit/sam_click":  # the mask editor: the object SAM 3.1 finds where you clicked
                 from fizgig.web import mask_edit
                 import base64
@@ -4158,7 +4192,8 @@ class Handler(BaseHTTPRequestHandler):
                 if not include:
                     return self.json({"error": "Type what the masks should show in Mask these (e.g. person)."}, 400)
                 try:
-                    shots, fresh = sammask.preview(folder, include, exclude, where, shown=b.get("shown") or [])
+                    shots, fresh = sammask.preview(folder, include, exclude, where, shown=b.get("shown") or [],
+                                                   drawn=bool(b.get("drawn")))
                 except ValueError as e:
                     return self.json({"error": str(e)}, 400)
                 except Exception as e:
@@ -4196,10 +4231,10 @@ class Handler(BaseHTTPRequestHandler):
                         if b.get("sam"):
                             from fizgig.dataset import sammask
                             sam = {"path": _sam_info()["path"], "include": sammask.split_words(b.get("include")),
-                                   "exclude": sammask.split_words(b.get("exclude"))}
+                                   "exclude": sammask.split_words(b.get("exclude")), "drawn": bool(b.get("drawn"))}
                         return self.json(prep_jobs.start_masks(folder, str(b.get("kind") or ""),
                                                                bool(b.get("subject_only")), bool(b.get("overwrite")),
-                                                               sam=sam))
+                                                               sam=sam, who=str(b.get("who") or "photo")))
                     return self.json(prep_jobs.look_move(folder, b.get("paths") or [],
                                                          captions.caption_ext(b.get("ext"))))
                 except ValueError as e:
