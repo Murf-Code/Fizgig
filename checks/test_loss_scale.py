@@ -10,7 +10,7 @@ def _range(vals, log=False):
     if not shutil.which("node"):
         pytest.skip("node not installed")
     src = open(APP, encoding="utf-8").read()
-    fn = re.search(r"function trendRange\(vals, log\) \{.*?\n\}\n", src, re.S).group(0)
+    fn = re.search(r"function trendRange\(vals, log, minFrac = 0\.05\) \{.*?\n\}\n", src, re.S).group(0)
     js = fn + f"console.log(JSON.stringify(trendRange({json.dumps(vals)}, {json.dumps(log)})));"
     return json.loads(subprocess.check_output(["node", "-e", js], text=True))
 

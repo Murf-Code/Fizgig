@@ -86,7 +86,7 @@ def test_chart_never_joins_sections():
         pytest.skip("node not installed")
     app = open(os.path.join(ROOT, "web", "static", "app.js"), encoding="utf-8").read()
     fn = re.search(r"function valSections\(val\) \{.*?\n\}\n", app, re.S).group(0)
-    assert 'for (const part of valSections(val)) line("lg-val", part, 2);' in app
+    assert 'for (const part of valSections(val)) line("lg-val", part, 2, VY);' in app
     val = [[1, 1, 0.12, []], [2, 2, 0.11, []], [3, 3, 0.13, [], 1], [4, 4, 0.12, [], 1]]
     js = fn + f"console.log(JSON.stringify(valSections({json.dumps(val)}).map((p) => p.map((x) => x[0]))));"
     assert json.loads(subprocess.check_output(["node", "-e", js], text=True)) == [[1, 2], [3, 4]]

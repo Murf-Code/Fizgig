@@ -3954,15 +3954,33 @@ function lrNowLabel(x) {
 
 // the loss graph's left scale in the Epoch average / Running avg views: fitted to the averages and validation points
 // drawn (in the scale's own units, log10 on a log scale), 10% padding each side; a near-constant series is shown
-// at least 5% of its value tall (0.02 decades on a log scale) so its last-digit noise doesn't fill the plot
-function trendRange(vals, log) {
+// at least 5% of its value tall (0.02 decades on a log scale) so its last-digit noise doesn't fill the plot.
+// minFrac: that floor's fraction instead - validation on its own scale uses 1%: it's the same images, noise and seed
+// each check, so a small move is a real one
+function trendRange(vals, log, minFrac = 0.05) {
   const v = vals.map(Number).filter((x) => isFinite(x) && (!log || x > 0)).map((x) => (log ? Math.log10(x) : x));
   if (!v.length) return null;
   let lo = Math.min(...v), hi = Math.max(...v);
-  const mid = (lo + hi) / 2, minSpan = log ? 0.02 : Math.max(Math.abs(mid) * 0.05, 1e-6);
+  const mid = (lo + hi) / 2, minSpan = log ? 0.4 * minFrac : Math.max(Math.abs(mid) * minFrac, 1e-6);
   if (hi - lo < minSpan) { lo = mid - minSpan / 2; hi = mid + minSpan / 2; }
   const pad = (hi - lo) * 0.1;
   return [lo - pad, hi + pad];
+}
+
+// the running avg points the trend views' scale fits: from the end of the first epoch on (before that it's the mean of
+// the few steps so far - it starts wherever the first step landed and would stretch the scale), all of them when the
+// run hasn't finished an epoch yet. data.epochs: [[epoch, its first step], ...]
+function raFit(ra, epochs) {
+  const e2 = (epochs || []).length > 1 ? epochs[1][1] : null;
+  const after = e2 == null ? ra : ra.filter((p) => p[0] >= e2);
+  return after.length ? after : ra;
+}
+
+// does validation get its own scale? In the Epoch average / Running avg views (trends), with validation shown and at
+// least 2 checks: it then fills the plot height on its own, beside the averages, instead of sharing their scale (a
+// validation loss sits apart from the training loss, so on one scale both look flat with a gap between them)
+function valScale(trends, valOn, nVal) {
+  return !!(trends && valOn && nVal >= 2);
 }
 
 // the validation checks as the line's sections ([[step, epoch, loss, per-t, seg?], ...] -> one array a section)
@@ -4016,7 +4034,9 @@ function lossGraph(data) {
     hasLr && set.lr ? key("lg-sw-lr", "learning rate (right-hand scale)") : null,
     set.emean && em.length ? key("lg-sw-emean", "average loss of each epoch") : null,
     set.ravg && ra.length ? key("lg-sw-ravg", "running avg (kohya-style: drifts down by itself)") : null,
-    set.val && hasVal ? key("lg-sw-val", "fixed validation loss (same images, noise and seed)") : null,
+    set.val && hasVal ? key("lg-sw-val", "fixed validation loss (same images, noise and seed)" +
+      (valScale((set.emean && em.length) || (set.ravg && ra.length), set.val, val.length) ?
+        " - its own scale, the teal numbers" : "")) : null,
     key("lg-sw-best", "lowest smoothed loss"), key("lg-sw-epoch", "start of an epoch (e1, e2…)")].filter(Boolean));
   legendFill();
   const tip = (node, text) => { node.title = text; return node; };
@@ -4034,7 +4054,11 @@ function lossGraph(data) {
   function draw() {
     // drawn at the width it has, so the text stays its own size on a phone
     const W = Math.max(300, Math.round(svgHost.clientWidth || 800)), H = W < 600 ? 220 : 240;
-    const L = 54, R = hasLr && set.lr ? 64 : 12, T = 10, B = 26;   // room for the live rate (6.55e-5) beside "LR"
+    // Epoch average / Running avg on with 2+ validation checks shown: validation gets its own scale (valScale), its
+    // numbers in teal in a second column beside the loss numbers, so both trends fill the plot height
+    const trends = (set.emean && em.length) || (set.ravg && ra.length);
+    const ownVal = valScale(trends, set.val, val.length);
+    const L = ownVal ? 110 : 54, R = hasLr && set.lr ? 64 : 12, T = 10, B = 26;   // room for the live rate beside "LR"
     const xs = pts.map((p) => p[0]);
     const x0 = xs[0], x1 = xs[xs.length - 1];
     const tf = (v) => (set.log ? Math.log10(Math.max(v, 1e-8)) : v);
@@ -4054,8 +4078,9 @@ function lossGraph(data) {
     // Epoch average / Running avg on: the scale fits those and the validation points, so their trend shows; the
     // step loss and its smoothed line run past it, cut at the plot's edges
     const fit = (set.emean && em.length) || (set.ravg && ra.length) ? trendRange([
-      ...(set.emean ? em.map((p) => p[2]) : []), ...(set.ravg ? ra.map((p) => p[1]) : []),
-      ...(set.val && hasVal ? val.map((p) => p[2]) : [])], set.log) : null;
+      ...(set.emean ? em.map((p) => p[2]) : []), ...(set.ravg ? raFit(ra, data.epochs).map((p) => p[1]) : []),
+      ...(set.val && hasVal && !ownVal ? val.map((p) => p[2]) : [])], set.log) : null;
+    const vfit = ownVal ? trendRange(val.map((p) => p[2]), set.log, 0.01) : null;   // validation's own (log: in decades)
     let y0, y1;
     if (fit) [y0, y1] = fit;
     else {
@@ -4065,6 +4090,8 @@ function lossGraph(data) {
     const X = (x) => L + (W - L - R) * (x1 === x0 ? 0.5 : (x - x0) / (x1 - x0));
     const Y = (v) => T + (H - T - B) * (1 - (Math.min(Math.max(tf(v), y0), y1) - y0) / (y1 - y0));
     const YS = fit ? (v) => T + (H - T - B) * (1 - (tf(v) - y0) / (y1 - y0)) : Y;   // unclamped: cut, not flattened
+    const VY = vfit ? (v) => T + (H - T - B) * (1 - (Math.min(Math.max(tf(v), vfit[0]), vfit[1]) - vfit[0]) /
+      (vfit[1] - vfit[0])) : Y;                                                       // validation's own scale
     const ns = "http://www.w3.org/2000/svg";
     const mk = (tag, attrs) => { const n = document.createElementNS(ns, tag); for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v); return n; };
     const svg = mk("svg", {viewBox: `0 0 ${W} ${H}`, class: "loss-graph-svg"});
@@ -4079,9 +4106,16 @@ function lossGraph(data) {
     for (const f of [0, 0.5, 1]) {
       const v = y0 + (y1 - y0) * f, yy = T + (H - T - B) * (1 - f);
       svg.append(mk("line", {x1: L, x2: W - R, y1: yy, y2: yy, class: "lg-grid"}));
-      const t = mk("text", {x: L - 6, y: yy + 4, class: "lg-axis", "text-anchor": "end"});
+      const ty = yy + 4;
+      const t = mk("text", {x: ownVal ? 48 : L - 6, y: ty, class: "lg-axis", "text-anchor": "end"});
       t.textContent = (set.log ? 10 ** v : v).toPrecision(3);
       svg.append(t);
+      if (vfit) {                                  // the same grid line on validation's scale, in its colour
+        const vv = vfit[0] + (vfit[1] - vfit[0]) * f;
+        const vt = mk("text", {x: L - 6, y: ty, class: "lg-axis lg-val-axis", "text-anchor": "end"});
+        vt.textContent = (set.log ? 10 ** vv : vv).toPrecision(3);
+        svg.append(vt);
+      }
     }
     let steps = svg;
     if (fit) {
@@ -4093,18 +4127,22 @@ function lossGraph(data) {
     }
     steps.append(mk("polyline", {class: "lg-raw", points: pts.map((p) => `${X(p[0]).toFixed(1)},${YS(p[2]).toFixed(1)}`).join(" ")}));
     steps.append(mk("polyline", {class: "lg-smooth", points: pts.map((p, i) => `${X(p[0]).toFixed(1)},${YS(sm[i]).toFixed(1)}`).join(" ")}));
-    const line = (cls, sp, yi) => { if (sp.length > 1) svg.append(mk("polyline", {class: cls,
-      points: sp.map((p) => `${X(p[0]).toFixed(1)},${Y(p[yi]).toFixed(1)}`).join(" ")})); };
-    const dots = (cls, sp, yi, label) => sp.forEach((p) => {
-      const c = mk("circle", {cx: X(p[0]), cy: Y(p[yi]), r: 3.5, class: cls});
+    const line = (cls, sp, yi, y = Y) => { if (sp.length > 1) svg.append(mk("polyline", {class: cls,
+      points: sp.map((p) => `${X(p[0]).toFixed(1)},${y(p[yi]).toFixed(1)}`).join(" ")})); };
+    const dots = (cls, sp, yi, label, y = Y) => sp.forEach((p) => {
+      const c = mk("circle", {cx: X(p[0]), cy: y(p[yi]), r: 3.5, class: cls});
       const tt = mk("title", {}); tt.textContent = label(p); c.append(tt); svg.append(c);
     });
-    if (set.ravg) line("lg-ravg", ra, 1);
+    if (set.ravg) {                  // in the trend views its first-epoch start runs past the scale, cut at the edge
+      if (fit && ra.length > 1) steps.append(mk("polyline", {class: "lg-ravg",
+        points: ra.map((p) => `${X(p[0]).toFixed(1)},${YS(p[1]).toFixed(1)}`).join(" ")}));
+      else line("lg-ravg", ra, 1);
+    }
     if (set.emean) { line("lg-emean", em, 2); dots("lg-emean-dot", em, 2, (p) => `Epoch ${p[1]} average: ${p[2].toFixed(4)}`); }
     if (set.val && hasVal) {
       // one line per section: a resume that changed what's checked starts a new one (p[4]), never joined across
-      for (const part of valSections(val)) line("lg-val", part, 2);
-      dots("lg-val-dot", val, 2, (p) => `Validation at step ${p[0]} (epoch ${p[1]}): ${p[2].toFixed(4)}`);
+      for (const part of valSections(val)) line("lg-val", part, 2, VY);
+      dots("lg-val-dot", val, 2, (p) => `Validation at step ${p[0]} (epoch ${p[1]}): ${p[2].toFixed(4)}`, VY);
     }
     // the learning rate, on its own scale at the right (adaptive LR moves it)
     const lrPts = pts.filter((p) => p[3] != null);
@@ -4132,6 +4170,7 @@ function lossGraph(data) {
     const axisT = (x, text, cls, anchor) => { const t = mk("text", {x, y: T + 2, class: "lg-axis " + cls, "text-anchor": anchor,
       "dominant-baseline": "hanging"}); t.textContent = text; svg.append(t); };
     axisT(4, "loss", "lg-axis-title", "start");
+    if (vfit) axisT(56, "val", "lg-axis-title lg-val-axis", "start");   // at the head of its column of teal numbers
     if (hasLr && set.lr && lrPts.length > 1) axisT(W - 4, "LR", "lg-axis-title lg-lr-axis", "end");
     const cursor = mk("line", {y1: T, y2: H - B, class: "lg-cursor", style: "display:none"});
     svg.append(cursor);
