@@ -151,8 +151,7 @@ def slider_on(desc, inputs, source=None):
 
 
 # what switches off at Batch Size > 1: each assumes one image (one loss, one caption) per step
-BATCH_OFF = ("the per-image loss watch (Problem Images and the run card's per-image loss)", "per-image LR",
-             "auto-recaption", "the look warm-up", "DOP (Leave the rest of the model alone)", "LR boost")
+BATCH_OFF = ("DOP (Leave the rest of the model alone)", "LR boost")
 # kinds of training that keep Batch Size 1 (their steps are per image, or untested batched)
 BATCH_ONE_KINDS = ("sliders", "edit training", "full fine-tune", "multi-person mode")
 
@@ -877,8 +876,7 @@ def train_command(desc, inputs, plan):
         if cont.get("checkpoint"):
             cmd += ["--ft_start_window", str(int(cont.get("start_window", 0))),
                     "--ft_epochs_done", str(int(cont.get("epochs_done", 0)))]
-    # per-image loss watch (families/loss_watch.py), batch size 1 only
-    bs1 = batch_size(desc, st) <= 1
+    # per-image loss watch (families/loss_watch.py): at any Batch Size, each image of a batch keeps its own loss
     lw = (st.get("loss_watch") or {}) if desc.loss_watch else {}
     if multi_person_on(desc, st):    # the side-by-sides are hard on purpose: no verdicts, per-image LR or look warm-up
         lw = {**lw, "detect": False, "per_image_lr": False, "warmup": False}
@@ -888,25 +886,22 @@ def train_command(desc, inputs, plan):
     can_recaption = can_recaption and not multi_person_on(desc, st)
     if can_recaption:
         watch.append(("recaption", "--auto_recaption"))
-    if bs1:
-        cmd += [flag for key, flag in watch if lw.get(key)]
-        if can_recaption and lw.get("recaption"):
-            cmd += ["--captioner", st.get("captioner", "")]
-            trig = _s(st.get("caption_trigger"))
-            if trig and trig.lower() != "trigger_word":
-                cmd += ["--trigger_word", trig]      # leads each AI caption, as the Captions tab writes it
-            if st.get("recaption_triggers"):         # the other folders' own: {key prefix: trigger word}
-                import json as _json
-                cmd += ["--recaption_triggers", _json.dumps(st["recaption_triggers"])]
-            from fizgig.krea2.caption_text import RECAPTION_DEFAULTS, recaption_instruction
-            ovr = st.get("caption_overrides") or {}
-            tasks = tuple(st.get("recaption_tasks") or RECAPTION_DEFAULTS)
-            for key, (flag, task_flag) in zip(tasks, (("--recaption_instruction", "--recaption_task"),
-                                                      ("--recaption_instruction_detailed", "--recaption_task_detailed"))):
-                label, instr, edited = recaption_instruction(key, ovr)
-                cmd += [flag, instr, task_flag, f'"{label}"' + (" (your edit)" if edited else " (as shipped)")]
-    elif any(lw.get(key) for key, _ in watch):
-        plan.console.append("[loss-watch] per-image features skipped - they need Batch Size 1.\n")
+    cmd += [flag for key, flag in watch if lw.get(key)]
+    if can_recaption and lw.get("recaption"):
+        cmd += ["--captioner", st.get("captioner", "")]
+        trig = _s(st.get("caption_trigger"))
+        if trig and trig.lower() != "trigger_word":
+            cmd += ["--trigger_word", trig]      # leads each AI caption, as the Captions tab writes it
+        if st.get("recaption_triggers"):         # the other folders' own: {key prefix: trigger word}
+            import json as _json
+            cmd += ["--recaption_triggers", _json.dumps(st["recaption_triggers"])]
+        from fizgig.krea2.caption_text import RECAPTION_DEFAULTS, recaption_instruction
+        ovr = st.get("caption_overrides") or {}
+        tasks = tuple(st.get("recaption_tasks") or RECAPTION_DEFAULTS)
+        for key, (flag, task_flag) in zip(tasks, (("--recaption_instruction", "--recaption_task"),
+                                                  ("--recaption_instruction_detailed", "--recaption_task_detailed"))):
+            label, instr, edited = recaption_instruction(key, ovr)
+            cmd += [flag, instr, task_flag, f'"{label}"' + (" (your edit)" if edited else " (as shipped)")]
     if any(lw.get(key) for key, _ in watch) and "--text_encoder" not in cmd:
         cmd += ["--text_encoder", _model(st, desc, "text_encoder")]   # caption repair re-encodes
     if ("lokr" in desc.network_types and str(st.get("NETWORK_TYPE", "")).startswith("LoKR")

@@ -214,6 +214,16 @@ class AnimaDriver(FamilyDriver):
             w = w / w.mean(dim=1, keepdim=True).clamp_min(1e-8)
             w = torch.where(dm > 1e-6, w, torch.ones_like(w))      # identical pair: uniform, never all-zero
         mw = None if loss_mask is None else loss_mask.float().to(x0.device).flatten(1)        # (B, h*w), one frame
+        if n > 1:   # Batch Size > 1 (no slider weights here): each image's own loss, as its batch-1 step gives it
+            se = (pred - (noise - x0)).pow(2).mean(dim=1).flatten(1)
+            if mw is None:
+                per = se.mean(1)
+            else:
+                sb = None if base is None else (pred - base).pow(2).mean(dim=1).flatten(1)
+                per = torch.stack([with_prior(weighted_loss(se[i:i + 1], mw[i:i + 1]), prior,
+                                              None if sb is None else base[i:i + 1],
+                                              None if sb is None else sb[i:i + 1], mw[i:i + 1]) for i in range(n)])
+            return per.mean(), {"t": float(t.mean()), "ts": [float(x) for x in t], "per": per}
         if w is None and mw is None:
             return F.mse_loss(pred, noise - x0), {"t": float(t.mean())}
         loss = weighted_loss((pred - (noise - x0)).pow(2).mean(dim=1).flatten(1), w, mw)

@@ -472,8 +472,8 @@ class PerImageLossWatch:
                 self._batched = True
                 if self.apply_lr and not self._batched_warned:
                     self._batched_warned = True
-                    logger.warning("[loss-watch] batch size > 1 — per-image LR disabled "
-                                   "(a batch-mean loss isn't a per-image signal)")
+                    logger.warning("[loss-watch] a step's loss came for several images at once - per-image "
+                                   "LR off (the trainer records each image of a batch on its own)")
             t = float(timestep)
             b = min(int(min(max(t, 0.0), 0.999999) * _N_BUCKETS), _N_BUCKETS - 1)
             loss = float(loss)

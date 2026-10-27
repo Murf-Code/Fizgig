@@ -274,7 +274,7 @@ class MOSSImageDriver(FamilyDriver):
         if refs:
             raise RuntimeError("MOSS-Image has no edit (reference-image) conditioning")
         if latents.shape[0] > 1:
-            return self._batched_loss(dit, latents, cond, generator, min_t, max_t, diff_ref)
+            return self._batched_loss(dit, latents, cond, generator, min_t, max_t, diff_ref, loss_mask, prior)
         x0 = latents.float()
         noise = torch.randn(x0.shape, generator=generator).to(x0.device)
         t = self._sample_t(generator, min_t, max_t, self._t_mu())
@@ -302,7 +302,7 @@ class MOSSImageDriver(FamilyDriver):
             loss = with_prior(loss, prior, base, (pred - base).pow(2).mean(dim=1), mw, wgt)
         return loss, {"t": t}
 
-    def _batched_loss(self, dit, latents, cond, generator, min_t, max_t, diff_ref):
+    def _batched_loss(self, dit, latents, cond, generator, min_t, max_t, diff_ref, loss_mask=None, prior=None):
         """Batch Size > 1: each image its own noise and timestep, drawn in the order B batch-1 steps draw them (noise,
         then t, per image), so the loss is the mean of what those B steps would give. The DiT runs them together
         (padded captions masked by `hidden_states__valid`)."""
@@ -322,9 +322,20 @@ class MOSSImageDriver(FamilyDriver):
         tv = torch.tensor(ts, dtype=torch.float32, device=x0.device)
         xt = (1 - tv.view(-1, 1, 1, 1)) * x0 + tv.view(-1, 1, 1, 1) * noise
         valid = cond.get("hidden_states__valid")
-        pred = dit(xt, tv * S.TRAIN_STEPS, hidden.to(xt.device),
-                   None if valid is None else valid.to(xt.device)).float()
-        return F.mse_loss(pred, noise - x0), {"t": sum(ts) / b, "ts": ts}
+        fwd = lambda: dit(xt, tv * S.TRAIN_STEPS, hidden.to(xt.device), None if valid is None else valid.to(xt.device))
+        base = prior_base(prior, loss_mask, fwd)
+        pred = fwd().float()
+        mw = None if loss_mask is None else loss_mask.float().to(x0.device)[:, 0]             # (B, h, w)
+        if mw is None:
+            per = (pred - (noise - x0)).pow(2).flatten(1).mean(1)                       # each image's MSE
+        else:   # masked training: each image's mask scaled to mean 1 on its own, as at Batch Size 1 (weighted_loss)
+            se = (pred - (noise - x0)).pow(2).mean(dim=1)
+            sb = None if base is None else (pred - base).pow(2).mean(dim=1)
+            per = torch.stack([with_prior(weighted_loss(se[i:i + 1], mw[i:i + 1]), prior,
+                                          None if sb is None else base[i:i + 1], None if sb is None else sb[i:i + 1],
+                                          mw[i:i + 1]) for i in range(b)])
+        # "per": each image's own loss (what its batch-1 step would give), for per-image LR and the loss watch
+        return per.mean(), {"t": sum(ts) / b, "ts": ts, "per": per}
 
     def noise_latents(self, latents, generator, *, min_t=0.0, max_t=1.0):
         x0 = latents.float()

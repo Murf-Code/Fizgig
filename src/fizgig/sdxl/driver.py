@@ -212,7 +212,7 @@ class SDXLDriver(FamilyDriver):
         xt = state["xt"]
         return self._unet(dit, xt, torch.tensor([state["t"]], device=xt.device), cond, h, w)
 
-    def _batched_loss(self, dit, latents, cond, generator, min_t, max_t):
+    def _batched_loss(self, dit, latents, cond, generator, min_t, max_t, loss_mask=None, prior=None):
         """Batch Size > 1: each image its own DDPM timestep and noise, drawn exactly as B batch-1 steps draw them;
         the loss (Min-SNR weighted per image when on) is their mean. Captions of different lengths (77-token
         chunks) are brought to one by repetition (pad_conditioning: exact, as cross-attention has no mask) - never
@@ -233,21 +233,31 @@ class SDXLDriver(FamilyDriver):
         a = torch.stack([s["a"] for s in sts]).view(-1, 1, 1, 1)
         h, w = sts[0]["hw"]
         t = torch.tensor([s["t"] for s in sts], device=xt.device)
+        base = prior_base(prior, loss_mask, lambda: self._unet(dit, xt, t, cond, h, w))
         pred = self._unet(dit, xt, t, cond, h, w).float()
         target = (a.sqrt() * noise - (1 - a).sqrt() * x0) if self._v_pred() else noise
-        per = (pred - target).pow(2).flatten(1).mean(1)                                 # each image's MSE
+        mw = None if loss_mask is None else loss_mask.float().to(x0.device).flatten(1)        # (B, h*w)
+        if mw is None:
+            per = (pred - target).pow(2).flatten(1).mean(1)                             # each image's MSE
+        else:       # masked training: each image weighted as Batch Size 1 weights it (its mask, its own mean 1)
+            se = (pred - target).pow(2).mean(dim=1).flatten(1)
+            sb = None if base is None else (pred - base).pow(2).mean(dim=1).flatten(1)
+            per = torch.stack([with_prior(weighted_loss(se[i:i + 1], mw[i:i + 1]), prior,
+                                          None if sb is None else base[i:i + 1], None if sb is None else sb[i:i + 1],
+                                          mw[i:i + 1]) for i in range(n)])
         gamma = float(self.options.get("min_snr") or 0.0)
         if gamma:
             snr = (a / (1 - a)).flatten()
             per = per * (torch.clamp(snr, max=gamma) / ((snr + 1) if self._v_pred() else snr))
-        return per.mean(), {"t": sum(s["t"] for s in sts) / 999.0 / n, "ts": [s["t"] / 999.0 for s in sts]}
+        return per.mean(), {"t": sum(s["t"] for s in sts) / 999.0 / n, "ts": [s["t"] / 999.0 for s in sts],
+                            "per": per}     # each image's own loss, for per-image LR and the loss watch
 
     def training_loss(self, dit, latents, cond, generator, *, min_t=0.0, max_t=1.0, refs=None, diff_ref=None,
                       diff_weight=0.0, loss_mask=None, prior=None):
         if latents.shape[0] > 1:
             if diff_ref is not None:
                 raise RuntimeError("SDXL: image-pair sliders train at Batch Size 1")
-            return self._batched_loss(dit, latents, cond, generator, min_t, max_t)
+            return self._batched_loss(dit, latents, cond, generator, min_t, max_t, loss_mask, prior)
         st = self.noise_latents(latents, generator, min_t=min_t, max_t=max_t)
         a, x0, noise = st["a"], st["x0"], st["noise"]
         base = prior_base(prior, loss_mask, lambda: self.predict(dit, st, cond))

@@ -1,8 +1,8 @@
 """Batch Size > 1 (families/batching.py): the three families that support it (MOSS-Image, Anima, SDXL) at batch 2
 and 3 with captions of different lengths, through the dataset's real batching (cache files -> BucketBatchManager ->
 the trainer's batch_cond) and each driver's training_loss + backward + an optimizer step; the batch's loss equals the
-mean of the same images trained one at a time from the same generator; every other family falls back to 1; the
-per-image features switch off above 1; batch 1 is untouched."""
+mean of the same images trained one at a time from the same generator; every other family falls back to 1; DOP and
+LR boost switch off above 1; batch 1 is untouched."""
 import types
 
 import pytest
@@ -166,12 +166,13 @@ def test_unsupported_family_falls_back_to_one():
     assert batching.batch_plan(get("moss_image"), grp) == 3 and len(grp) == 2
 
 
-def test_per_image_features_off_above_one():
+def test_batch_one_features_off_above_one():
     flags = dict(log_per_image_loss=True, per_image_lr=True, auto_recaption=True, warmup_look_outliers=True,
                  dop=True, lr_boost=[("x", 2.0)])
     assert batching.batch_features(1, flags) == flags
     off = batching.batch_features(2, flags)
-    assert off["lr_boost"] is None and not any(v for k, v in off.items() if k != "lr_boost")
+    assert off["lr_boost"] is None and off["dop"] is False                 # DOP and LR boost: batch 1 only
+    assert all(off[k] for k in ("log_per_image_loss", "per_image_lr", "auto_recaption", "warmup_look_outliers"))
 
 
 def _desc(key):
@@ -188,8 +189,8 @@ def test_launch_and_form_batch_size():
     keys = lambda d: {r["key"] for s in form.form(d)["sections"] for r in s["rows"]}
     assert "DATASET_BATCH_SIZE" in keys(moss) and "DATASET_BATCH_SIZE" not in keys(krea)
     st = form.state(moss, {**form.DEFAULTS, "DATASET_BATCH_SIZE": "2"})
-    assert {"KREA2_LOSS_WATCH", "KREA2_PER_IMAGE_LR"} <= set(st["disabled"])
-    assert "per-image LR" in st["notes"]["DATASET_BATCH_SIZE"]
+    assert not {"KREA2_LOSS_WATCH", "KREA2_PER_IMAGE_LR"} & set(st["disabled"])     # per image at any Batch Size
+    assert "DOP" in st["notes"]["DATASET_BATCH_SIZE"] and "per-image" not in st["notes"]["DATASET_BATCH_SIZE"]
     assert "block swap" in form.state(moss, {**form.DEFAULTS, "DATASET_BATCH_SIZE": "4"})["notes"]["DATASET_BATCH_SIZE"]
     st1 = form.state(moss, {**form.DEFAULTS, "DATASET_BATCH_SIZE": "1"})
     assert "DATASET_BATCH_SIZE" not in st1["notes"]

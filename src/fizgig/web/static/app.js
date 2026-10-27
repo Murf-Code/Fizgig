@@ -784,6 +784,7 @@ async function refreshState() {
     if (lab && rowDef) lab.textContent = ((S.state.labels || {})[k] || rowDef.label) + ":";
     // a control of several values greys and hides each of its parts by its own key
     row.querySelectorAll("input,select,textarea,button").forEach((i) => { i.disabled = disabled.has(i.dataset.field || k); });
+    row.title = (S.state.tips || {})[k] || "";      // a greyed row's why, on hover (Batch Size above 1)
     row.querySelectorAll("[data-part]").forEach((p) => { p.style.display = hidden.has(p.dataset.part) ? "none" : ""; });
     // single choices greyed in a row of pills (Fizgig LoRA Isolation with one subject)
     const off = ((S.state.disabled_choices || {})[k]) || {};       // {choice: why}, the why on hover
@@ -795,7 +796,11 @@ async function refreshState() {
     });
     // a greyed box shows what that run will really use (the Distilled's steps / CFG), the form's own value kept
     const shown = (S.state.shown || {})[k], box = $("f_" + k);
-    if (box && shown !== undefined && disabled.has(k)) { box.value = shown; box.dataset.shown = "1"; }
+    // (a switch shows its state that way: off above Batch Size 1, your tick back when the box is let go)
+    if (box && shown !== undefined && disabled.has(k)) {
+      if (box.type === "checkbox") box.checked = !!shown; else box.value = shown;
+      box.dataset.shown = "1";
+    }
     else if (box && box.dataset.shown) { delete box.dataset.shown; syncInputs([k]); }
     const n = $("note_" + k);
     if (n && k === "__SAMPLE_LIVE") {          // its note follows the run (liveNote), not the form's state

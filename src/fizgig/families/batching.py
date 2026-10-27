@@ -46,14 +46,14 @@ def batch_plan(desc, group, *, slider=False, finetune=False):
     return n
 
 
-# the trainer's switches that assume one image (one loss, one caption) per step, and what the log calls them
-PER_IMAGE = (("log_per_image_loss", "the per-image loss watch"), ("per_image_lr", "per-image LR"),
-             ("auto_recaption", "auto-recaption"), ("warmup_look_outliers", "the look warm-up"), ("dop", "DOP"),
-             ("lr_boost", "LR boost"))
+# the trainer's switches that still assume one image per step, and what the log calls them. The loss watch, per-image
+# LR, the look warm-up and auto-recaption work at any Batch Size: the batched drivers hand back each image's own loss
+# (info["per"]), which the trainer weights, excludes and records image by image.
+PER_IMAGE = (("dop", "DOP"), ("lr_boost", "LR boost"))
 
 
 def batch_features(batch_size, flags):
-    """The trainer's per-image switches at this Batch Size: unchanged at 1; above 1 every one is off (False / None
+    """The trainer's batch-1-only switches at this Batch Size: unchanged at 1; above 1 each is off (False / None
     for lr_boost), with a warning naming those that were on."""
     if batch_size <= 1:
         return dict(flags)

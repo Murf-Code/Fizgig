@@ -328,7 +328,7 @@ def form(desc):
                  "on the run card while it trains, and in Runs & outputs."),
             _row("KREA2_PER_IMAGE_LR", "Per-image adaptive LR (throttle stuck images, boost healthy learned ones)",
                  "check", "Images that stay hard without improving train more gently (x0.7, then x0.5 down to x0.1); "
-                 "mined-out ones ease off (x0.6) and healthy learned ones get a gentle boost (x1.1). Batch size 1."),
+                 "mined-out ones ease off (x0.6) and healthy learned ones get a gentle boost (x1.1). Works at any Batch Size: each image keeps its own weight."),
             _row("KREA2_WARMUP_LOOK", "Warm up look outliers (unusual angles ease in at low LR - needs a Look "
                  "Filter scan)", "check", "Images the Image Prep Look Filter scored as look outliers (tight angles, "
                  "profiles - real but unusual) start at x0.4 and ramp to x1.0 over the first ~4 epochs, so they refine "
@@ -934,6 +934,7 @@ def state(desc, values, image_folder="", captioner="", speed_file=False, checkpo
     checkpoint (Klein's Distilled) is."""
     hidden, disabled, notes, force, actions = set(), set(), {}, {}, {}
     disabled_choices = {}                         # {key: {choice: why}}: single choices greyed in a row of pills
+    tips = {}                                     # {key: why}: a greyed row's reason, on hover
     from fizgig.training.val_pick import picked_list, validation_every_steps
     _ve = str(values.get("VALIDATION_EVERY_STEPS", "0") if values.get("VALIDATION_EVERY_STEPS") is not None
               else "0").strip()
@@ -1285,15 +1286,19 @@ def state(desc, values, image_folder="", captioner="", speed_file=False, checkpo
             asked = int(str(values.get("DATASET_BATCH_SIZE", "1")).strip() or 1)
         except ValueError:
             asked = 1
-        bs = launch.batch_size(desc, {**values, "batch_size": asked})
+        bs = run_batch_size(desc, values)
         if asked > 1 and bs == 1:
             notes["DATASET_BATCH_SIZE"] = ("This kind of training runs at Batch Size 1 (" +
                                            ", ".join(launch.BATCH_ONE_KINDS) + " always do).")
         elif bs > 1:
-            off = ("KREA2_LOSS_WATCH", "KREA2_PER_IMAGE_LR", "KREA2_WARMUP_LOOK", "KREA2_AUTO_RECAPTION")
+            # a switch that still needs Batch Size 1 (none of the per-image loss switches now: each image of a batch
+            # keeps its own loss) shows off and greyed, with no note beside it: your tick stays saved for Batch
+            # Size 1 (the run sends it off, batch_off); the why on hover, as a greyed pill's
+            off = BATCH_ONE_SWITCHES
             disabled |= set(off)
             for k in off:
-                notes.setdefault(k, f"Off at Batch Size {bs}: a step's loss is the batch's average, not one image's.")
+                shown[k] = False
+                tips[k] = f"Batch Size 1 only: this works one image at a time, and Batch Size {bs} trains {bs}."
             if values.get("FAMILY_DOP"):
                 notes["FAMILY_PEOPLE_MODE"] = f"DOP is off at Batch Size {bs}: set Batch Size 1 to use it."
             notes["DATASET_BATCH_SIZE"] = (f"Batch Size {bs}: switched off - " + "; ".join(launch.BATCH_OFF) + "." +
@@ -1301,7 +1306,29 @@ def state(desc, values, image_folder="", captioner="", speed_file=False, checkpo
     return {"hidden": sorted(hidden), "disabled": sorted(disabled), "notes": notes, "kind": kind,
             "media": sorted(media), "turbo_file": bool(speed_file), "force": force, "actions": actions,
             "shown": shown, "checkpoint_file": bool(checkpoint_file), "labels": labels, "checkpoint_turbo": ck_turbo,
-            "disabled_choices": disabled_choices, "poll": poll}
+            "disabled_choices": disabled_choices, "poll": poll, "tips": tips}
+
+
+# switches the trainer ignores above Batch Size 1. Empty: the loss watch, per-image LR, the look warm-up and
+# auto-recaption work at any Batch Size (each image of a batch keeps its own loss, families/train.py)
+BATCH_ONE_SWITCHES = ()
+
+
+def run_batch_size(desc, values):
+    """The Batch Size a run of these values trains at (launch.batch_size on the form's box)."""
+    try:
+        asked = int(str(values.get("DATASET_BATCH_SIZE", "1")).strip() or 1)
+    except ValueError:
+        asked = 1
+    return launch.batch_size(desc, {**values, "batch_size": asked})
+
+
+def batch_off(desc, values):
+    """values as a run takes them: above Batch Size 1 the BATCH_ONE_SWITCHES are off (the form keeps your ticks for
+    Batch Size 1; the run, its record and its card see them off). None are left today."""
+    if getattr(desc, "supports_batch", False) and run_batch_size(desc, values) > 1:
+        return {**values, **{k: False for k in BATCH_ONE_SWITCHES if k in values}}
+    return values
 
 
 def _extras_found(desc, values, image_folder):
@@ -1447,7 +1474,7 @@ def _option_values(desc, values):
 def inputs(desc, values, *, models, python, repo_dir, image_folder, cache_root, samples_dir, inference_int8=False,
            captioner="", caption_overrides=None, vram_reclaim=None):
     """The launch plan's inputs from the form's values, as the desktop's _family_launch_inputs builds them."""
-    v = {**DEFAULTS, **values}
+    v = batch_off(desc, {**DEFAULTS, **values})      # above Batch Size 1 any batch-1-only switch goes as off
     kind = _kind(desc, v)
     b = lambda k: bool(v.get(k))
     s = lambda k: str(v.get(k, "") if v.get(k) is not None else "").strip()

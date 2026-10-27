@@ -1479,6 +1479,7 @@ def _start_one(family_key, values, image_folder, resume, ft_continue, note, mode
     from fizgig.web import helpers
     helpers.share_stop_all()       # this computer's own run comes first: a share it trains for another stops there
     desc, inputs, plan = _plan(family_key, values, image_folder, resume, ft_continue, models)
+    values = form.batch_off(desc, values)     # the run's record: per-image loss switches off above Batch Size 1
     if plan.problems:
         return {"problems": plan.problems}
     lk = desc.preview_look() if desc is not None else None

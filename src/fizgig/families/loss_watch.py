@@ -61,6 +61,25 @@ def _items(group):
     return out
 
 
+def weigh_batch(loss, info, keys, watch, *, reg_keys=(), reg_mult=1.0):
+    """Batch Size > 1: the step's loss with each image at its own weight, as its batch-1 step would have it - a
+    regularisation image at reg_mult, the rest at the watch's per-image LR / look warm-up - and an excluded image
+    sitting out (weight 0, left out of the average and of the records). -> (loss to backpropagate, indices not to
+    record), or None when the step isn't a batch the driver split per image (info["per"]): batch 1 as before."""
+    per = info.get("per") if isinstance(info, dict) else None
+    keys = list(keys or [])
+    if per is None or len(keys) < 2 or int(per.shape[0]) != len(keys):
+        return None
+    excl = watch.excluded_keys(keys)
+    mults = [0.0 if excl[j] else (float(reg_mult) if reg_keys and str(k) in reg_keys else watch.multipliers([k])[0])
+             for j, k in enumerate(keys)]
+    skip = {j for j, e in enumerate(excl) if e}
+    if not skip and all(m == 1.0 for m in mults):
+        return loss, skip
+    w = torch.tensor(mults, device=per.device, dtype=per.dtype)
+    return (per * w).sum() / max(1, len(keys) - len(skip)), skip
+
+
 class Watch:
     """The run's loss watch and the state around it. `watch` is None when every toggle is off."""
 
@@ -159,7 +178,13 @@ class Watch:
 
     # ---- per step --------------------------------------------------------------------------------------
     def excluded(self, batch):
-        return self.watch is not None and self.watch.is_excluded(batch.get("item_keys"))
+        """The step is skipped: its image (every image of a batch) is excluded."""
+        keys = batch.get("item_keys")
+        if self.watch is None:
+            return False
+        if isinstance(keys, (list, tuple)) and len(keys) > 1:
+            return all(self.excluded_keys(keys))
+        return self.watch.is_excluded(keys)
 
     def multiplier(self, batch):
         return self.watch.multiplier(batch.get("item_keys")) if self.watch is not None else 1.0
@@ -167,6 +192,24 @@ class Watch:
     def observe(self, epoch, step, batch, t, loss):
         if self.watch is not None:
             self.watch.observe(epoch=epoch, step=step, item_keys=batch.get("item_keys"), timestep=t, loss=loss)
+
+    # Batch Size > 1: the driver hands back each image's own loss (info["per"]), so every image keeps its own
+    # weight, exclusion and record, exactly as its batch-1 step would
+    def multipliers(self, keys):
+        """Each image's loss weight this step (1.0 with the watch off)."""
+        return [self.watch.multiplier([str(k)]) if self.watch is not None else 1.0 for k in keys]
+
+    def excluded_keys(self, keys):
+        """Which of these images are excluded (they sit the step out: weight 0, no record)."""
+        return [self.watch is not None and self.watch.is_excluded([str(k)]) for k in keys]
+
+    def observe_each(self, epoch, step, keys, ts, losses, skip=()):
+        """One record per image of a batch, with its own timestep and loss (images in `skip` left out)."""
+        if self.watch is None:
+            return
+        for i, k in enumerate(keys):
+            if i not in skip:
+                self.watch.observe(epoch=epoch, step=step, item_keys=[str(k)], timestep=ts[i], loss=losses[i])
 
     # ---- epoch boundary --------------------------------------------------------------------------------
     def boundary(self, epoch, dit, device, parkable=True):

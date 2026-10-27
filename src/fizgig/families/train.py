@@ -1734,7 +1734,7 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
                 _esd["shadow"] = _sh
             ema.load_state_dict(_esd)
         logger.info(f"[resume] from {resume_state_dir}: continuing at epoch {start_epoch + 1}/{max_train_epochs}")
-    from fizgig.families.loss_watch import Watch
+    from fizgig.families.loss_watch import Watch, weigh_batch
     watch = Watch(output_dir, group, user_config, driver, log=log_per_image_loss, per_image_lr=per_image_lr,
                   auto_recaption=auto_recaption, warmup_look=warmup_look_outliers,
                   resume=bool(resume_state_dir), start_epoch=start_epoch, te_path=te_path,
@@ -2671,11 +2671,18 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
                     lr_acc[-1] *= _info["lr_mult"]     # where the step landed (the H3 noise-band LR)
                 if pending == 0 and optimizer is not None:
                     optimizer.zero_grad(set_to_none=True)
-                if reg_keys and all(str(k) in reg_keys for k in batch.get("item_keys") or [None]):
-                    mult = reg_lr_multiplier       # a regularisation image: a fixed nudge, never the watch's
+                # Batch Size > 1: each image its own weight and record (families/loss_watch.weigh_batch)
+                _wb = weigh_batch(loss, _info, batch.get("item_keys"), watch, reg_keys=reg_keys,
+                                  reg_mult=reg_lr_multiplier)
+                _skip_obs = ()
+                if _wb is not None:
+                    _scaled, _skip_obs = _wb
                 else:
-                    mult = watch.multiplier(batch)  # per-image LR (batch size 1): the raw loss is still what's recorded
-                _scaled = loss * mult if mult != 1.0 else loss
+                    if reg_keys and all(str(k) in reg_keys for k in batch.get("item_keys") or [None]):
+                        mult = reg_lr_multiplier       # a regularisation image: a fixed nudge, never the watch's
+                    else:
+                        mult = watch.multiplier(batch)  # per-image LR: the raw loss is still what's recorded
+                    _scaled = loss * mult if mult != 1.0 else loss
                 _dc = dop_cond_for(batch, cond) if dop_cond and global_step % dop_every == 0 else None
                 _dk = str((batch.get("item_te_paths") or [None])[0])
                 if _dc is not None and ftr is not None and dop_ft and _dk in dop_ft:
@@ -2742,7 +2749,12 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
                     previews(epoch + 1)
                     step_clock["dirty"] = True
                     progress.start_t += time.time() - _tp
-            watch.observe(epoch + 1, global_step, batch, _info.get("t", 0.5), loss.item())
+            if not slider and _wb is not None:     # one record per image of the batch, its own t and loss
+                _ts = _info.get("ts") or [_info.get("t", 0.5)] * len(batch["item_keys"])
+                watch.observe_each(epoch + 1, global_step, batch["item_keys"], _ts,
+                                   [float(x) for x in _info["per"].detach().float().cpu()], skip=_skip_obs)
+            else:
+                watch.observe(epoch + 1, global_step, batch, _info.get("t", 0.5), loss.item())
             progress.set_postfix(avr_loss=f"{recorder.moving_average:.4f}", refresh=False)
             progress.update(1)
 
