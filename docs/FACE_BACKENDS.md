@@ -106,8 +106,8 @@ The embedder is also recorded in the score caches (`embedder`, `embedder_label`)
 - `sheath`
 - `pawpads`
 
-The face finder uses only the **`face`** class and ignores the mask head. Image Prep's **Crop to** can also crop to
-the other classes (see [below](#the-yolo-models-other-classes)).
+The face finder uses only the **`face`** class and ignores the mask head. Image Prep's **Crop to: Other…** can also
+crop to the other classes when you type their names (see [below](#the-yolo-models-other-classes)).
 
 **Getting it.** Civitai lists the model as NSFW, and downloading it needs a free Civitai login. Fizgig does **not** download it for you. Download `fdetailerAdetailerFor_v11.pt` from the model page in your browser. If you use ADetailer in Forge/A1111, it's probably already in `models\adetailer`.
 
@@ -248,7 +248,7 @@ The InsightFace path keeps every detail of the old one: one detection pass (the 
 ## Cropping something other than a face (Other…)
 
 Image Prep's **Crop to** dropdown has an **Other…** choice. Pick it and type what to crop in **Find this**
-(for example `paw, tail, hand`). Each comma-separated thing is searched on its own with SAM 3.1 (the model the
+(for example `hat, tail, hand`). Each comma-separated thing is searched on its own with SAM 3.1 (the model the
 Masks card downloads, 1.75 GB, once), with the same score cutoff the masks use (0.5).
 
 - **Resize + close-ups** saves a close-up of the biggest hit of each thing, beside the picture, as
@@ -261,18 +261,21 @@ Masks card downloads, 1.75 GB, once), with the same score cutoff the masks use (
 ### The YOLO model's other classes
 
 With the face finder on **Anime/furry/drawn (YOLO model)**, Fizgig reads the class names stored in the model file
-when it loads it. Every class besides the face one gets its own **Crop to** choice, after the face choices and before
-**Other…**. With Fdetailer v1.1 those are **Penis**, **Pussy**, **Anus**, **Sheath** and **Paw pads**. A face-only model
-(the free anime head finder, for example) adds none. Nothing is hard-coded, so any YOLO model with extra classes works.
+when it loads it. **Crop to** doesn't list them: pick **Other…** and type one in **Find this**, and the YOLO model finds
+it instead of SAM 3.1. With Fdetailer v1.1 those are `penis`, `pussy`, `anus`, `sheath` and `pawpads` (or `paw pads`). A
+face-only model (the free anime head finder, for example) has none. Nothing is hard-coded, so any YOLO model with extra
+classes works.
 
-- These choices crop like **Other…** does: the biggest one found, the same padding, `Crop_penis_001.png`,
-  `Crop_pawpads_001.png`... beside the picture with **Resize + close-ups**, and a picture where none is found is left
-  whole. They don't need SAM 3.1.
-- Under **Other…**, a phrase that is one of the model's class names (case, spaces, `_` and `-` don't matter, so
-  `paw pads` is `pawpads`) is found by the YOLO model. The other phrases go to SAM 3.1, which is only needed when
-  some phrase isn't a class.
+- A phrase that is one of the model's class names (case, spaces, `_` and `-` don't matter, so `paw pads` is
+  `pawpads`) is found by the YOLO model. The other phrases go to SAM 3.1, which is only needed when some phrase
+  isn't a class. The line under **Find this** says which finder will do what.
+- They crop like any **Other…** phrase: the biggest one found, the same padding, `Crop_penis_001.png`,
+  `Crop_paw_pads_001.png`... beside the picture with **Resize + close-ups**, and a picture where none is found is left
+  whole.
 - They use the face finder's score cutoff (0.35, `face_yolo_conf`), the same as the faces.
 - **Test finding this on one photo** boxes what it found and labels each box with its class and score.
+- An older build had a **Crop to** choice per class (saved as `YOLO class: penis`). A saved one of those opens as
+  **Other…** with **Find this** set to that class, and the server treats it the same way, so nothing changes.
 - Fizgig only loads your own copy of the model. It never ships or downloads Fdetailer.
 
 ## Captions on crops

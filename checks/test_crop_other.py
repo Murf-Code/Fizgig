@@ -229,7 +229,7 @@ def test_page_wiring():
     html = open(os.path.join(STATIC, "index.html"), encoding="utf-8").read()
     js = open(os.path.join(STATIC, "app.js"), encoding="utf-8").read()
     server = open(os.path.join(ROOT, "src", "fizgig", "web", "server.py"), encoding="utf-8").read()
-    assert 'id="prepFind"' in html and "Find this:" in html and 'placeholder="e.g. paw, tail, hand"' in html
+    assert 'id="prepFind"' in html and "Find this:" in html and 'placeholder="e.g. hat, tail, hand"' in html
     assert 'id="prepFindRow"' in html and 'class="field-row prep-opts prep-face" id="prepFindRow"' in html
     assert 'id="prepCapCopy" checked' in html and 'id="prepCapTrim">' in html and 'id="prepKeepScore"' in html
     assert 'find: $("prepFind").value' in js and '$("prepFind").value = saved.find' in js     # saved and loaded
@@ -253,7 +253,7 @@ const fn = (name) => { const i = src.indexOf("function " + name + "("); const a 
   return src.slice(a, src.indexOf("\n}\n", i) + 3); };
 const code = src.match(/const \$ = \(id\)[^\n]*\n/)[0] + src.match(/const el = \(tag[\s\S]*?\n};\n/)[0] +
   src.match(/const prepSettings = [\s\S]*?\}\);\n/)[0] + src.match(/const prepOther = [^\n]*\n/)[0] +
-  src.match(/const prepClass = [^\n]*\n/)[0] + src.match(/const classKey = [^\n]*\n/)[0] + fn("prepYoloWords") +
+  src.match(/const classKey = [^\n]*\n/)[0] + fn("prepYoloWords") +
   fn("prepTrimBlocked") + fn("prepFindBlocked") + "function prepBlocked() { return prepFindBlocked() || prepTrimBlocked(); }\n" +
   fn("prepFindShow") + fn("prepTaggerShow") + fn("prepTaggerInfo") + src.match(/const prepTaggerName = [^\n]*\n/)[0] +
   src.match(/const TAGGER_KEEP = [^\n]*\n/)[0] + src.match(/const TAGGER_HINTS = [\s\S]*?\n\};\n/)[0];
@@ -328,7 +328,7 @@ def test_page_test_button_words_and_hover():
     assert face["runTitle"] == ""
     for o in (empty, nosam, ready):
         assert o["testLabel"] == "Test finding this on one photo…"
-    assert empty["test"] and empty["testTitle"].startswith("Type what to find in Find this")
+    assert empty["test"] and empty["testTitle"] == "Type what to find in Find this (e.g. hat, tail, hand)."
     assert empty["runTitle"] == empty["testTitle"]
     assert nosam["test"] and nosam["testTitle"] == nosam["runTitle"] == \
         "Finding by words needs SAM 3.1: press Download on the Masks card below first."

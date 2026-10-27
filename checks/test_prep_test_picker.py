@@ -31,7 +31,7 @@ const api = async (url, body) => { calls.push({url, body});
   if (url.startsWith("/api/captions")) return {items};
   return {finder: "yolo", image: "data:,", faces: [{gender: "female", area: 1200, selected: true}]}; };
 const pick = (...a) => { picks.push(a); };
-const prepOther = () => "", prepClass = () => "";
+const prepOther = () => "", prepYoloWords = () => ({words: [], yolo: []});
 eval(code + "; Object.assign(global, {likenessPicker, prepTest});");
 const grid = () => [...document.querySelectorAll("#likGrid figure")].map((f) => f.dataset.name);
 const open = () => document.getElementById("likModal").classList.contains("active");

@@ -30,7 +30,7 @@ OTHER_TARGET = "Other…"           # the Face dropdown's Other…: crop to what
 FIND_SCORE = 0.5                  # SAM 3.1's cutoff for a hit: the same as Make masks uses
 FIND_MIN_SIDE = 16                # a hit smaller than this (pixels, either side) is too small to crop
 CROP_PREFIX = "Crop_"             # Find this close-ups: Crop_paw_001.png (faces keep FaceCrop_)
-CLASS_TARGET = "YOLO class: "     # Crop to's choices for the YOLO model's other classes: "YOLO class: penis"
+CLASS_TARGET = "YOLO class: "     # an older build's Crop to choice for a YOLO class ("YOLO class: penis"): now Other…
 
 
 def bucket_step():
@@ -89,14 +89,16 @@ def is_other(label):
 
 
 def class_of(label):
-    """The YOLO class a Crop to choice names ("YOLO class: penis" -> "penis"), else ""."""
+    """The YOLO class an older build's Crop to choice named ("YOLO class: penis" -> "penis"), else ""."""
     t = str(label or "")
     return t[len(CLASS_TARGET):].strip() if t.startswith(CLASS_TARGET) else ""
 
 
-def class_target(name):
-    """The Crop to value for a YOLO class (saved in the page's settings, so it keeps the model's own name)."""
-    return CLASS_TARGET + str(name)
+def migrate_target(face_label, find=""):
+    """(Crop to, Find this) with an older build's "YOLO class: <name>" turned into Other… finding <name> (the YOLO
+    model still finds it, through Other…). Anything else comes back as it was."""
+    cls = class_of(face_label)
+    return (OTHER_TARGET, cls) if cls else (face_label, find)
 
 
 def word_slug(word):
