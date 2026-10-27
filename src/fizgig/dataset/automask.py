@@ -172,7 +172,8 @@ def make_folder(folder, kind, models_dir, *, overwrite=False, subject=None, dete
     keep only the matching person in pictures with several faces; detector: a face finder (detect_from_pil).
     who: "photo" (the person finder, as always), "drawn" (charmask's character finder, `characters`) or "auto"
     (both: charmask.looks_like_photo picks per picture); heads: a YOLO head finder (detect_from_pil) for a drawn
-    character's head kinds. Returns {"made", "kept", "skipped", "no_person"}."""
+    character's head kinds, and for close-ups the character finder misses (charmask.drawn_mask). Returns {"made",
+    "kept", "skipped", "no_person"}."""
     from fizgig.dataset import charmask
     seg = Segmenter(ensure_model(models_dir, log)) if who != "drawn" else None
     counts = {"made": 0, "kept": 0, "skipped": 0, "no_person": 0}
@@ -197,20 +198,13 @@ def make_folder(folder, kind, models_dir, *, overwrite=False, subject=None, dete
             char = characters.mask(img)
             drawn = drawn or not charmask.looks_like_photo(cls, char)
         if drawn:
-            person = char
-            if float(person.mean()) < 0.01:
-                log(f"  {name}: no character found - no mask written (it trains as normal)\n")
+            find = (lambda: [f.bbox for f in (heads.detect_from_pil(img) or [])]) if heads is not None else None
+            m, how, person = charmask.drawn_mask(char, kind, find)
+            if m is None:
+                log(f"  {name}: {how} - no mask written (it trains as normal)\n")
                 counts["no_person"] += 1
                 continue
-            if kind not in charmask.DRAWN_KINDS:
-                log(f"  {name}: a drawn or furry character - can't tell clothes from fur, no mask written\n")
-                counts["no_person"] += 1
-                continue
-            hr = None
-            if kind in ("head", "body_clothes", "not_faces"):
-                hr = charmask.head_region(person.shape, [f.bbox for f in (heads.detect_from_pil(img) or [])])
-            m = charmask.mask_from(person, kind, hr)
-            note = " (character)" if who == "auto" else ""
+            note = (" (character)" if who == "auto" else "") + (f" ({how})" if how else "")
         else:
             person = mask_from(cls, "person")
             if float(person.mean()) < 0.01:

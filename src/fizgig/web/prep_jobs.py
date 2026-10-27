@@ -482,6 +482,31 @@ def _head_finder():
     return det
 
 
+class _LazyHeads:
+    """The head finder for close-ups the character finder misses (charmask.drawn_mask), loaded on first use; where
+    it can't run, no heads (the picture just gets no mask, as before)."""
+
+    def __init__(self):
+        self._det = None
+
+    def detect_from_pil(self, img):
+        if self._det is None:
+            try:
+                self._det = _head_finder()
+            except Exception:
+                self._det = False
+        try:
+            return self._det.detect_from_pil(img) if self._det else []
+        except Exception:
+            return []
+
+
+def _heads_for(kind):
+    """A drawn character's head finder: needed now for the head kinds, else only for close-ups (loaded if asked)."""
+    from fizgig.dataset import charmask
+    return _head_finder() if kind in charmask.HEAD_KINDS else _LazyHeads()
+
+
 def start_masks(folder, kind, subject_only=False, overwrite=False, sam=None, who="photo"):
     """Masks for every picture in the training folder (dataset/automask.py), as a prep run: the same log and state.
     sam: {"path", "include", "exclude", "drawn"} to make them with SAM 3.1 from words instead (dataset/sammask.py).
@@ -539,7 +564,7 @@ def start_masks(folder, kind, subject_only=False, overwrite=False, sam=None, who
                                          log=_log)
             else:
                 chars = charmask.CharacterFinder(charmask.find_model(MODELS_DIR))
-                heads = _head_finder() if kind in ("head", "body_clothes", "not_faces") else None
+                heads = _heads_for(kind)
                 try:
                     c = automask.make_folder(folder, kind, MODELS_DIR, overwrite=overwrite, subject=subject,
                                              detector=det, log=_log, who=who, characters=chars, heads=heads)
@@ -564,8 +589,8 @@ def start_masks(folder, kind, subject_only=False, overwrite=False, sam=None, who
 
 def quick_preview(folder, kind, who, shown=()):
     """The quick finder's preview: 2 random pictures not shown yet with their masks over them, nothing written
-    (sammask.preview_pictures picks them). Returns ([(name, PIL picture, share masked, "photo" / "character")],
-    the next round's names or None)."""
+    (sammask.preview_pictures picks them). Returns ([(name, PIL picture, share masked, "photo" / "character", a note:
+    what was done or why nothing was found)], the next round's names or None)."""
     from fizgig.dataset import automask, charmask, sammask
     from fizgig.user_data import MODELS_DIR
     import numpy as np
@@ -576,7 +601,7 @@ def quick_preview(folder, kind, who, shown=()):
     pics, fresh = sammask.preview_pictures(folder, shown)
     seg = automask.Segmenter(automask.ensure_model(MODELS_DIR, lambda m: None)) if who != "drawn" else None
     chars = charmask.CharacterFinder(charmask.find_model(MODELS_DIR)) if who != "photo" else None
-    heads = _head_finder() if who != "photo" and kind in ("head", "body_clothes", "not_faces") else None
+    heads = _heads_for(kind) if who != "photo" else None
     out = []
     for p in pics:
         with Image.open(p) as im:
@@ -584,15 +609,17 @@ def quick_preview(folder, kind, who, shown=()):
         cls = seg.classes(img) if seg is not None else None
         char = chars.mask(img) if chars is not None else None
         drawn = who == "drawn" or (who == "auto" and not charmask.looks_like_photo(cls, char))
+        note = ""
         if not drawn:
             m = automask.mask_from(cls, kind)
-        elif kind not in charmask.DRAWN_KINDS:
-            m = np.zeros(char.shape, np.float32)
+            if float(m.mean()) < automask.MIN_COVER:
+                note = "no person found" if float(automask.mask_from(cls, "person").mean()) < 0.01 \
+                    else "nothing of that kind found"
         else:
-            hr = (charmask.head_region(char.shape, [f.bbox for f in (heads.detect_from_pil(img) or [])])
-                  if heads is not None else None)
-            m = charmask.mask_from(char, kind, hr)
-        out.append((*sammask.overlay(os.path.basename(p), img, m), "character" if drawn else "photo"))
+            m, note, _ = charmask.drawn_mask(char, kind, lambda: [f.bbox for f in (heads.detect_from_pil(img) or [])])
+            if m is None:
+                m = np.zeros(char.shape, np.float32)
+        out.append((*sammask.overlay(os.path.basename(p), img, m), "character" if drawn else "photo", note))
     return out, fresh
 
 

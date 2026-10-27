@@ -47,6 +47,15 @@ PHOTO_FACE_SHARE = 0.003
 # ...and at least this share of the character finder's outline is inside the person finder's (it sees the same body)
 PHOTO_AGREE = 0.6
 HEAD_GROW = 0.25                           # a head box grown by this much each way (ears, hair, a muzzle's tip)
+# Close-ups (a face crop filling the frame): the character finder, trained on whole characters, sometimes sees nothing
+# there. When it finds less than this share of the picture and covers less than CLOSEUP_HEAD_SEEN of the head finder's
+# boxes, the (grown) head boxes count as the character.
+CLOSEUP_MISS = 0.05
+CLOSEUP_HEAD_SEEN = 0.25
+# "Just the head" when the head finder sees no head: a character this big in the frame is a close-up of the head
+CLOSEUP_HEAD_FILL = 0.5
+NOTHING = 0.01                             # a character mask with less than this on average: nothing found
+HEAD_KINDS = ("head", "body_clothes", "not_faces")
 
 _lock = threading.Lock()
 _fetch = {"state": "", "error": "", "at": 0.0}
@@ -141,7 +150,10 @@ class CharacterFinder:
         h, w = (SIDE, max(1, int(SIDE * w0 / h0))) if h0 > w0 else (max(1, int(SIDE * h0 / w0)), SIDE)
         top, left = (SIDE - h) // 2, (SIDE - w) // 2
         x = np.zeros((SIDE, SIDE, 3), np.float32)
-        x[top:top + h, left:left + w] = cv2.resize(a, (w, h), interpolation=cv2.INTER_AREA)
+        # shrinking: INTER_AREA; enlarging a small picture (a face crop) needs a smooth resize - INTER_AREA enlarges
+        # in blocks of pixels and the network then sees no character at all (most crops under ~400 px came out empty)
+        x[top:top + h, left:left + w] = np.clip(cv2.resize(a, (w, h), interpolation=cv2.INTER_AREA if w <= w0 and
+                                                           h <= h0 else cv2.INTER_LANCZOS4), 0.0, 1.0)
         y = np.asarray(self.session.run(None, {self.input: x.transpose(2, 0, 1)[None]})[0], np.float32)
         y = y.reshape(y.shape[-2], y.shape[-1])[top:top + h, left:left + w]
         return np.clip(cv2.resize(y, (w0, h0), interpolation=cv2.INTER_LINEAR), 0.0, 1.0)
@@ -157,6 +169,8 @@ def looks_like_photo(classes, character):
     human = (1.0 - classes[..., BACKGROUND]) > 0.5
     char = character > 0.5
     face = float((classes[..., FACE] > 0.5).mean())
+    if float(character.mean()) < NOTHING:
+        return face >= PHOTO_FACE_SHARE       # the character finder saw nothing (a close-up photo): human face skin decides
     agree = float((human & char).sum()) / max(1, int(char.sum()))
     return face >= PHOTO_FACE_SHARE and agree >= PHOTO_AGREE
 
@@ -193,3 +207,45 @@ def mask_from(character, kind, heads=None):
         else:                                                 # not_faces
             m = 1.0 - character * heads
     return np.clip(m, 0.0, 1.0).astype(np.float32)
+
+
+def drawn_mask(character, kind, find_heads=None):
+    """A drawn character's mask of a kind, with the close-up fallbacks: (mask (H, W) float32 or None when there's
+    nothing to mask, a note, the character mask used). find_heads() -> head boxes (x1, y1, x2, y2), asked only when needed (None: no head
+    finder). The note says what was done ("" normally) or, with None, why nothing was found."""
+    if kind not in DRAWN_KINDS:
+        return None, "a drawn or furry character - can't tell clothes from fur", character
+    boxes = None
+
+    def heads():
+        nonlocal boxes
+        if boxes is None:
+            boxes = list(find_heads() or []) if find_heads is not None else []
+        return boxes
+    note = ""
+    if float(character.mean()) < CLOSEUP_MISS and heads():
+        hr = head_region(character.shape, boxes)
+        if float(character[hr].mean()) < CLOSEUP_HEAD_SEEN:   # the finder missed the head the head finder sees
+            character = np.maximum(character, hr.astype(np.float32))
+            note = "a close-up: the head finder's box used"
+    if float(character.mean()) < NOTHING:
+        return None, ("no character found (the head finder found no head either)" if find_heads is not None and
+                      not boxes else "no character found"), character
+    hr = None
+    if kind in HEAD_KINDS:
+        if heads():
+            hr = head_region(character.shape, boxes)
+        elif float((character > 0.5).mean()) >= CLOSEUP_HEAD_FILL:
+            hr = np.ones(character.shape, bool)               # a character filling the frame: a close-up of the head
+            note = "a close-up: the whole character counted as the head"
+        else:
+            hr = np.zeros(character.shape, bool)
+    m = mask_from(character, kind, hr)
+    from fizgig.dataset.masks import MIN_COVER
+    if float(m.mean()) < MIN_COVER:
+        why = {"head": "a character but no head found",
+               "body_clothes": "only a head here, nothing else to mask",
+               "not_faces": "only a head here, nothing else to mask",
+               "background": "the character fills the picture: no background to mask"}.get(kind, "nothing found")
+        return None, why, character
+    return m, note, character
