@@ -1,4 +1,5 @@
-"""Batch AI-caption images/clips in an isolated process (Florence-2 or Qwen3-VL).
+"""Batch AI-caption images/clips in an isolated process (Florence-2, Qwen3-VL, or a tagger: WD EVA02 / JTP-3 Hydra,
+fizgig.dataset.tag_captions, which writes tag captions and quits after its job so its memory is freed).
 
 The Captions tab runs this so GPU memory stays out of the GUI process.  In --serve
 mode the model stays loaded between jobs until the worker receives QUIT (e.g. when
@@ -162,6 +163,15 @@ def _load_state_from_config(config: dict, device: str) -> CaptionState:
     backend = config["backend"]
     include_video = bool(config.get("include_video"))
 
+    if backend == "tagger":
+        from fizgig.dataset import tag_captions
+        tid = config.get("tagger") or ""
+        print(f"INFO: Loading the {tid} tagger...", flush=True)
+        tagger = tag_captions.load(tid, config.get("models_dir") or "",
+                                   log=lambda s: print("INFO: " + str(s).strip(), flush=True))
+        print("INFO: Tagger ready.", flush=True)
+        return CaptionState(backend, device, (tid, tagger), include_video)
+
     if backend == "florence":
         model_name = config.get("florence_model") or ""
         if not model_name:
@@ -203,7 +213,18 @@ def _run_job(state: CaptionState, job: dict) -> bool:
         print("FAIL: no images in list", flush=True)
         return False
 
-    if state.backend == "florence":
+    if state.backend == "tagger":
+        from fizgig.dataset import tag_captions
+        tid, tagger = state.model
+        cfg = tag_captions.settings(job.get("tags"), tid)
+
+        def caption_one(path: str) -> str:
+            img = _open_training_frame(path)
+            text = tag_captions.caption(tag_captions.scored_tags(tagger, img), tid, cfg, trigger)
+            if not text:
+                raise RuntimeError("no tag scored at least the min score")
+            return text
+    elif state.backend == "florence":
         model, processor = state.model
         task = job.get("florence_task") or "<DETAILED_CAPTION>"
 
@@ -277,9 +298,13 @@ def _serve(config_path: str) -> int:
             except Exception as exc:
                 print(f"FAIL: job ({exc})", flush=True)
                 print("DONE", flush=True)
+            if state.backend == "tagger":
+                break                  # a tagger is quick to load: freed after its job, not kept for the next
             continue
         print(f"FAIL: unknown command {line!r}", flush=True)
 
+    if state.backend == "tagger":
+        state.model[1].close()
     del state.model
     if torch.cuda.is_available():
         torch.cuda.synchronize()

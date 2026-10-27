@@ -9,6 +9,9 @@ polls.
 Model names, Florence pins and the Qwen3-VL task menu match the desktop app (lora_trainer_gui.py FLORENCE_*,
 fizgig.krea2.caption_text.CAPTION_TASKS); the edited Qwen instructions are the same Preferences entry
 (caption_qwen_instructions), so an edit in either app is used by both.
+
+The two taggers (fizgig.dataset.tag_captions: WD EVA02 Large v3 and JTP-3 Hydra, the same downloads as Image Prep's
+Trim tags) write tag captions through the same worker; it frees a tagger as soon as its job ends.
 """
 import glob
 import json
@@ -99,7 +102,7 @@ def _overrides(prefs):
     return out
 
 
-def options(prefs, captioner):
+def options(prefs, captioner, models_dir=None):
     """Models (Qwen3-VL first when its file is set), each model's tasks, and each Qwen task's instruction (the edited
     one if there is one), its shipped text and its suggested length."""
     tasks, default = _tasks()
@@ -111,8 +114,12 @@ def options(prefs, captioner):
     custom_builtin = tasks[default][1]
     qwen.append({"key": "custom", "label": CUSTOM_TASK, "tokens": tasks[default][2], "builtin": custom_builtin,
                  "instruction": str(ovr.get("custom") or "").strip() or custom_builtin, "edited": bool(ovr.get("custom"))})
+    from fizgig.dataset import tag_captions
+    from fizgig.user_data import MODELS_DIR
     models = FLORENCE_MODELS + ([QWEN_MODEL] if captioner else [])          # the desktop's order
-    return {"models": models, "default_model": QWEN_MODEL if captioner else models[0], "qwen_model": QWEN_MODEL,
+    models += list(tag_captions.MODELS)                                     # then the taggers
+    return {"models": models, "taggers": tag_captions.info(models_dir or MODELS_DIR),
+            "tag_max": tag_captions.MAX_TAGS, "default_model": QWEN_MODEL if captioner else models[0], "qwen_model": QWEN_MODEL,
             "qwen_tasks": qwen,
             "default_qwen_task": tasks[default][0], "florence_tasks": FLORENCE_TASKS,
             "qwen_available": bool(captioner)}
@@ -212,7 +219,12 @@ def find_replace(folder, find, replace, apply, ext=".txt"):
 
 
 # ---- the AI worker -------------------------------------------------------------------------------------------
-def _worker_config(model, captioner, clips):
+def _worker_config(model, captioner, clips, models_dir=None):
+    from fizgig.dataset import tag_captions
+    tid = tag_captions.tagger_id(model)
+    if tid:
+        from fizgig.user_data import MODELS_DIR
+        return {"backend": "tagger", "tagger": tid, "models_dir": models_dir or MODELS_DIR, "include_video": bool(clips)}
     cfg = {"backend": "qwen" if model == QWEN_MODEL else "florence", "include_video": bool(clips)}
     if cfg["backend"] == "qwen":
         cfg["text_encoder"] = captioner
@@ -271,13 +283,24 @@ def _popen(cmd, prefs, stdin=False):
 
 
 def ai_captions(prefs, captioner, folder, model, task_label, instruction, max_tokens, trigger, overwrite, clips,
-                only=None, photos=True, ext=".txt"):
-    """Caption the folder's pictures (and clips) with Florence-2 or Qwen3-VL, or just `only` (a re-caption). The
-    worker loads once and stays loaded for the next batch."""
+                only=None, photos=True, ext=".txt", tags=None, models_dir=None):
+    """Caption the folder's pictures (and clips) with Florence-2, Qwen3-VL or a tagger (`tags`: its settings,
+    tag_captions.settings), or just `only` (a re-caption). Florence-2 and Qwen3-VL load once and stay loaded for the
+    next batch; a tagger is freed when its job ends."""
+    from fizgig.dataset import tag_captions
     if _busy():
         raise ValueError("A captioning job is already running. Stop it first.")
     if model == QWEN_MODEL and not captioner:
         raise ValueError("Qwen3-VL needs the Krea 2 text encoder set in Preferences.")
+    tid = tag_captions.tagger_id(model)
+    if tid:
+        from fizgig.dataset import taggers
+        from fizgig.user_data import MODELS_DIR
+        models_dir = models_dir or MODELS_DIR
+        tags = tag_captions.settings(tags, tid)
+        mod = taggers.get(tid)
+        if not mod.find_model(models_dir):
+            raise ValueError(f"The {mod.LABEL} isn't downloaded yet: press Download under the Model box first.")
     images = [p for p in (only or media_files(folder, clips, photos)) if os.path.isfile(p)]
     if not images and not only:
         raise ValueError("Nothing here for the AI to caption: this model trains on recordings. Use Static Caption All "
@@ -293,14 +316,14 @@ def ai_captions(prefs, captioner, folder, model, task_label, instruction, max_to
     with _lock:
         alive = _st["proc"] is not None and _st["proc"].poll() is None
         same = alive and _st["key"] == key
-    if alive and not same:
+    if alive and (not same or tid):        # a tagger worker quits after each job: always a fresh one
         unload()
     with _lock:
         alive = _st["proc"] is not None and _st["proc"].poll() is None
     if not alive:
         cfg_path = os.path.join(JOB_DIR, "worker_config.json")
         with open(cfg_path, "w", encoding="utf-8") as f:
-            json.dump(_worker_config(model, captioner, clips), f)
+            json.dump(_worker_config(model, captioner, clips, models_dir), f)
         proc = _popen([sys.executable, "-m", "fizgig.scripts.batch_caption", "--serve", "--config", cfg_path], prefs,
                       stdin=True)
         with _lock:
@@ -316,7 +339,9 @@ def ai_captions(prefs, captioner, folder, model, task_label, instruction, max_to
         pass
     job = {"list_file": list_file, "max_new_tokens": int(max_tokens or 120), "trigger": trigger.strip(),
            "stop_file": stop_file, "caption_ext": ext}
-    if model == QWEN_MODEL:
+    if tid:
+        job["tags"] = tags
+    elif model == QWEN_MODEL:
         instr = os.path.join(JOB_DIR, "instruction.txt")
         with open(instr, "w", encoding="utf-8") as f:
             f.write(instruction.strip())

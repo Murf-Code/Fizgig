@@ -518,6 +518,27 @@
               <div class="field-row"><span class="field-label">Max tokens:</span>
                 <input type="number" id="capTokens" class="w-num" value="120">
                 <span class="field-hint">How long a caption may be.</span></div>
+              <div id="capTagBox" style="display:none">
+                <div class="field-row"><span class="field-label">Min score:</span>
+                  <input type="text" id="capTagMin" class="w-num" value="0.60">
+                  <span class="field-hint">Write tags the tagger is at least this sure of (0 to 1). Lower writes
+                    more tags.</span></div>
+                <div class="field-row"><span class="field-label">Max tags:</span>
+                  <input type="number" id="capTagMax" class="w-num" value="255" min="1">
+                  <span class="field-hint">The surest tags come first, up to this many.</span></div>
+                <div class="field-row"><span class="field-label">Tag style:</span>
+                  <select id="capTagStyle">
+                    <option value="spaces">long hair (spaces)</option>
+                    <option value="underscores">long_hair (underscores)</option>
+                  </select></div>
+                <div class="field-row"><span class="field-label">Character tags from:</span>
+                  <input type="text" id="capTagChar" class="w-num" placeholder="same">
+                  <span class="field-hint">Optional: a lower score for character names, so a character is named
+                    even when the tagger is less sure. Blank uses the min score.</span></div>
+                <label class="checkbox-label"><input type="checkbox" id="capTagRatings">
+                  Include a rating tag (like general or explicit)</label>
+                <div class="field-hint" id="capTagState"></div>
+              </div>
               <label class="checkbox-label"><input type="checkbox" id="capOverwrite" checked>
                 Overwrite existing captions (untick to caption only the files without one)</label>
             </div>
@@ -526,7 +547,7 @@
             <div class="card-title">Generate captions</div>
             <div class="card-desc">Caption All writes a caption for each picture (and clip) with the model above.
               Static gives every file just the trigger word. The model stays loaded for quick re-captions; Unload
-              frees its memory (it unloads itself before a run starts).</div>
+              frees its memory (it unloads itself before a run starts). A tagger frees itself when it's done.</div>
             <div class="card-content">
               <div class="field-row">
                 <button class="btn btn-primary" id="capAll">Caption All (AI)</button>
