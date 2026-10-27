@@ -21,6 +21,7 @@ self.settings defaults, and a family's first preset is applied over them on a fi
 import os
 
 from fizgig.families import launch
+from fizgig.training import timestep_spread as TS
 
 ADAPTIVE_MIN = ("1e-5", "5e-5", "1e-4", "2e-4", "3e-4")
 ADAPTIVE_MAX = ("1e-4", "2e-4", "3e-4", "4e-4")
@@ -62,6 +63,7 @@ DEFAULTS = {
     "FAMILY_TRAINING_ADAPTER": True, "FAMILY_KIND": "standard", "FAMILY_FAST_ID": False,
     "FAMILY_MULTICONCEPT": False, "FAMILY_CONCEPT_DIR": "", "FAMILY_CONCEPT_COUNT": "2 subjects",
     "FAMILY_CONCEPT_DIR3": "", "FAMILY_CONCEPT_DIR4": "", "FAMILY_CONCEPT_BALANCE": False,
+    "TIMESTEP_SPREAD": "Default",
     "FAMILY_EDIT_DIR": "", "FAMILY_EDIT_REF": "", "FAMILY_EDIT_CAPTION": "",
     "FAMILY_EDIT_PICTURES": launch.EDIT_PHOTO_ONLY, "FAMILY_EDIT_EXTRAS_DIR": "",
     "FAMILY_SLIDER_SOURCE": "pairs", "FAMILY_SLIDER_DIR": "", "FAMILY_SLIDER_CAPTION": "",
@@ -290,6 +292,12 @@ def form(desc):
         params += [_row("MIN_TIMESTEP", "Min timestep", hint="0-1000: 0 is the clean end, 1000 pure noise. Empty = "
                         "the whole range."),
                    _row("MAX_TIMESTEP", "Max timestep")]
+    if desc.timestep_spread:
+        # Timestep focus (fizgig.training.timestep_spread): which noise levels the steps go to, as named presets; the
+        # chosen one's line shows under it (state). MOSS-Image keeps its own Clean-end share instead
+        params.append(_row("TIMESTEP_SPREAD", "Timestep focus", "choice", "Which noise levels training spends its "
+                           "steps on. Default is the model's usual mix.",
+                           [TS.LABELS[k] for k in desc.timestep_spread], TS.LABELS["default"]))
     params += [
         _row("NETWORK_DIM", "Network Dim (Rank)"),
         _row("NETWORK_ALPHA", "Network Alpha"),
@@ -791,7 +799,7 @@ NOT_IN_PRESETS = ("FAMILY_TURBO_STRENGTH", "FAMILY_TURBO_STEPS", "FAMILY_TURBO_P
                   "RESUME_TRAINING", "CAPTION_TRIGGER_WORD")     # the trigger word is the training folder's
 # boxes a preset can't put an unknown value in (the desktop's _STRICT_COMBO_KEYS): the current choice stays
 # (Adaptive LR's Min / Max take a value of your own, Other..., so a preset or Last Train brings theirs as it is)
-STRICT_CHOICES = ("OPTIMIZER_TYPE", "LR_SCHEDULER", "NETWORK_TYPE")
+STRICT_CHOICES = ("OPTIMIZER_TYPE", "LR_SCHEDULER", "NETWORK_TYPE", "TIMESTEP_SPREAD")
 LEGACY_AREAS = {"All Layers": "Full Model", "Identity Blocks": "Identity",
                 "Style+Composition Blocks": "Style+Composition", "Details Blocks": "Details"}
 
@@ -827,6 +835,11 @@ def apply_preset(desc, values, preset, whole=False):
         if str(p.get("FAMILY_SLIDER")).lower() in ("true", "1"):
             p["SAMPLE_EVERY_N_EPOCHS"] = SLIDER_PREVIEW_EVERY
     rows = {r["key"]: r for sec in form(desc)["sections"] for r in sec["rows"] if r}
+    if "TIMESTEP_SPREAD" in p:          # any case ("detail", as the trainer's flag writes it) -> the dropdown's label
+        try:
+            p["TIMESTEP_SPREAD"] = TS.label(p["TIMESTEP_SPREAD"])
+        except ValueError:
+            p.pop("TIMESTEP_SPREAD")
     for k in STRICT_CHOICES:
         if k in p and k in rows and rows[k].get("choices"):
             opts, v = [str(c) for c in rows[k]["choices"]], str(p[k])
@@ -1237,6 +1250,8 @@ def state(desc, values, image_folder="", captioner="", speed_file=False, checkpo
         hidden |= {"MIN_TIMESTEP", "MAX_TIMESTEP", "NETWORK_DIM", "NETWORK_ALPHA", "RESUME_TRAINING"}
     if str(values.get("TARGET_LAYERS") or "") != "Custom":   # the block picker is Model Area's Custom
         hidden.add("TRAINING_BLOCKS")
+    if desc.timestep_spread:                 # Timestep focus: the chosen preset's one line
+        notes["TIMESTEP_SPREAD"] = spread_note(desc, values.get("TIMESTEP_SPREAD"))
     vals = _option_values(desc, values)
     for o in desc.options:
         if o.kind == "fixed" or o.tab == "model":
@@ -1473,6 +1488,17 @@ def _timestep_note(values):
     if a >= 600:
         return f"{a}-{b}: the noisy end - composition, layout and pose."
     return f"{a}-{b}: part of the range."
+
+
+def spread_note(desc, value):
+    """The line under Timestep focus: what the chosen preset does, or what to pick when the value isn't offered."""
+    try:
+        k = TS.key(value)
+    except ValueError:
+        k = None
+    if k not in desc.timestep_spread:
+        return "Pick one of " + ", ".join(TS.LABELS[x] for x in desc.timestep_spread) + "."
+    return TS.HINTS[k]
 
 
 _lr_counts = {}                     # folder -> (modified time, pictures)

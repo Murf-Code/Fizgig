@@ -16,6 +16,7 @@ import torch
 import torch.nn.functional as F
 
 from fizgig.families.driver import FamilyDriver, prior_base, weighted_loss, with_prior
+from fizgig.training import timestep_spread as TS
 from fizgig.zimage import pipeline as P
 
 DTYPE = torch.bfloat16
@@ -99,8 +100,10 @@ class ZImageDriver(FamilyDriver):
         return -torch.stack([o.float() for o in out]).squeeze(2)
 
     @staticmethod
-    def _sample_sigma(n, generator, min_t, max_t):
-        s = torch.sigmoid(torch.randn(n, generator=generator))
+    def _sample_sigma(n, generator, min_t, max_t, spread="default"):
+        """Logit-normal with the static shift, into the window. spread: the Timestep focus preset
+        (fizgig.training.timestep_spread; "default" = exactly that)."""
+        s = TS.logit_normal(torch.randn(n, generator=generator), spread, min_t, max_t)
         s = P.DEFAULT_SHIFT * s / (1 + (P.DEFAULT_SHIFT - 1) * s)
         return min_t + (max_t - min_t) * s
 
@@ -109,7 +112,7 @@ class ZImageDriver(FamilyDriver):
                       diff_weight=0.0, loss_mask=None, prior=None):
         x0 = latents.float()
         n = x0.shape[0]
-        sig = self._sample_sigma(n, generator, min_t, max_t).to(x0.device)
+        sig = self._sample_sigma(n, generator, min_t, max_t, self.timestep_spread).to(x0.device)
         noise = torch.randn(x0.shape, generator=generator).to(x0.device)
         sb = sig.view(-1, 1, 1, 1)
         xt = (1 - sb) * x0 + sb * noise
@@ -135,7 +138,7 @@ class ZImageDriver(FamilyDriver):
 
     def noise_latents(self, latents, generator, *, min_t=0.0, max_t=1.0):
         x0 = latents.float()
-        sig = self._sample_sigma(x0.shape[0], generator, min_t, max_t).to(x0.device)
+        sig = self._sample_sigma(x0.shape[0], generator, min_t, max_t, self.timestep_spread).to(x0.device)
         noise = torch.randn(x0.shape, generator=generator).to(x0.device)
         sb = sig.view(-1, 1, 1, 1)
         return {"xt": (1 - sb) * x0 + sb * noise, "t": sig}

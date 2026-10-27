@@ -5,6 +5,7 @@ Sources: the model cards (huggingface.co/black-forest-labs/flux-3-image-klein, -
 (github.com/black-forest-labs/flux-3-image-klein, Apache-2.0).
 """
 from fizgig.families.description import FamilyDescription, LoRAFormat, ModelFile, SamplingSettings, TextEncoderBuild
+from fizgig.training import timestep_spread
 
 _COMFY = "black-forest-labs/flux-3-image-klein-comfy"
 _CARD = "https://huggingface.co/black-forest-labs/flux-3-image-klein"
@@ -35,6 +36,7 @@ def _preset(rank, lr=1e-4, adaptive=None, epochs=30, mp="0.25", edit=False, slid
 FLUX3 = FamilyDescription(
     key="flux3",
     masked_training=True,
+    timestep_spread=timestep_spread.FLOW,     # Timestep focus presets (the shift's multiple / the curve's width)
     arch_id="flux3klein",
     display_name="Flux 3 Image Klein",
     gui_label="Flux 3 Image Klein",

@@ -639,6 +639,10 @@ class FamilyDescription:
     # (0-1, 0 = clean) fills the Timestep Range. The first entry is the default; the Training tab adds "Custom" (pick
     # blocks) and shows the Timestep Range (0-1000) for a family that has areas. () = neither control
     train_areas: tuple = ()
+    # Timestep focus (fizgig.training.timestep_spread): the presets the Training tab offers, as its keys ("default"
+    # first). Opt in, so a family added later never gets a dropdown its driver can't honour; () = no dropdown (MOSS-
+    # Image and MiniMax H3 have their own Clean-end share, ACE-Step its own schedules)
+    timestep_spread: tuple = ()
 
     # things a user or a later session must know, with sources
     notes: tuple = ()

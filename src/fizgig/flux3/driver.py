@@ -16,6 +16,7 @@ import torch
 import torch.nn.functional as F
 
 from fizgig.families.driver import Block, BlockGroup, FamilyDriver, prior_base, weighted_loss, with_prior
+from fizgig.training import timestep_spread as TS
 from fizgig.flux3 import sampling as S
 
 logger = logging.getLogger(__name__)
@@ -163,10 +164,11 @@ class Flux3Driver(FamilyDriver):
 
     # ---- training -------------------------------------------------------------------------------
     @staticmethod
-    def _sample_t(generator, min_t, max_t):
+    def _sample_t(generator, min_t, max_t, spread="default"):
         """Logit-normal, shifted by the sampler's alpha so training covers the times sampling spends its steps on.
-        BFL hasn't published the training distribution: this is an assumption to verify (see README)."""
-        t = torch.sigmoid(torch.randn(1, generator=generator)).item()
+        BFL hasn't published the training distribution: this is an assumption to verify (see README). spread: the
+        Timestep focus preset (fizgig.training.timestep_spread; "default" = exactly the above)."""
+        t = TS.logit_normal(torch.randn(1, generator=generator), spread, min_t, max_t).item()
         return min_t + (max_t - min_t) * S.shift(t)
 
     def _forward(self, dit, xt, t, cond, h, w, refs=None):
@@ -188,7 +190,7 @@ class Flux3Driver(FamilyDriver):
         h, w = latents.shape[-2:]
         x0 = S.to_tokens(latents.float())
         noise = torch.randn(x0.shape, generator=generator).to(latents.device)
-        t = self._sample_t(generator, min_t, max_t)
+        t = self._sample_t(generator, min_t, max_t, self.timestep_spread)
         xt = (1 - t) * x0 + t * noise
         base = prior_base(prior, loss_mask, lambda: self._forward(dit, xt, t, cond, h, w, refs=refs))
         pred = self._forward(dit, xt, t, cond, h, w, refs=refs)
@@ -216,7 +218,7 @@ class Flux3Driver(FamilyDriver):
         h, w = latents.shape[-2:]
         x0 = S.to_tokens(latents.float())
         noise = torch.randn(x0.shape, generator=generator).to(latents.device)
-        t = self._sample_t(generator, min_t, max_t)
+        t = self._sample_t(generator, min_t, max_t, self.timestep_spread)
         return {"xt": (1 - t) * x0 + t * noise, "t": t, "hw": (h, w)}
 
     def predict(self, dit, state, cond):

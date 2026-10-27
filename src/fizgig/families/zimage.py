@@ -6,6 +6,7 @@ distilled to 8 steps, and a plain LoRA on it undoes the distillation (blurry, wa
 Sources: the model card, Tongyi's reference code, ComfyUI's implementation, AI-Toolkit's adapter card, Oct 2026.
 """
 from fizgig.families.description import FamilyDescription, LoRAFormat, ModelFile, SamplingSettings
+from fizgig.training import timestep_spread
 
 _COMFY = "Comfy-Org/z_image_turbo"
 _CARD = "https://huggingface.co/Tongyi-MAI/Z-Image-Turbo"
@@ -34,6 +35,7 @@ def _preset(rank, lr=1e-4, adaptive=None, epochs=30, mp="0.5", slider=False):
 ZIMAGE = FamilyDescription(
     key="zimage",
     masked_training=True,
+    timestep_spread=timestep_spread.FLOW,     # Timestep focus presets (the shift's multiple / the curve's width)
     arch_id="zimageturbo",
     display_name="Z-Image Turbo",
     gui_label="Z-Image Turbo",

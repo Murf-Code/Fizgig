@@ -7,6 +7,7 @@ from fizgig.families.description import (
     GENERAL_NEGATIVE,
     FamilyDescription, LoRAFormat, ModelFile, SamplingSettings, SpeedLoRA, TextEncoderBuild,
 )
+from fizgig.training import timestep_spread
 
 _COMFY = "Comfy-Org/Krea-2"
 
@@ -32,6 +33,7 @@ def _preset(rank, lr=1e-4, adaptive=None, epochs=30, slider=False, mp="0.25"):
 KREA2 = FamilyDescription(
     key="krea2",
     masked_training=True,
+    timestep_spread=timestep_spread.FLOW,     # Timestep focus presets (the shift's multiple / the curve's width)
     arch_id="krea2drv",
     display_name="Krea 2",
     gui_label="Krea 2",

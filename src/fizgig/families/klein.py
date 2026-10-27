@@ -5,6 +5,7 @@ a fresh cache, never mixed with the original's). Facts are the original trainer'
 klein/model_utils.py, networks/lora_klein.py), cited per value.
 """
 from fizgig.families.description import GENERAL_NEGATIVE, FamilyDescription, LoRAFormat, ModelFile, SamplingSettings
+from fizgig.training import timestep_spread
 
 _BFL = "black-forest-labs"
 _DOUBLE = ("img_attn.qkv", "img_attn.proj", "img_mlp.0", "img_mlp.2",
@@ -29,6 +30,7 @@ _STYLE_COMP = tuple(f"double_{i}" for i in range(8)) + ("single_0", "single_1")
 KLEIN = FamilyDescription(
     key="klein",
     masked_training=True,
+    timestep_spread=timestep_spread.FLOW,     # Timestep focus presets (the shift's multiple / the curve's width)
     arch_id="klein9bdrv",
     display_name="Klein 9B",
     gui_label="Flux 2 Klein Base 9B",

@@ -7,6 +7,7 @@ the family is trained through its driver (qwen_image21/driver.py) by the generic
 from fizgig.families.description import (
     GENERAL_NEGATIVE, FamilyDescription, LoRAFormat, ModelFile, SamplingSettings, SpeedLoRA,
 )
+from fizgig.training import timestep_spread
 
 _CARD = "https://huggingface.co/Qwen/Qwen-Image-2.1"
 _COMFY = "Comfy-Org/Qwen-Image-2.1"
@@ -41,6 +42,7 @@ def _preset(rank, lr=1e-4, adaptive=None, epochs=30, edit=False, slider=False):
 QWEN_IMAGE_21 = FamilyDescription(
     key="qwen_image21",
     masked_training=True,
+    timestep_spread=timestep_spread.FLOW,     # Timestep focus presets (the shift's multiple / the curve's width)
     arch_id="qwenimage21",
     display_name="Qwen Image 2.1",
     gui_label="Qwen Image 2.1",

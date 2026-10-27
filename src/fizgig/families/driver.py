@@ -177,6 +177,13 @@ class FamilyDriver:
         """The run's --family_option KEY=VALUE pairs, before the dataset is built (an option may shape it)."""
         self.options = dict(options)
 
+    @property
+    def timestep_spread(self) -> str:
+        """The run's Timestep focus preset (fizgig.training.timestep_spread; --timestep_spread reaches the driver as
+        the timestep_spread option): "default" unless set. A family whose description offers it applies it in its
+        timestep draw."""
+        return str(self.options.get("timestep_spread") or "default")
+
     def prepare_training(self, dit, group, net=None) -> None:
         """After the DiT and the LoRA (`net`, the FamilyLoRA) are built, before the first step: install model-side
         training state (H3: TREAD, the caption-dropout embed, the preview Turbo). Default: nothing."""
