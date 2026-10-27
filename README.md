@@ -3,7 +3,8 @@
 This is Fizgig with extra features, kept up to date with upstream [shootthesound/Fizgig](https://github.com/shootthesound/Fizgig).
 It adds Batch Size above 1 for MOSS-Image, Anima and SDXL, with the per-image features still working, plus Prodigy and Muon optimizers.
 It also adds loss graph trend views with a fixed Image Validation check, paired likeness scores for style LoRA previews, and Reclaim VRAM on Windows.
-See the [release notes](https://github.com/Murf-Code/Fizgig/releases/tag/advanced-1) for the full list and how to switch to the `fizgig-advanced` branch.
+New in 1.1: Save & stop on a second Pause press, early stopping when validation stops improving, tag shuffle and caption dropout, faster Blocks Swap for Krea 2 and MOSS-Image LoRAs, and Timestep focus presets.
+See the [release notes](https://github.com/Murf-Code/Fizgig/releases/tag/advanced-1.1) for the full list and how to switch to the `fizgig-advanced` branch.
 
 ---
 
