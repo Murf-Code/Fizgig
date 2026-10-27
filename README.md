@@ -1,3 +1,12 @@
+## Fizgig Advanced
+
+This is Fizgig with extra features, kept up to date with upstream [shootthesound/Fizgig](https://github.com/shootthesound/Fizgig).
+It adds Batch Size above 1 for MOSS-Image, Anima and SDXL, with the per-image features still working, plus Prodigy and Muon optimizers.
+It also adds loss graph trend views with a fixed Image Validation check, paired likeness scores for style LoRA previews, and Reclaim VRAM on Windows.
+See the [release notes](https://github.com/Murf-Code/Fizgig/releases/tag/advanced-1) for the full list and how to switch to the `fizgig-advanced` branch.
+
+---
+
 <h1 align="center">Fizgig — LoRA & Fine-tune Studio for Klein 9B, Flux 3 Image Klein, Krea 2, MiniMax H3, Qwen Image 2.1, MOSS-Image, Z-Image Turbo, SDXL & Anima</h1>
 
 <p align="center">
