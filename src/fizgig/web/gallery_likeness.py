@@ -31,14 +31,36 @@ def read(samples_dir):
         return {}
 
 
-def _write(samples_dir, names, status, scores, meta=None):
+_file_lock = threading.Lock()       # the face scorer and the paired scorer share likeness.json
+
+
+def _dump(samples_dir, d):
     try:
         tmp = _path(samples_dir) + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
-            json.dump({"baselines": names, "status": status, "scores": scores, **(meta or {})}, f)
+            json.dump(d, f)
         os.replace(tmp, _path(samples_dir))       # atomic: the galleries poll it
     except OSError:
         pass
+
+
+def _write(samples_dir, names, status, scores, meta=None):
+    with _file_lock:
+        d = {"baselines": names, "status": status, "scores": scores, **(meta or {})}
+        paired = read(samples_dir).get("paired")
+        if paired:
+            d["paired"] = paired                  # the paired scores (sample_pairs.py) stay
+        _dump(samples_dir, d)
+
+
+def merge_paired(samples_dir, new, keep=None):
+    """Add paired scores ({sample: {score, image, index}}); samples no longer in `keep` drop out."""
+    with _file_lock:
+        d = read(samples_dir)
+        paired = {k: v for k, v in (d.get("paired") or {}).items() if keep is None or k in keep}
+        paired.update(new)
+        d["paired"] = paired
+        _dump(samples_dir, d)
 
 
 def _claim(samples_dir):
@@ -61,13 +83,22 @@ def _owns(samples_dir):
         return True
 
 
-def state(samples_dir, dataset_dir):
+def pause(samples_dir):
+    """Paired likeness is on: the face scorer for this folder stands down (its scores and three photos stay in
+    likeness.json, so turning paired off picks up where it left off)."""
+    with _lock:
+        _runs.pop(samples_dir, None)
+
+
+def state(samples_dir, dataset_dir, paired=False):
     """likeness.json for the page, resuming the scorer when baselines were chosen (here or in the desktop) and nothing
-    scores this folder in this server yet."""
+    scores this folder in this server yet. paired: the Samples tab's Paired likeness is on - no face scoring."""
     d = read(samples_dir)
     names = d.get("baselines") or []
+    if paired:
+        pause(samples_dir)
     with _lock:
-        running = samples_dir in _runs
+        running = paired or samples_dir in _runs
     if names and not running and dataset_dir and os.path.isdir(dataset_dir) \
             and not all(os.path.exists(os.path.join(dataset_dir, os.path.basename(str(n)))) for n in names):
         names = []                                    # another run's pick (a different dataset): not chosen yet
@@ -78,7 +109,9 @@ def state(samples_dir, dataset_dir):
         except ValueError as e:
             d["status"] = f"error: {e}"
     thr = d.get("thresholds") if isinstance(d.get("thresholds"), dict) else None
-    return {"baselines": names, "status": d.get("status", ""), "scores": d.get("scores") or {},
+    from fizgig.web import sample_pairs
+    sample_pairs.kick(samples_dir)                    # paired prompts: each preview against its own image
+    return {"paired": d.get("paired") or {}, "paired_mode": bool(paired), "baselines": names, "status": d.get("status", ""), "scores": d.get("scores") or {},
             "available": prep_jobs.faces_available(), "embedder": d.get("embedder_label") or "",
             "thresholds": thr or {"match": 0.45, "borderline": 0.30}}
 

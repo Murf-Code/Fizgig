@@ -2371,3 +2371,33 @@ a.pick-pill-vast:hover { border-color: var(--success); }
 /* the logs resize by dragging; app.js remembers the height */
 .console-terminal { resize: vertical; overflow: auto; min-height: 120px; max-height: none; flex-shrink: 0; }
 .console-terminal:empty { height: 0 !important; min-height: 0; resize: none; }
+
+.pair-rows { margin: 4px 0 8px; grid-column: 1 / -1; flex-basis: 100%; }
+.pair-row { display: grid; grid-template-columns: 1.8em minmax(0, 1fr) max(22em, calc(25% - 8px));
+  column-gap: 8px; align-items: center; margin: 3px 0; font-size: 9pt; }
+.pair-row .pair-n { text-align: right; opacity: .7; }
+.pair-row .pair-text { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; opacity: .85; }
+/* the controls: one line, one shared column template, every item in its own cell, so all rows line up; the
+   file name is the only column that gives (ellipsis) */
+.pair-row .pair-ctl { display: grid; grid-template-columns: 7em 28px minmax(0, 1fr) 4.6em 3.6em 2.2em; column-gap: 5px;
+  align-items: center; justify-items: start; min-width: 0; white-space: nowrap; }
+.pair-row .pair-ctl > * { grid-row: 1; }   /* one line: a late item (the caption badge) never drops to a new row */
+.pair-row .pair-btn { grid-column: 1; width: 100%; min-width: 0; padding-left: 4px; padding-right: 4px; }
+.pair-row .pair-thumb { grid-column: 2; }
+.pair-row .pair-name { grid-column: 3; max-width: 100%; min-width: 0; }
+.pair-row .pair-cap { grid-column: 4; width: 100%; box-sizing: border-box; text-align: center; overflow: hidden;
+  text-overflow: ellipsis; padding-left: 2px; padding-right: 2px; }
+.pair-row .pair-copy { grid-column: 5; width: 100%; padding-left: 2px; padding-right: 2px; }
+.pair-row .pair-x { grid-column: 6; width: 100%; padding-left: 2px; padding-right: 2px; }
+.pair-row .pair-thumb { width: 28px; height: 28px; object-fit: cover; border-radius: 3px; }
+.pair-row .pair-name { opacity: .7; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pair-row.stale .pair-text { color: #E67E22; white-space: normal; }
+/* own line under the caption (was absolute at the bottom and covered the file name) */
+.lik-badge.pair-badge { position: static; display: inline-block; margin-top: 5px; background: #8E44AD; }
+/* paired score colors: per prompt, own low..high (inline hsl); these classes are the one-epoch fallback tiers */
+.lik-badge.pair-badge { color: #10202A; font-weight: 700; text-shadow: none; border: 0; cursor: help; }
+.lik-badge.pair-badge.pair-best { outline: 2px solid #FFFFFF; outline-offset: 2px; box-shadow: 0 0 8px 2px rgba(255, 255, 255, .75); }
+.pair-rows > .pair-toggle, .pair-rows > .pair-score, .pair-rows > .pair-say { display: inline-flex; vertical-align: middle; margin-right: 10px; }
+.pair-cap { font-size: 8.5pt; padding: 1px 7px; border-radius: 9px; cursor: help; }
+.pair-cap.good { background: rgba(39, 174, 96, .25); color: #2ECC71; }
+.pair-cap.mid { background: rgba(230, 126, 34, .22); color: #F0A04B; }

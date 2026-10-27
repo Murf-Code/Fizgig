@@ -40,6 +40,7 @@ active; delete a stale <LORA_OUTPUT_DIR>/.pause_requested (the trainer would sto
 .sample_override.json (it changes the previews); warn when the output drive is nearly full, or when a resume is
 already at Max Train Epochs.
 """
+import json
 import os
 import re
 from dataclasses import dataclass, field
@@ -965,6 +966,14 @@ def _preview_flags(desc, st, plan, cmd):
         if lines or _sample_image(desc, sm):     # a reference alone previews too ('generate from this picture')
             prompts = os.path.join(samples_dir, f"{desc.key}_prompts.txt")
             plan.files.append((prompts, "\n".join(lines) + "\n"))
+        if st.get("LORA_NAME"):          # paired likeness (off by default): prompt -> its training image, by the previews
+            from fizgig.web import sample_pairs
+            side = sample_pairs.sidecar(samples_dir, _s(st.get("LORA_NAME")))
+            text = sample_pairs.sidecar_text(sm.get("pairs"), sm.get("prompts") or [], _s(st.get("image_folder")))
+            if json.loads(text)["pairs"]:
+                plan.files.append((side, text))
+            elif os.path.exists(side):    # turned off (or nothing paired): an earlier run's pairings stop scoring
+                plan.files.append((side, text))
     every = str(sm.get("every") or "").strip()
     if every.isdigit() and int(every) > 0 and slider_on(desc, st):
         # a slider previews as set; only a cadence longer than the run (a family's long-run default - ACE-Step's 40 -

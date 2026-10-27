@@ -1781,11 +1781,11 @@
 
   <div class="modal-backdrop" id="likModal">
     <div class="modal-window" style="width: 860px;">
-      <div class="modal-header"><span>Likeness: pick 3 photos of your subject</span>
+      <div class="modal-header"><span id="likTitle">Likeness: pick 3 photos of your subject</span>
         <button class="btn" data-close="likModal">✕</button></div>
       <div class="modal-body">
-        <div class="field-hint">From the training images (<span id="likFolder"></span>). Pick clear, typical shots of the
-          face: each preview is scored against all three and the mean shown, so one odd photo can't skew it.</div>
+        <div class="field-hint">From the training images (<span id="likFolder"></span>).<span id="likHint3"> Pick clear, typical shots of the
+          face: each preview is scored against all three and the mean shown, so one odd photo can't skew it.</span></div>
         <div class="lik-grid" id="likGrid"></div>
         <div class="field-row"><button class="btn btn-primary" id="likStart" disabled>Start scoring</button>
           <button class="btn" id="likClear">Stop and clear scores</button>

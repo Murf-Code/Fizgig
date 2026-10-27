@@ -71,7 +71,7 @@ DEFAULTS = {
     "ENABLE_CACHE": True, "MASKED_TRAINING": False, "MASK_FLOOR": "0.1 (recommended)", "MASK_PRIOR": "Off",
     "METADATA_TITLE": "", "METADATA_AUTHOR": "", "METADATA_DESCRIPTION": "", "METADATA_LICENSE": "",
     "METADATA_TAGS": "", "METADATA_TRIGGER_PHRASE": "", "METADATA_THUMBNAIL": "",
-    "SAMPLE_ENABLED": True, "SAMPLE_PROMPT": "A high quality photo", "SAMPLE_SEED": "1234",
+    "SAMPLE_ENABLED": True, "SAMPLE_PROMPT": "A high quality photo", "SAMPLE_PAIRS": "", "SAMPLE_PAIRED": False, "SAMPLE_SEED": "1234",
     "SAMPLE_EVERY_N_EPOCHS": "1", "SAMPLE_LATER": False, "SAMPLE_UNTIL_EPOCH": "10",
     "SAMPLE_EVERY_AFTER": "1", "SAMPLE_AT_FIRST": True, "SAMPLE_CHECKPOINT": True, "CACHE_SAMPLE_MODEL": "auto",
 }
@@ -1075,6 +1075,7 @@ def state(desc, values, image_folder="", captioner="", speed_file=False, checkpo
                    "SAVE_EVERY_AFTER"}
     if kind in ("edit", "slider"):
         hidden.add("_prompts_note")     # the family's advice on writing prompts: these runs don't use them
+        hidden.add("SAMPLE_PAIRED")     # nor paired likeness (a prompt tied to its training image)
     if kind == "edit":
         notes["SAMPLE_PROMPT"] = ("An Edit LoRA run doesn't use these prompts or the reference: its previews apply "
                                   "the edit instruction to the test photo on the Training tab's Edit pairs card.")
@@ -1384,7 +1385,7 @@ def inputs(desc, values, *, models, python, repo_dir, image_folder, cache_root, 
                  "until": s("SAMPLE_UNTIL_EPOCH"), "after": s("SAMPLE_EVERY_AFTER"), "width": s("SAMPLE_WIDTH"),
                  "height": s("SAMPLE_HEIGHT"), "steps": s("SAMPLE_STEPS"), "cfg": s("SAMPLE_CFG_SCALE") or
                  str(desc.preview_cfg), "negative": s("SAMPLE_NEGATIVE"), "seed": s("SAMPLE_SEED"),
-                 "at_first": b("SAMPLE_AT_FIRST"), "prompts": s("SAMPLE_PROMPT").splitlines(), "reference": s("SAMPLE_REFERENCE"),
+                 "at_first": b("SAMPLE_AT_FIRST"), "prompts": s("SAMPLE_PROMPT").splitlines(), "pairs": s("SAMPLE_PAIRS") if b("SAMPLE_PAIRED") else "", "reference": s("SAMPLE_REFERENCE"),
                  "strengths": list(desc.preview_strengths) if desc.preview_strengths and
                  v.get("SAMPLE_STRENGTHS", True) else [],
                  **({"checkpoint": b("SAMPLE_CHECKPOINT"), "checkpoint_cache": s("CACHE_SAMPLE_MODEL") or "auto",

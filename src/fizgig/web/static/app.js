@@ -321,8 +321,9 @@ function renderRow(r) {
       for (const c of opts) input.append(el("option", {value: c, text: c}));
       input.value = String(val ?? "");
     } else if (r.kind === "text") {
-      input = el("textarea", {id: "f_" + r.key, rows: 4, spellcheck: "false", oninput: (e) => set(e.target.value)});
+      input = el("textarea", {id: "f_" + r.key, rows: 4, spellcheck: "false", oninput: (e) => { set(e.target.value); if (input._pairs) pairRows(input._pairs, e.target.value); }});
       input.value = v ?? "";
+      if (r.key === "SAMPLE_PROMPT") input._pairs = el("div", {class: "form-row pair-rows", id: "pairRows", "data-key": "SAMPLE_PAIRED"});
     } else if (r.kind === "combo") {
       // a dropdown of the usual values, as the desktop's, with Other… for a value of your own (a browser's
       // suggestion list only shows what matches what's typed, so with 1.0 in the box it showed nothing)
@@ -380,6 +381,11 @@ function renderRow(r) {
       row.append(el("button", {class: "btn", text: "Write captions", onclick: () => write(false)}));
     }
     wrap.append(row);
+    if (input._pairs) {               // after the prompts' own hint and the overtraining tip (the row below)
+      const host = input._pairs;
+      pairRows(host, input.value);
+      setTimeout(() => { document.querySelectorAll("#pairRows").forEach((h) => h !== host && h.remove()); (document.querySelector('.form-row[data-key="_overtrain_tip"]') || wrap).after(host); });
+    }
     if (actMsg) wrap.append(actMsg);
     if (upStatus) wrap.append(upStatus);
   }
@@ -535,7 +541,9 @@ function splitRow(r, wrap) {
 function promptLines(r, wrap) {
   const list = el("div", {class: "prompt-lines"});
   const boxes = () => [...list.querySelectorAll("textarea")];
-  const save = () => onValue(r, boxes().map((b) => b.value).join("\n"));
+  // paired likeness (style LoRAs): its rows follow the prompts, under the prompts' hint and the overtraining tip
+  const pairs = r.key === "SAMPLE_PROMPT" ? el("div", {class: "form-row pair-rows", id: "pairRows", "data-key": "SAMPLE_PAIRED"}) : null;
+  const save = () => { onValue(r, boxes().map((b) => b.value).join("\n")); if (pairs) pairRows(pairs, S.values[r.key] || ""); };
   const grow = (b) => {                     // to its text; a hidden tab measures 0, so it waits to be seen
     if (!b.offsetParent) return;
     b.style.height = "auto"; b.style.height = b.scrollHeight + 2 + "px";
@@ -591,6 +599,7 @@ function promptLines(r, wrap) {
     const v = String(S.values[r.key] ?? "").split(/\r?\n/);
     for (const t of v) line(t);
     renumber();
+    if (pairs) pairRows(pairs, S.values[r.key] || "");
   }
   const sync = el("input", {type: "hidden", id: "f_" + r.key});    // syncInputs (a preset, Last Train) redraws it
   sync._sync = draw;
@@ -602,6 +611,8 @@ function promptLines(r, wrap) {
   if (r.hint) wrap.append(el("div", {class: "field-hint", text: r.hint}));
   wrap.append(el("div", {class: "field-hint row-note", id: "note_" + r.key}));
   draw();
+  if (pairs) setTimeout(() => { document.querySelectorAll("#pairRows").forEach((h) => h !== pairs && h.remove());
+    (document.querySelector('.form-row[data-key="_overtrain_tip"]') || wrap).after(pairs); });
   return wrap;
 }
 
@@ -1434,7 +1445,7 @@ async function resumeClick() {
   const r = S.run || {}, was = r.values || {}, box = $("resumeChoice");
   // the previews as the Samples tab has them now (prompts, seed, size, steps, CFG, Turbo strength, the preview
   // checkpoint tick), block swap, the save schedule and the learning rate go with the resume
-  const samples = r.family === S.family ? Object.fromEntries(["SAMPLE_PROMPT", "SAMPLE_SEED", "SAMPLE_WIDTH",
+  const samples = r.family === S.family ? Object.fromEntries(["SAMPLE_PROMPT", "SAMPLE_PAIRS", "SAMPLE_PAIRED", "SAMPLE_SEED", "SAMPLE_WIDTH",
     "SAMPLE_HEIGHT", "SAMPLE_STEPS", "SAMPLE_CFG_SCALE", "FAMILY_TURBO_STRENGTH", "SAMPLE_CHECKPOINT", "BLOCKS_SWAP",
     "FAMILY_PREVIEW_LOOK",
     "SAMPLE_EVERY_N_EPOCHS", "SAMPLE_LATER", "SAMPLE_UNTIL_EPOCH", "SAMPLE_EVERY_AFTER",
@@ -2002,6 +2013,7 @@ async function loadGallery() {
 
 // ---- likeness to the subject (fizgig/web/gallery_likeness.py; the desktop gallery's likeness.json) ------------
 S.lik = {dir: "", picked: []};
+let LIK_TITLE = "";
 const LIK_PICS = /\.(png|jpe?g|webp)$/i;
 // ArcFace never reaches 100%: two photos of the same person score about 72% against each other. Shown wherever ArcFace
 // scores are (a scorer label that isn't ArcFace's means another embedder, on its own scale; none recorded = ArcFace).
@@ -2013,12 +2025,15 @@ async function likenessShow(dir, items, run, view) {
   S.lik.dir = dir;
   const ask = S.lik.ask = (S.lik.ask || 0) + 1;     // an older refresh's answer arriving late changes nothing
   let d;
-  try { d = await api(`/api/likeness?dir=${encodeURIComponent(dir)}&dataset=${encodeURIComponent(S.imageFolder || "")}`); }
+  const pairedOn = !!S.values.SAMPLE_PAIRED;     // Paired likeness on: no face scoring, no face badges or chart
+  try { d = await api(`/api/likeness?dir=${encodeURIComponent(dir)}&dataset=${encodeURIComponent(S.imageFolder || "")}&paired=${pairedOn ? 1 : 0}`); }
   catch (e) { return; }
   if (ask !== S.lik.ask) return;
   S.lik.data = d;
   $("likBtn").style.display = d.available ? "" : "none";
-  const on = d.baselines.length === 3;
+  $("likBtn").disabled = pairedOn;
+  $("likBtn").title = pairedOn ? "Face likeness is off while Paired likeness is on (Samples tab)" : LIK_TITLE;
+  const on = d.baselines.length === 3 && !pairedOn;
   $("likStatus").textContent = on ? "🎯 " + (d.status || "") : "";
   const pics = items.filter((it) => LIK_PICS.test(it.name));
   // the trend: the shown run's epochs, each the mean of its previews' scores
@@ -2039,6 +2054,20 @@ async function likenessShow(dir, items, run, view) {
     const cls = s === undefined || s === null ? "na" : s >= t.match ? "good" : s >= t.borderline ? "mid" : "bad";
     fig.append(el("span", {class: `lik-badge ${cls}${it.epoch === bestEpoch && bestEpoch != null ? " best" : ""}`,
       text: s === undefined ? "…" : s === null ? "no face" : `${Math.round(s * 100)}%`}));
+  }
+  const pinfo = pairedOn ? pairBadgeInfo(d.paired || {}) : {};
+  for (const fig of document.querySelectorAll("#gallery .gallery-item")) {   // paired likeness: own-image score
+    fig.querySelector(".pair-badge")?.remove();
+    const ps = pairedOn ? (d.paired || {})[fig.title] : null;      // off: no paired badges (scores kept)
+    const bi = pinfo[fig.title];
+    if (ps && bi) {
+      const b = el("span", {class: `lik-badge pair-badge${bi.best ? " pair-best" : ""}`,
+        title: `Paired ${ps.score.toFixed(3)} - whole-image DINOv2 similarity to ${ps.image}\n` +
+          `Prompt ${ps.index + 1}: rank ${bi.rank} of ${bi.n} epochs` + (ps.score >= PAIR_HOT ? " - 0.80+ may be overcooked" : "") + (bi.n > 1 ? ` (range ${bi.min.toFixed(2)}-${bi.max.toFixed(2)})` : ""),
+        text: `${bi.best ? "★ " : ""}Paired ${ps.score.toFixed(2)}`});
+      b.style.background = bi.color;
+      fig.append(b);
+    }
   }
   $("likPanel").style.display = epochs.length ? "" : "none";
   if (!epochs.length) return;
@@ -2069,10 +2098,202 @@ async function likenessShow(dir, items, run, view) {
     if (i % every === 0 || i === best) { g.fillStyle = "#95A5A6"; g.fillText(epochs[i], x(i) - 6, H - 6); }
   });
 }
-async function likenessPicker() {
+const PAIR_COLD = 0.30, PAIR_HOT = 0.80;     // low (red) = the run's lowest score (0.30 fallback), 0.80 and up high (green; may be overcooked)
+const PAIR_STOPS = [[255, 59, 48], [255, 140, 66], [255, 210, 63], [61, 165, 255], [46, 204, 113]];   // red, orange, yellow, blue, green
+function pairRgbToHsl([r, g, b]) {
+  r /= 255; g /= 255; b /= 255;
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2, d = mx - mn;
+  if (!d) return [0, 0, l];
+  const s = d / (1 - Math.abs(2 * l - 1));
+  const h = mx === r ? ((g - b) / d + 6) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  return [h * 60, s, l];
+}
+function pairHslToRgb([h, s, l]) {
+  const c = (1 - Math.abs(2 * l - 1)) * s, x = c * (1 - Math.abs((h / 60) % 2 - 1)), m = l - c / 2;
+  const [r, g, b] = h < 60 ? [c, x, 0] : h < 120 ? [x, c, 0] : h < 180 ? [0, c, x] : h < 240 ? [0, x, c] : h < 300 ? [x, 0, c] : [c, 0, x];
+  return [r, g, b].map((v) => Math.round((v + m) * 255));
+}
+function pairHeat(score, cold = PAIR_COLD) {
+  // equal steps from the low base to 0.80; each step blends in HSL (shorter way round the hue wheel), so
+  // yellow -> blue passes through bright green, never grey
+  const t = Math.min(1, Math.max(0, (score - cold) / (PAIR_HOT - cold)));
+  const n = PAIR_STOPS.length - 1, k = Math.min(n - 1, Math.floor(t * n)), u = t * n - k;
+  const a = pairRgbToHsl(PAIR_STOPS[k]), b = pairRgbToHsl(PAIR_STOPS[k + 1]);
+  let dh = b[0] - a[0]; if (dh > 180) dh -= 360; if (dh < -180) dh += 360;
+  const hsl = [((a[0] + dh * u) % 360 + 360) % 360, a[1] + (b[1] - a[1]) * u, a[2] + (b[2] - a[2]) * u];
+  return {t, color: `rgb(${pairHslToRgb(hsl).join(", ")})`, hsl};
+}
+function pairBadgeInfo(paired) {
+  // paired = {file: {score, index, image}}. Color fades from the run's lowest score (red) to 0.80 (green), one scale for every prompt;
+  // rank and the best-epoch star are per prompt. Returns {file: {color, t, best, rank, n, min, max}}.
+  const groups = {}, out = {};
+  for (const [name, ps] of Object.entries(paired || {})) {
+    if (!ps || typeof ps.score !== "number" || !isFinite(ps.score)) continue;
+    (groups[ps.index] = groups[ps.index] || []).push([name, ps.score]);
+  }
+  const all = Object.values(groups).flat().map((x) => x[1]), low = Math.min(...all);
+  const cold = all.length > 1 && low < PAIR_HOT ? low : PAIR_COLD;   // shared by every prompt in the run
+  for (const list of Object.values(groups)) {
+    const sorted = list.map((x) => x[1]).sort((a, b) => b - a);
+    const max = sorted[0], min = sorted[sorted.length - 1], n = list.length;
+    for (const [name, s] of list) {
+      const h = pairHeat(s, cold);
+      out[name] = {color: h.color, t: h.t, cold, best: n > 1 && s === max && max > min, rank: 1 + sorted.filter((v) => v > s).length, n, min, max};
+    }
+  }
+  return out;
+}
+
+// ---- paired likeness (fizgig/web/sample_pairs.py): a sample prompt tied to one training image -----------------
+function promptHash(t) {        // FNV-1a over UTF-8, the same as sample_pairs.prompt_hash
+  let h = 0x811c9dc5;
+  for (const b of new TextEncoder().encode(String(t || "").trim())) h = Math.imul(h ^ b, 0x01000193) >>> 0;
+  return h.toString(16).padStart(8, "0");
+}
+function trainerPrompts(raw) {  // the lines the trainer reads (launch.py's rule)
+  return String(raw || "").split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith("#"))
+    .map((l) => l.split(" --")[0].trim()).filter(Boolean);
+}
+function samplePairs() { try { const v = JSON.parse(S.values.SAMPLE_PAIRS || "[]"); return Array.isArray(v) ? v : []; } catch (e) { return []; } }
+function resolvePairs(raw) {    // sample_pairs.resolve: same index+hash, else moved hash, else edited in place / caption match, else stale
+  const lines = trainerPrompts(raw), hs = lines.map(promptHash), ok = {}, stale = [], used = new Set(), left = [];
+  for (const p of samplePairs()) {
+    const j = (p.index >= 0 && p.index < hs.length && hs[p.index] === p.hash && !used.has(p.index)) ? p.index : hs.findIndex((h, k) => h === p.hash && !used.has(k));
+    if (j < 0) left.push(p); else { used.add(j); ok[j] = {...p, index: j}; }
+  }
+  for (const p of left) {
+    const cap = S.pairCaps && S.pairCaps[p.image];
+    const j = (p.index >= 0 && p.index < hs.length && !used.has(p.index)) ? p.index
+      : (cap ? lines.findIndex((ln, k) => !used.has(k) && captionMatch(ln, cap) >= 0.9) : -1);
+    if (j >= 0) { used.add(j); ok[j] = {...p, index: j, hash: hs[j]}; }
+    else stale.push(p);
+  }
+  return {ok, stale};
+}
+function setPairs(list) {
+  const v = list.length ? JSON.stringify(list) : "";
+  const changed = v !== (S.values.SAMPLE_PAIRS || "");
+  S.values.SAMPLE_PAIRS = v;
+  saveStateSoon();
+  if (changed) pairSyncSoon();
+}
+// mid-run pairing: the current run's .pairs_ file follows the form now (no relaunch), then its previews score
+async function pairSync(say) {
+  const out = S.run.output_dir || S.values.LORA_OUTPUT_DIR || S.outputDefault, run = currentRunName();
+  if (!out || !run) { if (say) say.textContent = "No run yet - previews score once the run makes them."; return; }
+  try {
+    const r = await api("/api/sample_pairs", {dir: out + (out.includes("\\") ? "\\" : "/") + "sample", run,
+      prompts: S.values.SAMPLE_PROMPT || "", pairs: S.values.SAMPLE_PAIRS || "", on: !!S.values.SAMPLE_PAIRED,
+      dataset: S.imageFolder || ""});
+    if (say) say.textContent = r.paired ? `Scoring ${run}'s previews of ${r.paired} paired prompt${r.paired === 1 ? "" : "s"}…` : "Nothing paired yet.";
+    if (r.paired) setTimeout(() => { if (S.lik.dir) likenessShow(S.lik.dir, (S.gal && S.gal.items) || [], S.gal && S.gal.run, ""); }, 4000);
+  } catch (e) { if (say) say.textContent = e.message; }
+}
+const pairSyncSoon = debounce(() => pairSync(), 800);
+function pairRows(host, raw) {
+  const lines = trainerPrompts(raw), {ok, stale} = resolvePairs(raw);
+  // a moved prompt's pairing follows its text: keep the stored index in step
+  const keep = [...Object.values(ok), ...stale];
+  if (JSON.stringify(keep.map((p) => [p.index, p.hash, p.image])) !== JSON.stringify(samplePairs().map((p) => [p.index, p.hash, p.image]))) setPairs(keep);
+  host.replaceChildren();
+  const tick = el("input", {type: "checkbox", id: "f_SAMPLE_PAIRED", onchange: (e) => {
+    S.values.SAMPLE_PAIRED = e.target.checked; saveStateSoon(); pairRows(host, S.values.SAMPLE_PROMPT || ""); pairSyncSoon();
+    if (S.lik.dir) likenessShow(S.lik.dir, (S.gal && S.gal.items) || [], S.gal && S.gal.run, ""); }});
+  tick.checked = !!S.values.SAMPLE_PAIRED;
+  const say = el("span", {class: "field-hint pair-say"});
+  host.append(el("label", {class: "checkbox-label pair-toggle", title: "For style LoRAs: tie a prompt to the training image it describes, and each preview of it gets a whole-image score against that image. Off keeps your pairings."}, tick, " Paired likeness (style LoRAs)"));
+  if (tick.checked) host.lastChild.after(el("button", {class: "btn btn-sm pair-score", text: "Score now",
+    title: "Score this run's existing previews of the paired prompts now (no restart needed)", onclick: () => pairSync(say)}), say);
+  if (!tick.checked || !lines.length) return;      // off: the pairings are kept, just not shown or used
+  lines.forEach((ln, i) => {
+    const p = ok[i];
+    const row = el("div", {class: "pair-row"}, el("span", {class: "pair-n", text: `${i + 1}.`}),
+      el("span", {class: "pair-text", title: ln, text: ln}));
+    const ctl = el("span", {class: "pair-ctl"});      // the controls column: the same x on every row
+    row.append(ctl);
+    ctl.append(el("button", {class: "btn btn-sm pair-btn", text: p ? "Change…" : "Match image…",
+      title: "Pick the training image this prompt describes (the Likeness picker)",
+      onclick: () => likenessPicker({current: p && p.image, onPick: (it) => pairPicked(host, i, it)})}));
+    if (p) ctl.append(el("img", {class: "pair-thumb", alt: "", title: p.image,
+        src: `/api/thumb?path=${encodeURIComponent((S.imageFolder || "") + "/" + p.image)}&t=${encodeURIComponent(TOKEN)}`}),
+      el("span", {class: "pair-name", text: p.image}),
+      el("button", {class: "btn btn-sm pair-x", text: "✕", title: "Unpair this prompt", onclick: () => { setPairs(samplePairs().filter((q) => !(q.hash === p.hash && q.image === p.image))); pairRows(host, S.values.SAMPLE_PROMPT || ""); }}));
+    if (p) pairCaptionBadge(host, ctl, i, ln, p.image);
+    host.append(row);
+  });
+  for (const p of stale) host.append(el("div", {class: "pair-row stale"}, el("span", {class: "pair-n", text: "⚠"}),
+    el("span", {class: "pair-text", text: `${p.image}: its prompt was edited or removed - not scored. Match it again, or`}),
+    el("span", {class: "pair-ctl"}, el("button", {class: "btn btn-sm pair-btn", text: "✕ forget", onclick: () => { setPairs(samplePairs().filter((q) => !(q.hash === p.hash && q.image === p.image))); pairRows(host, S.values.SAMPLE_PROMPT || ""); }}))));
+}
+function pairPicked(host, i, it) {
+  // picking only pairs: the prompt box is never edited (previews always use the typed prompt)
+  const line = trainerPrompts(S.values.SAMPLE_PROMPT || "")[i];
+  const h = promptHash(line);
+  if (it.caption != null) (S.pairCaps = S.pairCaps || {})[it.name] = String(it.caption);
+  setPairs([...samplePairs().filter((q) => q.index !== i && q.hash !== h), {index: i, hash: h, image: it.name}]);
+  pairRows(host, S.values.SAMPLE_PROMPT || "");
+}
+// how close a prompt is to its image's caption: tag captions (comma lists) by tag set, prose by word overlap
+function captionMatch(prompt, caption) {
+  const norm = (t) => String(t || "").toLowerCase().replace(/\s+/g, " ").trim();
+  const a = norm(prompt), b = norm(caption);
+  if (!b) return null;
+  if (a === b) return 1;
+  const tags = (t) => (t.match(/,/g) || []).length >= 3;
+  const parts = (t) => tags(a) || tags(b) ? t.split(",").map((x) => x.trim()).filter(Boolean) : (t.match(/[\p{L}\p{N}]+/gu) || []);
+  const A = new Set(parts(a)), B = new Set(parts(b));
+  const inter = [...A].filter((x) => B.has(x)).length, union = new Set([...A, ...B]).size;
+  return union ? inter / union : 0;
+}
+async function pairCaptions() {        // the training captions, read once per folder (the picker's listing)
+  const folder = S.imageFolder || "";
+  if (S.pairCapsFor === folder && S.pairCaps) return S.pairCaps;
+  const r = await api(`/api/captions?folder=${encodeURIComponent(folder)}&ext=${encodeURIComponent(capExt())}&family=${encodeURIComponent(S.family || "")}`).catch(() => ({items: []}));
+  S.pairCaps = Object.fromEntries((r.items || []).map((x) => [x.name, x.caption == null ? "" : String(x.caption)]));
+  S.pairCapsFor = folder;
+  return S.pairCaps;
+}
+function pairReplacePrompt(host, i, image, cap) {
+  const all = String(S.values.SAMPLE_PROMPT || "").split(/\r?\n/);
+  let n = -1, at = -1;
+  all.forEach((l, k) => { const t = l.trim(); if (at < 0 && t && !t.startsWith("#") && t.split(" --")[0].trim() && ++n === i) at = k; });
+  if (at < 0) return;
+  const clean = String(cap || "").replace(/\r?\n/g, " ").trim();
+  if (!clean) return;
+  const tail = all[at].includes(" --") ? " --" + all[at].split(" --").slice(1).join(" --") : "";
+  all[at] = clean + tail;
+  S.values.SAMPLE_PROMPT = all.join("\n");
+  const boxes = $("f_SAMPLE_PROMPT");             // the numbered prompt boxes redraw from the value
+  if (boxes && boxes._sync) boxes._sync();
+  saveStateSoon();
+  const h = promptHash(clean);
+  setPairs(samplePairs().map((q) => (q.index === i && q.image === image) ? {...q, hash: h} : q));
+  pairRows(host, S.values.SAMPLE_PROMPT || "");
+}
+function pairCaptionBadge(host, ctl, i, prompt, image) {
+  const put = (caps) => {
+    const cap = (caps || {})[image];
+    if (cap == null || cap === "") return;
+    const m = captionMatch(prompt, cap), close = m >= 0.9;
+    ctl.append(el("span", {class: `pair-cap ${close ? "good" : "mid"}`, title: (close ? "Matches the caption" : `Caption differs: ${Math.round(m * 100)}% overlap`) + "\n\nCaption of " + image + ":\n" + cap,
+      text: close ? "✓ match" : `≈ ${Math.round(m * 100)}%`}),
+      el("button", {class: "btn btn-sm pair-copy", text: "Copy", style: close ? "visibility: hidden" : "",   // a match needs no copy (the cell stays: columns line up)
+        title: "Replace this prompt in the prompt box with the image's caption",
+        onclick: () => pairReplacePrompt(host, i, image, cap)}));
+  };
+  if (S.pairCapsFor === (S.imageFolder || "") && S.pairCaps) put(S.pairCaps); else pairCaptions().then(put);
+}
+
+async function likenessPicker(single) {
+  // single = {current, onPick(item)}: the same picker, one image for one sample prompt (paired likeness)
+  S.lik.single = single && single.onPick ? single : null;
+  const one = !!S.lik.single;
+  $("likTitle").textContent = one ? "Paired likeness: pick the training image this prompt describes" : "Likeness: pick 3 photos of your subject";
+  $("likHint3").style.display = one ? "none" : "";
+  $("likStart").style.display = $("likClear").style.display = one ? "none" : "";
   const folder = S.imageFolder || "";
   $("likFolder").textContent = folder || "no training image folder set on the Start tab";
-  S.lik.picked = [...((S.lik.data && S.lik.data.baselines) || [])];
+  S.lik.picked = one ? (single.current ? [single.current] : []) : [...((S.lik.data && S.lik.data.baselines) || [])];
   const grid = $("likGrid");
   grid.innerHTML = "";
   $("likModal").classList.add("active");
@@ -2080,6 +2301,7 @@ async function likenessPicker() {
   const r = await api(`/api/captions?folder=${encodeURIComponent(folder)}&ext=${encodeURIComponent(capExt())}&family=${encodeURIComponent(S.family || "")}`).catch(() => ({items: []}));
   for (const it of r.items.filter((x) => LIK_PICS.test(x.name))) {
     const fig = el("figure", {title: it.name, onclick: () => {
+      if (S.lik.single) { $("likModal").classList.remove("active"); S.lik.single.onPick(it); return; }
       const i = S.lik.picked.indexOf(it.name);
       if (i >= 0) S.lik.picked.splice(i, 1);
       else { if (S.lik.picked.length >= 3) S.lik.picked.shift(); S.lik.picked.push(it.name); }
@@ -2099,12 +2321,12 @@ function likenessMarks() {
     if (i >= 0) f.append(el("span", {class: "lik-num", text: String(i + 1)}));
   }
   $("likStart").disabled = S.lik.picked.length !== 3;
-  $("likPickStatus").textContent = `${S.lik.picked.length}/3 selected`;
+  $("likPickStatus").textContent = S.lik.single ? "Click one picture" : `${S.lik.picked.length}/3 selected`;
 }
 async function likenessSet(names) {
   $("likPickStatus").textContent = "Starting…";
   try {
-    await api("/api/likeness", {dir: S.lik.dir, dataset: S.imageFolder || "", baselines: names});
+    await api("/api/likeness", {dir: S.lik.dir, dataset: S.imageFolder || "", baselines: names, paired: !!S.values.SAMPLE_PAIRED});
     $("likModal").classList.remove("active");
     loadGallery();
   } catch (e) { $("likPickStatus").textContent = e.message; }
@@ -8568,7 +8790,8 @@ function wire() {
   $("btnCheck").addEventListener("click", check);
   $("btnStart").addEventListener("click", () => start("/api/start"));
   $("galleryRun").addEventListener("change", () => { S.galleryRun = $("galleryRun").value; loadGallery(); });
-  $("likBtn").addEventListener("click", likenessPicker);
+  LIK_TITLE = $("likBtn").title;
+  $("likBtn").addEventListener("click", () => likenessPicker());
   // Gizmo is a window on the Fizgig computer: offered only to a page open there (not a phone, not a pod)
   const gizmoHere = !!(S.uploadRoot && S.uploadRoot.local && !S.onPod);
   $("gizmoCard").style.display = gizmoHere ? "" : "none";

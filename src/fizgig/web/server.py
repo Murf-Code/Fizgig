@@ -958,7 +958,7 @@ _SIZE_KEYS = ("DATASET_MEGAPIXELS", "CLIP_MEGAPIXELS")
 # the settings a Resume takes from the form as it is now: the Samples tab's, block swap (memory only, the results
 # are the same), the save schedule (when checkpoints are written) and the learning rate (the run trains on at the
 # new one, logged); the rest trains on as it was
-_RESUME_SAMPLE_KEYS = ("SAMPLE_PROMPT", "SAMPLE_SEED", "SAMPLE_WIDTH", "SAMPLE_HEIGHT", "SAMPLE_STEPS",
+_RESUME_SAMPLE_KEYS = ("SAMPLE_PROMPT", "SAMPLE_PAIRS", "SAMPLE_PAIRED", "SAMPLE_SEED", "SAMPLE_WIDTH", "SAMPLE_HEIGHT", "SAMPLE_STEPS",
                        "SAMPLE_CFG_SCALE", "FAMILY_TURBO_STRENGTH", "SAMPLE_CHECKPOINT",   # + previews on the checkpoint
                        "FAMILY_PREVIEW_LOOK",                                              # + the SFT look tick
                        "SAMPLE_EVERY_N_EPOCHS", "SAMPLE_LATER", "SAMPLE_UNTIL_EPOCH", "SAMPLE_EVERY_AFTER",
@@ -3092,7 +3092,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._samples((qs.get("dir") or [""])[0], (qs.get("run") or [""])[0])
         if path == "/api/likeness":                 # the gallery's likeness scores (resumes the scorer)
             from fizgig.web import gallery_likeness
-            return self.json(gallery_likeness.state((qs.get("dir") or [""])[0], (qs.get("dataset") or [""])[0]))
+            return self.json(gallery_likeness.state((qs.get("dir") or [""])[0], (qs.get("dataset") or [""])[0],
+                                                    paired=(qs.get("paired") or [""])[0] == "1"))
         if path == "/api/thumb":
             p = (qs.get("path") or [""])[0]
             if os.path.splitext(p)[1].lower() not in _PIC or not os.path.isfile(p):
@@ -3967,8 +3968,18 @@ class Handler(BaseHTTPRequestHandler):
                                                              captions.caption_ext(b.get("ext"))))
                 except (ValueError, OSError) as e:
                     return self.json({"error": str(e)}, 400)
+            if path == "/api/sample_pairs":        # paired likeness changed mid-run: the sidecar now, then score
+                from fizgig.web import sample_pairs
+                try:
+                    return self.json({"ok": True, "paired": sample_pairs.update(
+                        str(b.get("dir") or ""), str(b.get("run") or ""), str(b.get("prompts") or ""),
+                        b.get("pairs") if b.get("on") else "", str(b.get("dataset") or ""))})
+                except (ValueError, OSError) as e:
+                    return self.json({"error": str(e)}, 400)
             if path == "/api/likeness":            # three dataset photos to score the samples against; [] clears
                 from fizgig.web import gallery_likeness
+                if b.get("paired") and b.get("baselines"):
+                    return self.json({"error": "Face likeness is off while Paired likeness is on (Samples tab)."}, 400)
                 try:
                     return self.json({"ok": True, "msg": gallery_likeness.start(
                         str(b.get("dir") or ""), str(b.get("dataset") or ""), b.get("baselines") or [])})
