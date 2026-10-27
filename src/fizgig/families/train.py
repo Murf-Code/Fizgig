@@ -47,6 +47,8 @@ from fizgig.training.metadata import (build_metadata, latest_sample_image, refre
                                       resolve_title, sample_for_epoch, thumbnail_data_uri)
 from fizgig.training.train_utils import LossRecorder, prune_state_dirs, validate_output_name  # noqa: E402
 from fizgig.training.step_log import StepLog, take_request  # noqa: E402
+from fizgig.training import vram_reclaim  # noqa: E402
+from fizgig.training.console_notes import say  # noqa: E402
 from fizgig.utils.upright import open_upright
 
 logger = logging.getLogger(__name__)
@@ -1049,6 +1051,8 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
                  log_per_image_loss=False, per_image_lr=False, auto_recaption=False, warmup_look_outliers=False,
                  validation_loss=False, validation_images=4, validation_timesteps=4, validation_seed=42,
                  validation_every_steps=0, validation_picked=None,
+                 auto_reclaim_vram=True, reclaim_slowdown=1.5, reclaim_slow_steps=20, reclaim_warmup_steps=50,
+                 reclaim_min_free_gb=vram_reclaim.RECLAIM_FREE_GB, reclaim_cooldown=200, reclaim_max_tries=3,
                  trigger_word=None, trigger_position="start", recaption_triggers=None, recaption_instruction=None,
                  recaption_instruction_detailed=None, recaption_task=None, recaption_task_detailed=None,
                  captioner=None, finetune=False, ft_rotations=10, ft_save_every_rotations=1, ft_rotate_every=1, ft_max_parts=0,
@@ -2164,8 +2168,34 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
     # the web UI's loss graph: each step's loss, numbered across a resume / a fine-tune's continuation
     step_off = ftr.epochs_done * steps_per_epoch if ftr is not None else 0
     steplog = StepLog(output_dir, output_name, start_step=step_off + global_step)
-    for _w in ("sample", "save"):          # a request left from an earlier run is not this one's
+    for _w in ("sample", "save", "reclaim"):   # a request left from an earlier run is not this one's
         take_request(output_dir, _w)
+    # Reclaim VRAM (training/vram_reclaim.py): Windows' sysmem fallback put part of the run in system RAM and it
+    # stays there after the other app lets go. Auto: a sustained slowdown, then a reclaim once the whole card shows
+    # a little free VRAM again (vram_reclaim.RECLAIM_FREE_GB, 0.1 GB) - it waits as long as that takes.
+    _cuda = torch.device(device).type == "cuda" and torch.cuda.is_available()
+    vram_watch = vram_reclaim.SlowdownWatch(
+        ratio=reclaim_slowdown, slow_steps=reclaim_slow_steps, warmup_steps=reclaim_warmup_steps,
+        cooldown=reclaim_cooldown, max_tries=reclaim_max_tries, min_free_gb=reclaim_min_free_gb) if (auto_reclaim_vram and _cuda and ftr is None) \
+        else None
+    step_clock = {"t": 0.0, "dirty": True}  # this optimizer step's training seconds; dirty: not a clean step
+
+    def _reclaim_vram(why, manual=False):
+        _tr = time.time()
+        try:
+            res = vram_reclaim.reclaim(modules=(dit, net), optimizers=(optimizer,),
+                                       extra=(ema.shadow,) if ema is not None else (), device=device)
+            say(logger, vram_reclaim.describe(res))
+            logger.debug(f"[vram] reclaim ({why}) at step {global_step}: {res}")
+        except Exception as _e:              # never the end of a run: it trains on where it was
+            say(logger, f"[vram] Reclaim failed ({_e}); training goes on as it was.", logging.WARNING)
+            step_clock["reclaim_failed"] = True
+        else:
+            step_clock["reclaim_failed"] = False
+        if vram_watch is not None:
+            vram_watch.reclaimed(manual=manual)
+        step_clock["dirty"] = True
+        progress.start_t += time.time() - _tr    # the bar's rate stays the training's
     progress = tqdm(total=steps_per_epoch * max_train_epochs, initial=global_step, desc="steps", smoothing=0)
     dit.train()
     pending = 0                            # micro-batches backpropagated since the last optimizer step
@@ -2550,6 +2580,9 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
                 _ik = " ".join(str(k) for k in batch.get("item_keys") or [])
                 _lrm *= next((m for pat, m in lr_boost if pat in _ik), 1.0)
             lr_acc.append(_lrm)
+            _t_step = time.time()
+            if i == 0:
+                step_clock["dirty"] = True     # an epoch's first step carries its start-up work
             latents = batch["latents"].to(device)
             if slider:
                 # both poles backpropagate before the strength flips: checkpointed blocks recompute their forward
@@ -2631,6 +2664,7 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
             pending += 1
             if pending >= accum:
                 _update()
+            step_clock["t"] += time.time() - _t_step
             global_step += 1
             recorder.add(epoch=epoch, step=i, loss=loss.item())
             steplog.add(step_off + global_step, epoch + 1 + (ftr.epochs_done if ftr is not None else 0), loss.item(),
@@ -2639,14 +2673,41 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
                 validator.offer(batch)
                 if pending == 0 and validator.due(global_step):
                     _validate(epoch + 1)
-            if pending == 0 and ftr is None:   # the web UI's Sample now / Save now, between optimizer steps
+                    step_clock["dirty"] = True
+            if pending == 0 and ftr is None:   # the web UI's Sample now / Save now / Reclaim VRAM, between steps
+                if vram_watch is not None:
+                    if not step_clock["dirty"]:
+                        _ev = vram_watch.observe(step_clock["t"])
+                        if _ev == "improved":
+                            if step_clock.get("reclaim_failed"):   # it sped up by itself, not by the reclaim
+                                say(logger, f"[vram] Speed is back to {vram_watch.last_eval:.2f} s/it.")
+                            else:
+                                say(logger, f"[vram] VRAM reclaimed, back to {vram_watch.last_eval:.2f} s/it.")
+                        elif _ev == "no_improvement":
+                            say(logger, "[vram] Reclaiming didn't bring the speed back, so this run needs more VRAM "
+                                        "than the card has free. Try raising Blocks Swap next run.", logging.WARNING)
+                step_clock["t"], step_clock["dirty"] = 0.0, False    # work below marks the next step unclean
+                if vram_watch is not None:
+                    _act = vram_watch.check(*vram_reclaim.vram_free_total(device)) if vram_watch.slow else None
+                    if _act == "reclaim":
+                        _reclaim_vram("automatic: slowdown, and VRAM has room now")
+                    elif _act == "wait_log":          # once per slowdown; it then waits quietly for room
+                        say(logger, "[vram] Training spilled into system RAM and slowed down. It'll move back "
+                                    "on its own once a little VRAM frees up, so closing other GPU apps helps.")
+                if take_request(output_dir, "reclaim"):
+                    if _cuda:
+                        _reclaim_vram("Reclaim VRAM button", manual=True)
+                    else:
+                        say(logger, "[vram] Nothing to reclaim on this device.")
                 if take_request(output_dir, "save"):
                     save_lora(os.path.join(output_dir, f"{output_name}-step{global_step:07d}.safetensors"), epoch + 1)
+                    step_clock["dirty"] = True
                     logger.info(f"[save now] step {global_step} saved as {output_name}-step{global_step:07d}.safetensors")
                 if take_request(output_dir, "sample"):
                     logger.info(f"[sample now] previews at step {global_step} (epoch {epoch + 1} in progress)")
                     _tp = time.time()
                     previews(epoch + 1)
+                    step_clock["dirty"] = True
                     progress.start_t += time.time() - _tp
             watch.observe(epoch + 1, global_step, batch, _info.get("t", 0.5), loss.item())
             progress.set_postfix(avr_loss=f"{recorder.moving_average:.4f}", refresh=False)
@@ -2808,6 +2869,16 @@ def setup_parser():
     p.add_argument("--validation_every_steps", type=int, default=0, help="0 = at the end of each epoch")
     p.add_argument("--validation_pick", action="append", default=None,
                    help="a training image to check (its file name; repeat for more). None: an even spread")
+    p.add_argument("--auto_reclaim_vram", action=argparse.BooleanOptionalAction, default=True,
+                   help="after a sustained slowdown (Windows put part of the run in system RAM), move the run back "
+                        "into VRAM once the card has room again (CUDA only)")
+    p.add_argument("--reclaim_slowdown", type=float, default=1.5, help="a step this many times the usual is slow")
+    p.add_argument("--reclaim_slow_steps", type=int, default=20, help="slow steps in a row before it counts")
+    p.add_argument("--reclaim_warmup_steps", type=int, default=50, help="steps that only learn the usual speed")
+    p.add_argument("--reclaim_min_free_gb", type=float, default=vram_reclaim.RECLAIM_FREE_GB,
+                   help="free VRAM (whole card) needed before the automatic reclaim runs")
+    p.add_argument("--reclaim_cooldown", type=int, default=200, help="steps between automatic reclaims")
+    p.add_argument("--reclaim_max_tries", type=int, default=3, help="automatic reclaims a run at most")
     p.add_argument("--per_image_lr", action="store_true", help="scale each step by the image's loss-watch multiplier")
     p.add_argument("--auto_recaption", action="store_true", help="recaption stuck images (needs --captioner)")
     p.add_argument("--warmup_look_outliers", action="store_true", help="LR warm-up for Look Filter outliers")
@@ -2970,6 +3041,10 @@ def main():
         validation_loss=a.validation_loss, validation_images=a.validation_images,
         validation_timesteps=a.validation_timesteps, validation_seed=a.validation_seed,
         validation_every_steps=a.validation_every_steps, validation_picked=a.validation_pick,
+        auto_reclaim_vram=a.auto_reclaim_vram, reclaim_slowdown=a.reclaim_slowdown,
+        reclaim_slow_steps=a.reclaim_slow_steps, reclaim_warmup_steps=a.reclaim_warmup_steps,
+        reclaim_min_free_gb=a.reclaim_min_free_gb, reclaim_cooldown=a.reclaim_cooldown,
+        reclaim_max_tries=a.reclaim_max_tries,
         warmup_look_outliers=a.warmup_look_outliers, trigger_word=a.trigger_word, trigger_position=a.trigger_position,
         recaption_triggers=a.recaption_triggers,
         recaption_instruction=a.recaption_instruction,

@@ -710,6 +710,71 @@ def _state_flags(st):
     return flags
 
 
+# Reclaim VRAM (training/vram_reclaim.py): app-wide, in Preferences > Training memory (prefs.json). pref key ->
+# (trainer flag, default, type). auto_reclaim_vram is "1"/"0" like the other Preferences ticks.
+RECLAIM_PREF_DEFAULTS = {"auto_reclaim_vram": "1", "reclaim_slowdown": "1.5", "reclaim_slow_steps": "20",
+                         "reclaim_warmup_steps": "50", "reclaim_min_free_gb": "0.1", "reclaim_cooldown": "200",
+                         "reclaim_max_tries": "3"}
+RECLAIM_SETTINGS = (
+    ("reclaim_slowdown", "--reclaim_slowdown", 1.5, float),
+    ("reclaim_slow_steps", "--reclaim_slow_steps", 20, int),
+    ("reclaim_warmup_steps", "--reclaim_warmup_steps", 50, int),
+    ("reclaim_min_free_gb", "--reclaim_min_free_gb", 0.1, float),
+    ("reclaim_cooldown", "--reclaim_cooldown", 200, int),
+    ("reclaim_max_tries", "--reclaim_max_tries", 3, int),
+)
+# the training form's old keys for these (before they moved to Preferences): a saved run or preset that still
+# has them loads as before, and they are ignored - Preferences decide
+LEGACY_RECLAIM_KEYS = ("AUTO_RECLAIM_VRAM", "RECLAIM_SLOWDOWN", "RECLAIM_SLOW_STEPS", "RECLAIM_WARMUP_STEPS",
+                       "RECLAIM_MIN_FREE_GB", "RECLAIM_COOLDOWN", "RECLAIM_MAX_TRIES")
+
+
+def clean_reclaim_prefs(changes):
+    """A Preferences change as stored: the tick as "1"/"0", each number checked (above 0; a blank box = its
+    default; an int box takes 20.0 as 20). Other keys pass through. ValueError for text that isn't a number."""
+    ch = dict(changes)
+    if "auto_reclaim_vram" in ch:
+        ch["auto_reclaim_vram"] = "1" if ch["auto_reclaim_vram"] in (True, "1", 1, "true", "True") else "0"
+    for key, _flag, dflt, typ in RECLAIM_SETTINGS:
+        if key not in ch:
+            continue
+        raw = str(ch[key] if ch[key] is not None else "").strip()
+        if not raw:
+            ch[key] = f"{dflt:g}" if typ is float else str(dflt)
+            continue
+        try:
+            n = typ(float(raw))
+        except ValueError:
+            raise ValueError(f"{raw!r} isn't a number.")
+        if n <= 0:
+            raise ValueError("Please enter a number above 0.")
+        ch[key] = f"{n:g}" if typ is float else str(n)
+    return ch
+
+
+def reclaim_on(prefs):
+    v = (prefs or {}).get("auto_reclaim_vram", "1")
+    return not (v is False or str(v).strip().lower() in ("false", "0", "off", "no"))
+
+
+def reclaim_flags(prefs):
+    """The trainer's reclaim flags from Preferences: on unless switched off; thresholds only when they differ from
+    the trainer's defaults (a blank or unreadable box keeps the default)."""
+    prefs = prefs or {}
+    if not reclaim_on(prefs):
+        return ["--no-auto_reclaim_vram"]
+    out = []
+    for key, flag, dflt, typ in RECLAIM_SETTINGS:
+        raw = str(prefs.get(key, "") or "").strip().split(" ")[0]
+        try:
+            v = typ(float(raw)) if raw else dflt
+        except ValueError:
+            v = dflt
+        if v > 0 and v != dflt:
+            out += [flag, f"{v:g}" if typ is float else str(v)]
+    return out
+
+
 def train_command(desc, inputs, plan):
     """families/train.py. Model paths from the description's roles, training settings from the run's settings,
     previews from the sample settings. Preview prompt files and console lines go into `plan`."""
@@ -762,6 +827,7 @@ def train_command(desc, inputs, plan):
                 "--validation_every_steps", str(validation_every_steps(st.get("VALIDATION_EVERY_STEPS")))]
         for name in picked_list(st.get("VALIDATION_PICKED")):     # your own images: the count is not used
             cmd += ["--validation_pick", name]
+    cmd += reclaim_flags(st.get("vram_reclaim"))
     if st.get("ADAPTIVE_LR") and desc.adaptive_lr and not ft_on(desc, st):   # a fine-tune trains at its own rate
         cmd += ["--adaptive_lr",
                 "--adaptive_lr_min", str(st.get("ADAPTIVE_LR_MIN", "1e-4")).split(" ")[0],

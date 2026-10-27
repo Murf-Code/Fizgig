@@ -1443,13 +1443,14 @@ def _option_values(desc, values):
 
 
 def inputs(desc, values, *, models, python, repo_dir, image_folder, cache_root, samples_dir, inference_int8=False,
-           captioner="", caption_overrides=None):
+           captioner="", caption_overrides=None, vram_reclaim=None):
     """The launch plan's inputs from the form's values, as the desktop's _family_launch_inputs builds them."""
     v = {**DEFAULTS, **values}
     kind = _kind(desc, v)
     b = lambda k: bool(v.get(k))
     s = lambda k: str(v.get(k, "") if v.get(k) is not None else "").strip()
-    d = {k: val for k, val in v.items() if not k.startswith("_") and k not in ("FAMILY_KIND",)}
+    d = {k: val for k, val in v.items() if not k.startswith("_") and k not in ("FAMILY_KIND",)
+         and k not in launch.LEGACY_RECLAIM_KEYS}       # those moved to Preferences: an old saved run's are ignored
     # Start's own conversions (lora_trainer_gui._start_training_launch); text that does not convert stays text, so
     # the plan reports it as a problem
     for key, cast in (("LEARNING_RATE", float), ("LORA_LR_RATIO", int), ("NETWORK_DIM", int),
@@ -1507,6 +1508,7 @@ def inputs(desc, values, *, models, python, repo_dir, image_folder, cache_root, 
         concept_balance=b("FAMILY_CONCEPT_BALANCE"),
         subfolders=b("TRAIN_SUBFOLDERS"),
         FAMILY_OPTIONS=_option_values(desc, v),
+        vram_reclaim=dict(vram_reclaim or {}),           # Preferences > Training memory (launch.reclaim_flags)
     )
     return d
 

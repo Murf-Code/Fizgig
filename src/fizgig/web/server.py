@@ -286,7 +286,7 @@ def _write_json(path, data):
 # the desktop's DEFAULT_PREFS that aren't empty: a web-only install starts where the desktop app would
 PREF_DEFAULTS = {"lora_output_dir": "output_loras", "profiles_dir": "user_data/profiles", "cache_dir": "user_data/cache",
                  "runpod_stop_when_done": "0", "inference_blocks_to_swap": "Auto (detect from GPU)",
-                 "inference_int8": "1", "lan_discovery": "1", "update_check": "1"}
+                 "inference_int8": "1", "lan_discovery": "1", "update_check": "1", **launch.RECLAIM_PREF_DEFAULTS}
 
 
 LAST_USED_FILE = user_data.LAST_USED_FILE           # the training folder, each folder's trigger word
@@ -348,7 +348,7 @@ def set_folder_trigger(folder, word):
 
 # the Preferences settings Reset to defaults puts back (the model files are never reset)
 SETTING_PREFS = ("lora_output_dir", "profiles_dir", "cache_dir", "input_lora_dir", "input_ref_dir",
-                 "inference_blocks_to_swap", "inference_int8", "lan_discovery", "update_check")
+                 "inference_blocks_to_swap", "inference_int8", "lan_discovery", "update_check") + tuple(launch.RECLAIM_PREF_DEFAULTS)
 
 
 def load_prefs() -> dict:
@@ -935,6 +935,7 @@ def _plan(family_key, values, image_folder, resume="", ft_continue=None, models=
         repo_dir=BASE_DIR, image_folder=str(image_folder or "").strip(),
         cache_root=pref_path(prefs, "cache_dir"), samples_dir=os.path.join(out_dir, "sample"),
         inference_int8=str(prefs.get("inference_int8", "")).strip() in ("1", "True", "true"),
+        vram_reclaim={k: prefs.get(k, d) for k, d in launch.RECLAIM_PREF_DEFAULTS.items()},
         captioner=captioner if captioner and os.path.isfile(captioner) else "",
         caption_overrides=dict(raw_ovr) if isinstance(raw_ovr, dict) else {})
     # auto-recaption's trigger word per folder: a sub-folder's or another subject's own (the Captions tab's for it, else
@@ -1487,7 +1488,7 @@ def _start_one(family_key, values, image_folder, resume, ft_continue, note, mode
         _look_fetch(desc, values, launch.look_path(desc, {"models": {lk.pref_key: pref_path(load_prefs(), lk.pref_key)}}))
     out_dir = inputs["LORA_OUTPUT_DIR"]
     # as the desktop's Start clears them; a resume's pause record is used up once its run launches
-    for stale in (".pause_requested", ".sample_override.json", ".sample_now", ".save_now") + (
+    for stale in (".pause_requested", ".sample_override.json", ".sample_now", ".save_now", ".reclaim_now") + (
             (PAUSED_FILE,) if resume or ft_continue else ()):
         try:
             os.remove(os.path.join(out_dir, stale))
@@ -3772,9 +3773,9 @@ class Handler(BaseHTTPRequestHandler):
                     live["checkpoint"] = path if (not path or os.path.isfile(path)) else ""
                 _write_json(side, live)
                 return self.json({"ok": True, "on": True})
-            if path == "/api/run/now":               # Sample now / Save now: a request the trainer takes after a step
+            if path == "/api/run/now":               # Sample now / Save now / Reclaim VRAM: taken after a step
                 what = str(b.get("what") or "")
-                if what not in ("sample", "save"):
+                if what not in ("sample", "save", "reclaim"):
                     raise ValueError("Unknown request.")
                 with _lock:
                     running = _run["proc"] is not None and _run["proc"].poll() is None and _run["stage"] == "Training"
@@ -3830,6 +3831,7 @@ class Handler(BaseHTTPRequestHandler):
                 for k in ("lan_discovery", "update_check"):
                     if k in ch:
                         ch[k] = "1" if ch[k] in (True, "1", 1) else "0"
+                ch = launch.clean_reclaim_prefs(ch)     # Training memory: "1"/"0", numbers above 0, blank = default
                 upd = {k: str(v) for k, v in ch.items() if k in allowed}
                 if "cuda_device" in ch:
                     v = str(ch["cuda_device"] or "").strip()

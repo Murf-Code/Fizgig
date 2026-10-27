@@ -927,6 +927,7 @@ function renderPrefs() {
   host.append(outputFolderCard());
   host.append(foldersCard());
   host.append(inferenceCard());
+  host.append(vramReclaimCard());
   const gpuCard = gpuPickCard();
   if (gpuCard) host.append(gpuCard);
   S.fetchRows = {};
@@ -985,7 +986,7 @@ function renderPrefs() {
         S.set = pr.settings || {}; S.setAbs = pr.abs || {}; S.outputPref = pr.lora_output_dir || ""; S.outputDefault = pr.output_default;
         renderPrefs();
       }})),
-      el("div", {class: "field-hint", text: "Puts the folders and inference settings above back to Fizgig's defaults. " +
+      el("div", {class: "field-hint", text: "Puts the folders, inference and training-memory settings above back to Fizgig's defaults. " +
         "Model files, the web password and the RunPod key are kept."}))));
   paintFetch();
 }
@@ -1012,6 +1013,55 @@ function foldersCard() {
       settingRow("cache_dir", "Cache:", "Cached latents and text encodings: each training folder gets its own folder in here.", "cache inside Fizgig"),
       settingRow("input_lora_dir", "LoRA loading:", "Where the pickers for LoRAs start: Studio, Royale, Profiler, Extract, Context LoRA."),
       settingRow("input_ref_dir", "Reference images:", "Where the pickers for reference pictures start: Studio and Royale.")));
+}
+
+// Training's VRAM reclaim (training/vram_reclaim.py), app-wide: every run started here reads these at Start
+const RECLAIM_ROWS = [
+  ["reclaim_slowdown", "Slowdown that counts:", "1.5", "A step this many times slower than the usual step counts as " +
+    "slow. 1.5 = 50% slower."],
+  ["reclaim_slow_steps", "Slow steps in a row:", "20", "How many slow steps in a row before Fizgig treats it as a " +
+    "spill. One slow step (a preview, a save) never counts."],
+  ["reclaim_warmup_steps", "Steps to learn the usual speed:", "50", "The first steps only set the usual speed; " +
+    "nothing is checked until then."],
+  ["reclaim_min_free_gb", "Free VRAM needed (GB):", "0.1", "The reclaim waits until the card shows at least this " +
+    "much free VRAM, so the run lands back in VRAM rather than in RAM again. It waits as long as that takes."],
+  ["reclaim_cooldown", "Steps between reclaims:", "200", "After a reclaim, wait this many steps before another."],
+  ["reclaim_max_tries", "Most automatic reclaims a run:", "3", "Stops after this many. If one doesn't bring the " +
+    "speed back, it stops trying for the run and suggests raising Blocks Swap."],
+];
+function vramReclaimCard() {
+  const on = el("input", {type: "checkbox", id: "prefReclaimOn"});
+  on.checked = String(S.set.auto_reclaim_vram ?? "1") !== "0";
+  const boxes = [];
+  const rows = RECLAIM_ROWS.map(([key, label, dflt, hint]) => {
+    const input = el("input", {type: "text", class: "w-num", id: "pref_" + key, value: S.set[key] || dflt,
+      placeholder: dflt, title: hint});
+    const msg = el("div", {class: "field-hint", text: hint});
+    input.addEventListener("change", () => api("/api/prefs", {changes: {[key]: input.value.trim()}})
+      .then(() => api("/api/prefs")).then((pr) => {
+        S.set = pr.settings || S.set; input.value = S.set[key] || dflt; msg.textContent = hint; })
+      .catch((e) => { msg.textContent = e.message; }));
+    boxes.push(input);
+    return el("div", {class: "pref-file"}, el("div", {class: "field-row"},
+      el("span", {class: "field-label", text: label}), input), msg);
+  });
+  const grey = () => { for (const b of boxes) b.disabled = !on.checked; };
+  on.addEventListener("change", () => api("/api/prefs", {changes: {auto_reclaim_vram: on.checked}})
+    .then(() => { S.set.auto_reclaim_vram = on.checked ? "1" : "0"; grey(); }));
+  grey();
+  const adv = el("div", {class: "card-content collapsed"}, ...rows);
+  return el("div", {class: "section-card", id: "prefsReclaim"},
+    el("div", {class: "card-title"}, el("span", {text: "Training memory"})),
+    el("div", {class: "card-content"},
+      el("label", {class: "checkbox-label", title: "Windows only (NVIDIA): when another app takes VRAM, part of " +
+        "training spills into system RAM and stays there, several times slower. With this on, Fizgig spots the " +
+        "slowdown, waits until VRAM has room again (close the other app) and moves the run back. It only runs when " +
+        "needed and never changes the training itself. The Reclaim VRAM button does the same by hand."},
+        on, " Auto-reclaim VRAM after a slowdown"),
+      el("div", {class: "field-hint", text: "On by default. For every training run started on this machine; " +
+        "the Reclaim VRAM button on the Run panel works either way."})),
+    el("div", {class: "card-title collapsible-header", onclick: () => adv.classList.toggle("collapsed")},
+      el("span", {text: "Advanced: VRAM reclaim"})), adv);
 }
 
 // the workbench tools' memory and speed (Studio, Royale, Profiler, Extract): the desktop's Inference Performance card
@@ -1597,7 +1647,7 @@ async function pollRun() {
   const runDesc = S.schema.families.find((f) => f.key === r.family);
   const ftRun = r.values && r.values.FAMILY_KIND && /fine-tune/i.test(String(r.values.FAMILY_KIND));
   const nowOk = !!(r.running && r.stage === "Training" && runDesc && !runDesc.no_pause && !ftRun);
-  for (const id of ["btnSampleNow", "btnSaveNow"]) $(id).style.display = nowOk ? "" : "none";
+  for (const id of ["btnSampleNow", "btnSaveNow", "btnReclaimNow"]) $(id).style.display = nowOk ? "" : "none";
   if (!nowOk) $("runNowSay").textContent = "";
   // Move to…: a LoRA run training or paused here goes on on another computer, and comes back the same way
   const mv = r.move || null, moving = mv && ["moving", "back", "moved"].includes(mv.state);
@@ -9150,6 +9200,8 @@ function wire() {
     "they show with the others, under the epoch in progress."));
   $("btnSaveNow").addEventListener("click", () => now("save", "The LoRA is saved after the current step, as " +
     "<name>-step<step>.safetensors beside its checkpoints."));
+  $("btnReclaimNow").addEventListener("click", () => now("reclaim", "After the current step the run's memory " +
+    "moves back into VRAM - close other GPU apps first. The console says how it went."));
   wirePods();
   wireHelpers();
   helpLoad(true);

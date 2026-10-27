@@ -4,7 +4,7 @@ Loss: `<output_dir>/.fizgig_loss_<output_name>.jsonl`, one line a step - {"s": s
 written in small batches. A run starting at step N first keeps only the lines up to N: a fresh run (N = 0) starts the
 file empty, a resumed one carries on its own curve without the steps it is about to redo.
 
-Requests: the web UI (or anything) drops `.sample_now` / `.save_now` into the output folder, as `.pause_requested` is
+Requests: the web UI (or anything) drops `.sample_now` / `.save_now` / `.reclaim_now` into the output folder, as `.pause_requested` is
 dropped for Pause; the trainer takes each once, after an optimizer step.
 """
 import json
