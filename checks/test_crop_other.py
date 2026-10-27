@@ -264,7 +264,9 @@ const $ = (id) => document.getElementById(id);
 for (const f of ["Largest Face", "Other…"]) $("prepFace").append(new window.Option(f, f));
 document.querySelector('input[name="prepMode"][value="Face Crop Only"]').checked = true;
 const look = () => ({row: $("prepFindRow").style.display !== "none", hint: $("prepFindHint").textContent,
-  run: $("prepRun").disabled, block: prepBlocked(), finder: $("prepFinderNow").style.display !== "none"});
+  run: $("prepRun").disabled, block: prepBlocked(), finder: $("prepFinderNow").style.display !== "none",
+  runTitle: $("prepRun").title, test: $("prepTest").disabled, testLabel: $("prepTest").textContent,
+  testTitle: $("prepTest").title});
 const out = {};
 $("prepFace").value = "Largest Face"; prepFindShow(); out.face = look();
 $("prepFace").value = "Other…"; prepFindShow(); out.empty = look();
@@ -278,6 +280,11 @@ S.prep.maskOpts.tagger.path = "/m/wd"; $("prepKeepScore").value = "2"; prepFindS
 out.trimBadScore = {run: $("prepRun").disabled, note: $("prepTrimNote").textContent};
 $("prepKeepScore").value = "0.3"; prepFindShow();
 out.trimReady = {run: $("prepRun").disabled, note: $("prepTrimNote").textContent, keep: prepSettings().keepScore};
+$("prepCapTrim").checked = false;
+$("prepFace").value = "Largest Face"; S.prep.opts.face_tools = false; prepFindShow(); out.noFaceTools = look();
+$("prepFace").value = "Other…"; prepFindShow(); out.otherNoFaceTools = look();
+S.prep.opts.face_tools = true;
+document.querySelector('input[name="prepMode"][value="Resize Only"]').checked = true; prepFindShow(); out.resize = look();
 console.log(JSON.stringify(out));
 """
 
@@ -303,6 +310,55 @@ def test_page_find_box():
     assert t["run"] and "Download under Trim" in t["note"] and t["box"] == "" and "Download the WD tagger (1.2 GB)" in t["btn"]
     assert out["trimBadScore"]["run"] and "between 0 and 1" in out["trimBadScore"]["note"]
     assert not out["trimReady"]["run"] and out["trimReady"]["note"] == "" and out["trimReady"]["keep"] == "0.3"
+
+
+def test_page_test_button_words_and_hover():
+    """The Test button's words follow Crop to; greyed out, it (and Prepare) says why on hover; pressable, no hover."""
+    from checks.test_val_picker import JSDOM_DIRS
+    if not shutil.which("node"):
+        pytest.skip("node not installed")
+    d = next((p for p in JSDOM_DIRS if os.path.isdir(os.path.join(p, "jsdom"))), None)
+    if d is None:
+        pytest.skip("jsdom not installed")
+    out = json.loads(subprocess.check_output(["node", "-e", JS], text=True,
+                                             env={**os.environ, "NODE_PATH": d, "STATIC": os.path.abspath(STATIC)}))
+    face, empty, nosam, ready = out["face"], out["empty"], out["nosam"], out["ready"]
+    assert face["testLabel"] == "Test the face crop on one photo…" and not face["test"] and face["testTitle"] == ""
+    assert face["runTitle"] == ""
+    for o in (empty, nosam, ready):
+        assert o["testLabel"] == "Test finding this on one photo…"
+    assert empty["test"] and empty["testTitle"].startswith("Type what to find in Find this")
+    assert empty["runTitle"] == empty["testTitle"]
+    assert nosam["test"] and nosam["testTitle"] == nosam["runTitle"] == \
+        "Finding by words needs SAM 3.1: press Download on the Masks card below first."
+    assert not ready["test"] and ready["testTitle"] == "" and not ready["run"] and ready["runTitle"] == ""
+    assert "Download under Trim" in out["trimNoTagger"]["note"]          # Prepare's hover is the trim note too
+    nf = out["noFaceTools"]
+    assert nf["test"] and nf["testTitle"].startswith("Face detection isn't installed on the Fizgig computer")
+    assert nf["testLabel"] == "Test the face crop on one photo…"
+    assert not out["otherNoFaceTools"]["test"]                          # Other… uses SAM 3.1, not the face tools
+    r = out["resize"]
+    assert r["test"] and r["testTitle"] == "Resize only makes no crops, so there's nothing to test."
+    assert r["testLabel"] == "Test the crop on one photo…" and not r["run"] and r["runTitle"] == ""
+
+
+def test_test_button_one_source_of_truth():
+    html = open(os.path.join(STATIC, "index.html"), encoding="utf-8").read()
+    js = open(os.path.join(STATIC, "app.js"), encoding="utf-8").read()
+    assert 'id="prepTest">Test the crop on one photo…</button>' in html and "Test face detection" not in html
+    assert js.count('$("prepTest").disabled =') == 1                   # only prepFindShow sets it
+    assert '$("prepRun").title = S.prep.running ? "" : prepBlocked();' in js
+
+
+def test_things_names_the_phrase(tmp_path, monkeypatch):
+    """Test with Other…: each find is named by its phrase (the page shows f.gender), never 'unknown'."""
+    from fizgig.dataset import sammask
+    from fizgig.web import prep_jobs
+    _pic(tmp_path / "a.png", 200, 160, 3)
+    seg = FakeSeg({"paw": [((10, 10, 60, 50), 0.9)], "tail": [((100, 60, 180, 140), 0.8)]})
+    monkeypatch.setattr(sammask, "segmenter", lambda path, log=print: seg)
+    r = prep_jobs.test_things(str(tmp_path / "a.png"), ["paw", "tail"], "/m/sam")
+    assert sorted(f["gender"] for f in r["faces"]) == ["paw", "tail"] and all(f["selected"] for f in r["faces"])
 
 
 def test_summary_unchanged_for_faces_and_says_what_is_found(tmp_path):

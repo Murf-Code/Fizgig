@@ -2,7 +2,7 @@
 
 Fizgig uses faces in two ways:
 
-- the **face finder** (detector) decides where the face is. Image Prep's face crops (*Resize + close-up crops* and *Close-up crops only*, with a face choice under **Crop to**), *Test face detection on one photo* and the clip-still picker use it, and so does the look match when it scores a crop.
+- the **face finder** (detector) decides where the face is. Image Prep's face crops (*Resize + close-up crops* and *Close-up crops only*, with a face choice under **Crop to**), *Test the face crop on one photo* and the clip-still picker use it, and so does the look match when it scores a crop.
 - the **look match** (identity embedder) turns a face into a vector, so two faces can be compared. The **Look Consistency Filter**, the **sample gallery's live likeness badges**, **LoRA Royale's likeness score**, **Repair Studio's likeness chips** and the **Block Profiler's likeness/bleed numbers** all use it.
 
 The defaults are **InsightFace** and **ArcFace**, the same as before this feature: a set of people needs nothing changed, and gets exactly the face crops, Look Filter scores and likeness scores it got before ([checked](#people-sets-are-unchanged)). InsightFace and ArcFace are built for human photographs, though. On a drawn or fursuit character they usually find no face at all (0 of 19 on our test set). For anime, furry and drawn datasets, switch both settings.
@@ -56,7 +56,7 @@ You can override these for headless runs and tests with `FIZGIG_FACE_DETECTOR`, 
 - A low-confidence InsightFace box (RetinaFace half-recognising a fursuit) is dropped where a YOLO box covers it, and kept elsewhere.
 - *Largest Face* and the gender choices then pick from the merged list.
 - Detections are cached per file, so the look-match probe, the look match's crops and the crop tools don't detect the same image twice in one session.
-- *Test face detection on one photo* names the face finder it used.
+- *Test the face crop on one photo* names the face finder it used.
 
 YOLO models have **no gender**. In Auto mode, a gender choice applies to InsightFace's faces. With the finder set to YOLO, or when the selected face came from the YOLO model, the log says the finder can't tell gender on that face and the largest face is used.
 

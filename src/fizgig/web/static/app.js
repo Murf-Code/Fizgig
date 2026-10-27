@@ -5094,8 +5094,14 @@ function prepFindShow() {
   $("prepFindHint").textContent = find || "SAM 3.1 finds what you type. Separate things with commas; each gets its " +
     "own close-up (the biggest one found). Pictures where nothing is found are left whole.";
   $("prepFindHint").classList.toggle("problems", !!find);
-  if (!S.prep.running) $("prepRun").disabled = !!(find || trim);
-  $("prepTest").disabled = !faceOn || (other ? !!find : !S.prep.opts.face_tools);
+  if (!S.prep.running) { $("prepRun").disabled = !!(find || trim); $("prepRun").title = find || trim; }
+  // the Test button: its words follow Crop to, and when it's greyed out, hovering says why (the one place it's set)
+  const test = !faceOn ? "Resize only makes no crops, so there's nothing to test." : other ? find :
+    (S.prep.opts || {}).face_tools ? "" : "Face detection isn't installed on the Fizgig computer: run install_fizgig.py there to add it.";
+  $("prepTest").textContent = !faceOn ? "Test the crop on one photo…" : other ? "Test finding this on one photo…" :
+    "Test the face crop on one photo…";
+  $("prepTest").disabled = !!test;
+  $("prepTest").title = test;
 }
 
 // Trim tags that don't fit: the chosen tagger's download (taggers.py, through /api/masks/info's "taggers"; an older
@@ -5136,7 +5142,6 @@ async function prepSummary() {
   const p = prepSettings(), faceOn = p.mode !== "Resize Only";
   document.querySelectorAll(".prep-face select, .prep-face input").forEach((i) => {
     i.disabled = !faceOn || (!S.prep.opts.face_tools && !(i.id === "prepFind" || (i.id === "prepFace" && prepOther()))); });
-  $("prepTest").disabled = !faceOn || !S.prep.opts.face_tools;
   $("prepCapCopy").disabled = !faceOn;
   $("prepCapTrim").disabled = !faceOn || !$("prepCapCopy").checked;
   prepFindShow();
@@ -5164,6 +5169,7 @@ async function pollPrep() {
     const was = S.prep.running;
     S.prep.running = r.state === "running";
     $("prepRun").disabled = S.prep.running || !!prepBlocked();
+    $("prepRun").title = S.prep.running ? "" : prepBlocked();
     if (S.prep.running) $("prepRun").textContent = "Preparing…";
     $("prepState").textContent = S.prep.running ? "Working on the Fizgig computer: you can leave this page." :
       r.state === "done" ? "Done." : r.state === "failed" ? "It stopped with an error: see the log." : "";
