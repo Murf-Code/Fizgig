@@ -2835,6 +2835,8 @@ class Handler(BaseHTTPRequestHandler):
                               "gpu_env_locked": bool(os.environ.get("CUDA_VISIBLE_DEVICES"))})
         if path == "/api/state":
             st = load_state()
+            for fam_key, vals in (st.get("values") or {}).items():   # an older save's "Default" -> "Model default"
+                form.migrate_values(get_family(fam_key), vals)
             shared = load_last_used().get("image_folder")
             if shared:                               # the desktop's choice, if it made one since
                 st["image_folder"] = shared

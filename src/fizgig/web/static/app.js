@@ -350,7 +350,8 @@ function renderRow(r) {
     if (r.kind === "choice") {
       input = el("select", {id: "f_" + r.key, onchange: (e) => set(e.target.value)});
       // a saved value in another case is the same choice ("auto" saved before the box read "Auto")
-      const same = v != null && r.choices.find((c) => c.toLowerCase() === String(v).toLowerCase());
+      // an older name of a choice ("Default", saved before Timestep focus read "Model default") is that choice
+      const same = v != null && (choiceAlias(r, v) || r.choices.find((c) => c.toLowerCase() === String(v).toLowerCase()));
       const val = same || v;
       if (same && same !== v) S.values[r.key] = same;
       const opts = r.choices.includes(String(val)) || !val ? r.choices : [String(val), ...r.choices];
@@ -766,6 +767,11 @@ function onValue(r, val) {
   saveStateSoon();
 }
 
+// a choice row's older name for a value (r.aliases: lower case -> the choice), else undefined
+function choiceAlias(r, v) {
+  return r && r.aliases && v != null ? r.aliases[String(v).trim().toLowerCase()] : undefined;
+}
+
 // a combo row's dropdown: the usual values, a value of your own kept as an option, and Other…
 function fillCombo(sel, choices, v, labels) {
   sel.innerHTML = "";
@@ -791,6 +797,11 @@ function syncInputs(keys) {
       continue;
     }
     if (i._sync) { i._sync(); continue; }         // a control that draws itself from the value (splitRow)
+    if (i.tagName === "SELECT") {                 // a redrawn older name (Last Train's "Default") as its choice
+      const row = S.fam.form.sections.flatMap((s) => s.rows).find((r) => r && r.key === k);
+      const a = choiceAlias(row, S.values[k]);
+      if (a) S.values[k] = a;
+    }
     if (i.type === "checkbox") i.checked = !!S.values[k]; else i.value = S.values[k] ?? "";
   }
 }

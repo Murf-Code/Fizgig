@@ -298,7 +298,8 @@ def form(desc):
         # chosen one's line shows under it (state). MOSS-Image keeps its own Clean-end share instead
         params.append(_row("TIMESTEP_SPREAD", "Timestep focus", "choice", "Which noise levels training practises "
                            "most. Model default is the model's own usual mix.",
-                           [TS.LABELS[k] for k in desc.timestep_spread], TS.LABELS["default"]))
+                           [TS.LABELS[k] for k in desc.timestep_spread], TS.LABELS["default"],
+                           aliases=spread_aliases(desc)))
     params += [
         _row("NETWORK_DIM", "Network Dim (Rank)"),
         _row("NETWORK_ALPHA", "Network Alpha"),
@@ -801,6 +802,29 @@ NOT_IN_PRESETS = ("FAMILY_TURBO_STRENGTH", "FAMILY_TURBO_STEPS", "FAMILY_TURBO_P
 # boxes a preset can't put an unknown value in (the desktop's _STRICT_COMBO_KEYS): the current choice stays
 # (Adaptive LR's Min / Max take a value of your own, Other..., so a preset or Last Train brings theirs as it is)
 STRICT_CHOICES = ("OPTIMIZER_TYPE", "LR_SCHEDULER", "NETWORK_TYPE", "TIMESTEP_SPREAD")
+
+
+def spread_aliases(desc) -> dict:
+    """Timestep focus's older saved names -> the dropdown's label, lower case ({"default": "Model default",
+    "detail": "Detail (clean end)", ...}): the bare names saved before the labels changed ("Default"), which the web
+    UI would otherwise add to the dropdown as an extra choice beside "Model default"."""
+    return {n: TS.LABELS[k] for k in (desc.timestep_spread or ()) for n in (k, TS.LABELS[k].lower())}
+
+
+def migrate_values(desc, values):
+    """A saved form's values with an old Timestep focus name ("Default", "detail") as the dropdown's label; one that
+    isn't a preset any more is dropped, so the box shows its default. Other values as they are. Changes values."""
+    if desc is not None and getattr(desc, "timestep_spread", None) and isinstance(values, dict) \
+            and "TIMESTEP_SPREAD" in values:
+        try:
+            k = TS.key(values["TIMESTEP_SPREAD"])
+        except ValueError:
+            k = None
+        if k in desc.timestep_spread:
+            values["TIMESTEP_SPREAD"] = TS.LABELS[k]
+        else:
+            values.pop("TIMESTEP_SPREAD")
+    return values
 LEGACY_AREAS = {"All Layers": "Full Model", "Identity Blocks": "Identity",
                 "Style+Composition Blocks": "Style+Composition", "Details Blocks": "Details"}
 
