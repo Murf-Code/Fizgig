@@ -346,7 +346,7 @@ def test_preference_and_flag():
     assert launch.send_only_flags({"send_only_block_swap": "0"}) == ["--no-send_only_swap"]
     assert launch.clean_reclaim_prefs({"send_only_block_swap": False}) == {"send_only_block_swap": "0"}
     assert launch.reclaim_flags({"send_only_block_swap": "0"}) == []           # the reclaim flags are their own
-    js = open(os.path.join(os.path.dirname(__file__), "..", "src", "fizgig", "web", "static", "app.js")).read()
+    js = open(os.path.join(os.path.dirname(__file__), "..", "src", "fizgig", "web", "static", "app.js"), encoding="utf-8").read()
     assert "send_only_block_swap" in js and "Faster block swap (send-only)" in js    # Preferences > Training memory
     from fizgig.families.train import setup_parser
     req = ["--family", "krea2", "--dit", "x", "--output_dir", "o", "--output_name", "n"]
