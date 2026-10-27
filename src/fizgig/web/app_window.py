@@ -38,8 +38,20 @@ def _prefs():
         return {}
 
 
+def _sane_geom(geom):
+    """Ignore minimized / off-screen coordinates (Windows reports -32000 / DPI when closed from the taskbar)."""
+    if not isinstance(geom, dict):
+        return {}
+    x, y = geom.get("x"), geom.get("y")
+    if (isinstance(x, (int, float)) and x < -10000) or (isinstance(y, (int, float)) and y < -10000):
+        return {}
+    return geom
+
+
 def _remember(geom):
     """The window's size and place, written into prefs.json beside what is there (the desktop app may have it open)."""
+    if not _sane_geom(geom):
+        return
     p = _prefs()
     p["app_window"] = geom
     tmp = PREFS_FILE + ".tmp"
@@ -587,7 +599,7 @@ def main():
                 from fizgig.web import local_bridge
                 return local_bridge.read_local(folder, name, offset, n)
 
-        geom = _prefs().get("app_window") or {}
+        geom = _sane_geom(_prefs().get("app_window"))
         first = _last_pod(port) or url
         window = webview.create_window(
             "Fizgig", first, width=int(geom.get("width") or 1440), height=int(geom.get("height") or 920),

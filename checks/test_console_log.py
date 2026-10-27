@@ -75,3 +75,14 @@ def test_console_keeps_selection():
     assert 199000 <= r["trimmed"] <= 200000
     assert r["queued"] == 1
     assert r["backlog"] == [2, True]
+
+
+def test_app_window_ignores_minimized_coordinates(tmp_path, monkeypatch):
+    from fizgig.web import app_window as aw
+    prefs = tmp_path / "prefs.json"
+    monkeypatch.setattr(aw, "PREFS_FILE", str(prefs))
+    aw._remember({"width": 1440, "height": 920, "x": 100, "y": 80})
+    assert aw._sane_geom(aw._prefs().get("app_window")) == {"width": 1440, "height": 920, "x": 100, "y": 80}
+    aw._remember({"width": 380, "height": 600, "x": -21332, "y": -21332})   # closed while minimized on Windows
+    assert aw._prefs().get("app_window") == {"width": 1440, "height": 920, "x": 100, "y": 80}
+    assert aw._sane_geom({"width": 380, "height": 600, "x": -21332, "y": -21332}) == {}
