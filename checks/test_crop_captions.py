@@ -1,5 +1,5 @@
 """Image Prep crops keep their picture's caption (on by default), and "Trim tags that don't fit" (off by default)
-drops the general tags the WD EVA02 tagger no longer sees on the crop: only removed, never added; the trigger word,
+drops the general tags the WD EVA02 tagger (the default; JTP-3 Hydra in test_jtp3_tagger.py) no longer sees on the crop: only removed, never added; the trigger word,
 the first tag, character / rating / meta tags and tags it doesn't know stay; sentence captions are copied as written.
 The tagger is a stand-in here (the real one is a 1.2 GB download)."""
 import os
@@ -205,7 +205,8 @@ def test_page_settings_checked(tmp_path, monkeypatch):
     from fizgig.web import prep_jobs
     monkeypatch.setattr(user_data, "MODELS_DIR", str(tmp_path))
     c, folder = prep_jobs.caption_settings({"copy": True, "trim": False, "ext": "caption", "trigger": " me "})
-    assert c == {"copy": True, "trim": False, "keep_score": 0.35, "ext": ".caption", "trigger": "me"} and folder == ""
+    assert c == {"copy": True, "trim": False, "tagger": "wd-eva02", "keep_score": 0.35, "ext": ".caption",
+                 "trigger": "me"} and folder == ""          # no tagger picked (an older page): the WD tagger
     assert prep_jobs.caption_settings(None) == (None, "")
     with pytest.raises(ValueError, match="press Download under it"):
         prep_jobs.caption_settings({"trim": True})
@@ -241,7 +242,7 @@ def test_run_frees_the_tagger(tmp_path, monkeypatch):
     tagger = FakeTagger(SEEN)
     closed = []
     tagger.close = lambda: closed.append(1)
-    monkeypatch.setattr(prep_jobs, "_tagger", lambda folder: tagger)
+    monkeypatch.setattr(prep_jobs, "_tagger", lambda folder, name=None: tagger)
     monkeypatch.setattr(prep_jobs, "faces_available", lambda: True)
     monkeypatch.setattr(prep_jobs, "_face_detector", lambda: _Det([F._face_info(20, 10, 60, 58)]))
     prep_jobs.start(str(data), "Auto Prep (Face Crops)", 4.2, "Largest Face", 20, False, "",

@@ -338,6 +338,22 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
+## JTP-3 Hydra (Project RedRocket) — Apache License 2.0
+
+Upstream: https://huggingface.co/RedRocket/Hydra (formerly RedRocket/JTP-3), revision
+cfa9b0a1ffcf2b8df8553be7673210fd60fba23b. Copyright Project RedRocket (RedHotTensors and contributors).
+
+`src/fizgig/dataset/jtp3_hydra/` (`cufork.py`, `glu.py`, `head.py`, `pool.py`, `siglip2.py`) is RedRocket's network
+code for the JTP-3 Hydra e621 tagger, which Image Prep's **Trim tags that don't fit** can use. Fizgig's only changes let
+it run on Python 3.10; they are marked "Fizgig change". The weights (`models/jtp-3-hydra.safetensors`, Apache-2.0 per
+the repository and the file's own metadata), the tag list and the e621 rename list are downloaded from that repository
+at that revision when you press Download, and are not shipped with Fizgig.
+
+Licensed under the Apache License, Version 2.0:
+http://www.apache.org/licenses/LICENSE-2.0
+
+---
+
 ## Note on model weights
 
 The third-party notices above cover **source code** only. Krea 2 / FLUX.2 model

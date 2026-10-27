@@ -385,6 +385,12 @@ def _tagger_info():
     return wd_tagger.info(user_data.MODELS_DIR)
 
 
+def _taggers_info():
+    """Every Trim tags tagger (taggers.py) by id: its folder, download, size, names and default keep score."""
+    from fizgig.dataset import taggers
+    return taggers.info(user_data.MODELS_DIR)
+
+
 def _sam_info():
     """The masks card's SAM 3.1 line: the downloaded file ("" before the download) and how a download is going."""
     from fizgig.dataset import sammask
@@ -3075,6 +3081,7 @@ class Handler(BaseHTTPRequestHandler):
                               "model_mb": automask.MODEL_MB, "pictures": len(pics), "with_mask": have,
                               "baselines": bool(prep_jobs.look_baselines(folder)) if folder else False,
                               "faces": prep_jobs.faces_available(), "sam": _sam_info(), "tagger": _tagger_info(),
+                              "taggers": _taggers_info(),
                               "chars": _char_info(), "who": charmask.WHO, "drawn_kinds": charmask.KIND_LABELS_DRAWN})
         if path == "/api/prep/summary":            # the What will happen card
             from fizgig.dataset import prep as _prep
@@ -4131,10 +4138,10 @@ class Handler(BaseHTTPRequestHandler):
                         str(b.get("dir") or ""), str(b.get("dataset") or ""), b.get("baselines") or [])})
                 except ValueError as e:
                     return self.json({"error": str(e)}, 400)
-            if path == "/api/prep/tagger_fetch":    # the WD tagger for Trim tags that don't fit (1.2 GB, once)
-                from fizgig.dataset import wd_tagger
-                wd_tagger.download(user_data.MODELS_DIR)
-                return self.json({"ok": True, "tagger": _tagger_info()})
+            if path == "/api/prep/tagger_fetch":    # a Trim tags tagger (WD 1.2 GB / JTP-3 1.0 GB, once)
+                from fizgig.dataset import taggers
+                taggers.get(b.get("tagger")).download(user_data.MODELS_DIR)
+                return self.json({"ok": True, "tagger": _tagger_info(), "taggers": _taggers_info()})
             if path == "/api/masks/sam_fetch":      # SAM 3.1 into the models folder (1.75 GB, once)
                 from fizgig.dataset import sammask
                 sammask.download(user_data.MODELS_DIR)
