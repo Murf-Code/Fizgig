@@ -2301,7 +2301,7 @@ def list_datasets() -> dict:
                 thumbs.append(e.path)
         if not elsewhere:
             _sweep_parts(path, entries)
-        # its sub-folders' pictures: trained on only with the Training tab's Also train on its sub-folders
+        # its sub-folders' pictures: trained on only with the Start tab's Include sub-folders
         subs = launch.subfolders(path) if any(e.is_dir() and not e.name.startswith(".") for e in entries) else []
         sub_items = sum(launch._media_count(f) for _r, f in subs)
         if pics + clips + songs + sub_items:
@@ -2330,7 +2330,7 @@ def _upload_target(folder, name, single):
             raise ValueError(f"{name}: not a LoRA (.safetensors), face model (.onnx), picture, clip or song.")
         dest = UPLOAD_FILES
     else:
-        # "name/sub/folder": a folder upload that keeps its sub-folders (Also train on its sub-folders)
+        # "name/sub/folder": a folder upload that keeps its sub-folders (Include sub-folders)
         folder = "/".join(_upload_name(p, "Folder name") for p in str(folder or "").split("/"))
         if ext not in UPLOAD_EXTS:
             raise ValueError(f"{name}: Fizgig doesn't train on {ext or 'this'} files. It takes pictures, .mp4 clips, "

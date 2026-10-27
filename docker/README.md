@@ -149,7 +149,7 @@ Closing the browser tab does **not** stop training. Fizgig runs on the pod, so c
 
 ## Getting files in and out
 
-**From Fizgig on your own computer** (its Pods tab opens the pod in the Fizgig window): the Start tab's **From this computer** card sends any of your local training folders up in one click. Or upload a folder from the Start tab in any browser. Both keep a folder's sub-folders when **Also train on its sub-folders** is ticked on the Training tab ([Sub-folders](../docs/TRAINING.md#sub-folders)).
+**From Fizgig on your own computer** (its Pods tab opens the pod in the Fizgig window): the Start tab's **From this computer** card sends any of your local training folders up in one click. Or upload a folder from the Start tab in any browser. Both keep a folder's sub-folders when **Include sub-folders** is ticked under the training folder on the Start tab ([Sub-folders](../docs/TRAINING.md#sub-folders)).
 
 <p align="center"><img src="../docs/assets/screenshots/from_this_computer.png" alt="From this computer: your own training folders on the pod's page, ready to send" width="800"></p>
 

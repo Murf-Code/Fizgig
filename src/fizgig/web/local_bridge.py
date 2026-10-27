@@ -63,7 +63,7 @@ def local_datasets():
 
 def local_files(folder, subfolders=False):
     """A training folder's own files Fizgig trains on (pictures, clips, songs, their captions): name, size, mtime.
-    subfolders: its sub-folders' too (Also train on its sub-folders), named by their path inside it ("red/a.png")."""
+    subfolders: its sub-folders' too (Include sub-folders), named by their path inside it ("red/a.png")."""
     p = _folder(folder)
     dirs = [("", p)]
     if subfolders:

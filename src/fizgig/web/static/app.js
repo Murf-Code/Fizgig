@@ -159,6 +159,7 @@ function renderAll() {
   }
   renderSections("samples", $("samplesForm"));
   renderSections("training", $("trainingForm"));
+  renderPlaced("start_folder", $("folderOptions"));
   renderPresets();
   renderPrefs();
   watchFetch();
@@ -253,7 +254,7 @@ function renderSections(tab, host) {
         el("span", {class: "sec-video-text"}, el("b", {text: sec.help.text}),
           el("span", {class: "sec-video-sub", text: sec.help.sub || "Watch on YouTube"}))));
     }
-    for (const r of sec.rows) body.append(renderRow(r));
+    for (const r of sec.rows) if (!(r && r.place)) body.append(renderRow(r));     // a placed row is drawn elsewhere
     if (sec.id === "subjects" && !S.family.startsWith("acestep")) body.append(triggerCheckBlock());
     const card = el("div", {class: "section-card", id: "sec-" + sec.id, "data-section": sec.id}, head, body);
     show();
@@ -262,6 +263,14 @@ function renderSections(tab, host) {
     else if (host.querySelector(".extras-divider")) card.classList.add("sec-extra");
     host.append(card);
   }
+}
+
+// Rows the form places outside their card (place): Include sub-folders sits under the Start tab's training folder
+function renderPlaced(place, host) {
+  if (!host) return;
+  host.innerHTML = "";
+  for (const sec of S.fam.form.sections)
+    for (const r of sec.rows) if (r && r.place === place) host.append(renderRow(r));
 }
 
 function renderRow(r) {
@@ -307,7 +316,12 @@ function renderRow(r) {
   if (r.kind === "check") {
     input = el("input", {type: "checkbox", id: "f_" + r.key, onchange: (e) => set(e.target.checked)});
     input.checked = !!v;
-    wrap.append(el("label", {class: "checkbox-label"}, input, " " + r.label));
+    const lab = el("label", {class: "checkbox-label"}, input, " " + r.label);
+    if (r.tip) {                  // its explanation on hover (the ⓘ shows there is one), not a line under it
+      lab.title = r.tip;
+      lab.append(el("span", {class: "tip-mark", text: " ⓘ", "aria-label": r.tip}));
+    }
+    wrap.append(lab);
   } else if (r.kind === "radio") {
     const box = el("div", {class: "radio-row"});
     for (const c of r.choices) {
@@ -916,6 +930,7 @@ async function renderPresets() {
     S.values.__preset = name;
     renderSections("samples", $("samplesForm"));
     renderSections("training", $("trainingForm"));
+    renderPlaced("start_folder", $("folderOptions"));
     await refreshState();
     saveState();
   };
@@ -2816,8 +2831,8 @@ function renderDatasets() {
         d.elsewhere ? el("span", {class: "dataset-where", text: d.path, title: "A folder you picked, outside the training data folder"}) : null,
         el("span", {text: what}),
         d.sub_items ? el("span", {class: "dataset-subs", text: `+ ${d.sub_items} in ${d.sub_folders} sub-folder` +
-          (d.sub_folders === 1 ? "" : "s"), title: "Trained on only when Also train on its sub-folders is ticked on " +
-          "the Training tab"}) : null,
+          (d.sub_folders === 1 ? "" : "s"), title: "Trained on only when Include sub-folders is ticked, under the " +
+          "training folder"}) : null,
         total ? el("span", {class: d.captioned >= total ? "ok" : "warn", text: caps}) : null,
         el("span", {class: "dataset-when", text: d.time ? new Date(d.time * 1000).toLocaleDateString() : ""}),
         el("div", {class: "dataset-actions"},
@@ -4296,6 +4311,7 @@ async function loadIntoForm(s) {
   }
   renderSections("samples", $("samplesForm"));
   renderSections("training", $("trainingForm"));
+  renderPlaced("start_folder", $("folderOptions"));
   await refreshState();
   saveState();
   showTab("training");
@@ -8952,7 +8968,7 @@ function podLocalDraw() {
       el("div", {class: "dataset-meta"}, el("b", {text: d.name}), el("span", {text: `${what} · ${mb(d.bytes)}`}),
         d.sub_items ? el("span", {class: "dataset-subs", text: `+ ${d.sub_items} in ${d.sub_folders} sub-folder` +
           (d.sub_folders === 1 ? "" : "s") + ((S.values || {}).TRAIN_SUBFOLDERS ? " (sent too)" : " (not sent)"),
-          title: "Sent only when Also train on its sub-folders is ticked on the Training tab"}) : null,
+          title: "Sent only when Include sub-folders is ticked, under the training folder"}) : null,
         total ? el("span", {class: d.captioned >= total ? "ok" : "warn",
           text: d.captioned >= total ? "all captioned" : `${d.captioned} of ${total} captioned`}) : null,
         el("div", {class: "dataset-actions"}, send)));
@@ -8967,7 +8983,7 @@ async function podLocalSend(d) {
   S.podLocal.busy = true;                     // one send at a time: every Send button waits, through a Refresh too
   podLocalDraw();
   try {
-    // its sub-folders go too when Also train on its sub-folders is ticked here (uploadFiles keeps them by rel)
+    // its sub-folders go too when Include sub-folders is ticked here (uploadFiles keeps them by rel)
     const files = await api_.local_files(d.path, !!(S.values || {}).TRAIN_SUBFOLDERS);
     const CHUNK = 2 * 2 ** 20;                 // what one bridge read carries
     const local = files.map((f) => ({name: f.name.split("/").pop(), rel: d.name + "/" + f.name, size: f.size,
@@ -9033,7 +9049,7 @@ async function uploadFiles(picked, opts = {}) {
     `train on (${video.slice(0, 3).join(", ")}${video.length > 3 ? ", …" : ""}): convert them to .mp4 first.`);
   if (other.length) notes.push(`Left out (not pictures, clips, songs, captions or zips): ` +
     `${other.slice(0, 5).join(", ")}${other.length > 5 ? ", …" : ""}.`);
-  // its sub-folders are kept only when the Training tab's Also train on its sub-folders is ticked; otherwise every
+  // its sub-folders are kept only when the Start tab's Include sub-folders is ticked; otherwise every
   // file goes into the one folder, as before
   const keepSubs = !!(S.values || {}).TRAIN_SUBFOLDERS;
   const sub = (f) => {
@@ -9045,7 +9061,7 @@ async function uploadFiles(picked, opts = {}) {
   const dupes = [...seen].filter(([, n]) => n > 1).map(([k]) => k);
   if (dupes.length) notes.push(`More than one file is named ${dupes.slice(0, 3).join(", ")}` +
     `${dupes.length > 3 ? ", …" : ""} (from different subfolders); they all go into one folder, so the last one is kept. ` +
-    "To keep the sub-folders, tick Also train on its sub-folders on the Training tab and upload again.");
+    "To keep the sub-folders, tick Include sub-folders under the training folder and upload again.");
   else if (keepSubs && files.some((f) => sub(f))) notes.push("Its sub-folders are kept, as Also train on its " +
     "sub-folders is ticked on the Training tab.");
   const name = opts.name !== undefined ? opts.name : $("uploadName").value.trim();
@@ -9269,6 +9285,7 @@ async function catchUp() {
   S.values = {...defaults(), ...saved};
   renderSections("samples", $("samplesForm"));
   renderSections("training", $("trainingForm"));
+  renderPlaced("start_folder", $("folderOptions"));
   renderPresets();
   await refreshState();
 }

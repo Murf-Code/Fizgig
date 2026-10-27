@@ -568,7 +568,7 @@ def is_own_subfolder(name):
 
 
 def subfolders_on(desc, st):
-    """Also train on its sub-folders (the Training tab tick, off by default): a plain LoRA or a fine-tune - not with
+    """Include sub-folders (the Start tab tick under the training folder, off by default): a plain LoRA or a fine-tune - not with
     Subjects 2-4, DOP or Fizgig LoRA Isolation (one folder per subject), nor an edit or a slider (paired files)."""
     return bool(st.get("subfolders")) and not (st.get("multiconcept") or dop_on(desc, st) or multi_person_on(desc, st)
                                                or edit_on(desc, st) or slider_on(desc, st))
@@ -1334,7 +1334,7 @@ def dataset_toml(desc, inputs):
         lines.append(f'cache_directory = "{cache_dir_for(root, folder).replace(chr(92), "/")}"')
     if subs and not _media_count(folder):     # everything is in the sub-folders: the training folder has no block
         del lines[head:]
-    for rel, f in subs:                  # Also train on its sub-folders: each its own block and cache folder
+    for rel, f in subs:                  # Include sub-folders: each its own block and cache folder
         lines += ["", "[[datasets]]", f'image_directory = "{f.replace(chr(92), "/")}"',
                   f'item_prefix = "{_toml_str(rel + "/")}"']
         lines += trig((inputs.get("recaption_triggers") or {}).get(rel + "/"))
@@ -1612,7 +1612,7 @@ def start_problems(desc, inputs):
         out += checks.training_folder(_s(v.get("image_folder")), _s(v.get("caption_ext", ".txt")),
                                       check_captions=not slider_on(desc, inputs, "prompts"), media_exts=exts)
         out += clip_problems(desc, _s(v.get("image_folder")))
-    for rel, f in subs:                  # Also train on its sub-folders: each one's captions and clips too
+    for rel, f in subs:                  # Include sub-folders: each one's captions and clips too
         out += checks.training_folder(f, _s(v.get("caption_ext", ".txt")), media_exts=exts,
                                       label=f"the sub-folder {rel}")
         out += clip_problems(desc, f)

@@ -2431,3 +2431,9 @@ a.pick-pill-vast:hover { border-color: var(--success); }
   font-weight: 700; font-size: 10pt; }
 /* a switch that needs the card's whole width (Image Validation's Fixed validation loss): one wide, short tile */
 .section-card[id^="sec-"] .form-row.row-full { grid-column: 1 / -1; }
+
+/* Include sub-folders under the Start tab's training folder: a plain tick, its explanation on hover */
+#folderOptions .form-row { margin-top: 8px; }
+#folderOptions .form-row .field-hint { padding-left: 24px; }
+.tip-mark { cursor: help; color: var(--text-secondary); font-weight: 400; }
+label[title]:has(.tip-mark) { cursor: help; }

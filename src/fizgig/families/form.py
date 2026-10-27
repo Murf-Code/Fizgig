@@ -266,7 +266,8 @@ def form(desc):
              "note"),
         _row("FAMILY_KIND", "Kind of training", "radio", choices=[label for _, label in ks], default=ks[0][1],
              sets={label: kind_sets(desc, k) for k, label in ks if kind_sets(desc, k)}) if len(ks) > 1 else None,
-        _row("TRAIN_SUBFOLDERS", "Also train on its sub-folders", "check", SUBFOLDERS_HINT, default=False),
+        # shown on the Start tab, under the training folder (place); its explanation is the label's hover text (tip)
+        _row("TRAIN_SUBFOLDERS", SUBFOLDERS_LABEL, "check", default=False, tip=SUBFOLDERS_HINT, place="start_folder"),
         _row("LEARNING_RATE", "Learning Rate", default=DEFAULTS["LEARNING_RATE"]),
     ]
     if desc.adaptive_lr:
@@ -913,11 +914,13 @@ def _kind(desc, values):
     return next((k for k, lab in kinds(desc) if lab == label or k == label), "standard")
 
 
+SUBFOLDERS_LABEL = "Include sub-folders"
 SUBFOLDERS_HINT = ("Off: only the pictures directly in the training folder are used.\nOn: the pictures in its "
                    "sub-folders are trained on too, at any depth, each sub-folder as its own set with its own captions "
                    "and cache, so a big dataset can stay organised. Every picture trains once an epoch, wherever it "
-                   "is. Image Prep and Captions work on one folder at a time: to caption or mask a sub-folder, choose "
-                   "it as the training folder on the Start tab.")
+                   "is. Fizgig's own folders (originals, excluded_by_look, removed) are never trained on.\nImage Prep "
+                   "and Captions work on one folder at a time: to caption or mask a sub-folder, choose it as the "
+                   "training folder here.")
 
 
 def subfolders_note(desc, values, image_folder):
@@ -927,9 +930,13 @@ def subfolders_note(desc, values, image_folder):
         return "", None
     # the form's values name the kind of training (a label), not FAMILY_FT: a fine-tune's regularisation folder
     reg = _str(values.get("FAMILY_FT_REG_DIR")) if desc.finetune and _kind(desc, values) == "finetune" else ""
-    subs = launch.subfolders(image_folder, (_str(values.get("LORA_OUTPUT_DIR")), reg))
+    own = []                     # Fizgig's own folders (originals...): never trained, named when the tick is on
+    subs = launch.subfolders(image_folder, (_str(values.get("LORA_OUTPUT_DIR")), reg), own)
+    left_out = (f" Left out (Fizgig's own): {', '.join(own[:4])}{' …' if len(own) > 4 else ''}."
+                if own and values.get("TRAIN_SUBFOLDERS") else "")
     if not subs:
-        return ("This training folder has no sub-folders with pictures." if values.get("TRAIN_SUBFOLDERS") else ""), None
+        return ("This training folder has no sub-folders with pictures." + left_out
+                if values.get("TRAIN_SUBFOLDERS") else ""), None
     ext = _str(values.get("DATASET_CAPTION_EXT")) or ".txt"
     counts = [(rel, launch._media_count(f), _uncaptioned(f, ext)) for rel, f in subs]
     more = sum(n for _r, n, _u in counts)
@@ -937,9 +944,9 @@ def subfolders_note(desc, values, image_folder):
         return (f"{len(subs)} sub-folder{'s' if len(subs) != 1 else ''} with {more:,} more picture"
                 f"{'s' if more != 1 else ''} {'is' if more == 1 else 'are'} not trained on. Tick this to include "
                 f"them."), None
-    own = launch._media_count(image_folder)
-    rows = ([("the training folder", own, _uncaptioned(image_folder, ext))] if own else []) + counts
-    line = f"Training on {len(rows)} folders, {own + more:,} pictures."
+    top = launch._media_count(image_folder)
+    rows = ([("the training folder", top, _uncaptioned(image_folder, ext))] if top else []) + counts
+    line = f"Training on {len(rows)} folders, {top + more:,} pictures." + left_out
     bare = [(rel, u) for rel, _n, u in rows if u]
     if bare:      # Start refuses a run with uncaptioned pictures: these come first
         line += (" Not captioned yet, so Start will refuse them: "
@@ -1010,7 +1017,7 @@ def state(desc, values, image_folder="", captioner="", speed_file=False, checkpo
     if not captioner or not values.get("KREA2_AUTO_RECAPTION"):
         hidden |= {"RECAPTION_FIRST", "RECAPTION_SECOND"}
     kind = _kind(desc, values)
-    # Also train on its sub-folders: a plain LoRA or a fine-tune (Subjects 2-4, DOP and Isolation keep one folder per
+    # Include sub-folders: a plain LoRA or a fine-tune (Subjects 2-4, DOP and Isolation keep one folder per
     # subject; an edit or a slider pairs files)
     if kind in ("edit", "slider") or values.get("FAMILY_MULTICONCEPT") or values.get("FAMILY_DOP")             or values.get("FAMILY_MULTI_PERSON"):
         hidden.add("TRAIN_SUBFOLDERS")
