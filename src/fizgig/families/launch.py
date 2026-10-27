@@ -739,7 +739,7 @@ def _state_flags(st):
 # (trainer flag, default, type). auto_reclaim_vram is "1"/"0" like the other Preferences ticks.
 RECLAIM_PREF_DEFAULTS = {"auto_reclaim_vram": "1", "reclaim_slowdown": "1.5", "reclaim_slow_steps": "20",
                          "reclaim_warmup_steps": "50", "reclaim_min_free_gb": "0.1", "reclaim_cooldown": "200",
-                         "reclaim_max_tries": "3"}
+                         "reclaim_max_tries": "3", "send_only_block_swap": "1"}
 RECLAIM_SETTINGS = (
     ("reclaim_slowdown", "--reclaim_slowdown", 1.5, float),
     ("reclaim_slow_steps", "--reclaim_slow_steps", 20, int),
@@ -758,8 +758,9 @@ def clean_reclaim_prefs(changes):
     """A Preferences change as stored: the tick as "1"/"0", each number checked (above 0; a blank box = its
     default; an int box takes 20.0 as 20). Other keys pass through. ValueError for text that isn't a number."""
     ch = dict(changes)
-    if "auto_reclaim_vram" in ch:
-        ch["auto_reclaim_vram"] = "1" if ch["auto_reclaim_vram"] in (True, "1", 1, "true", "True") else "0"
+    for tick in ("auto_reclaim_vram", "send_only_block_swap"):
+        if tick in ch:
+            ch[tick] = "1" if ch[tick] in (True, "1", 1, "true", "True") else "0"
     for key, _flag, dflt, typ in RECLAIM_SETTINGS:
         if key not in ch:
             continue
@@ -780,6 +781,14 @@ def clean_reclaim_prefs(changes):
 def reclaim_on(prefs):
     v = (prefs or {}).get("auto_reclaim_vram", "1")
     return not (v is False or str(v).strip().lower() in ("false", "0", "off", "no"))
+
+
+def send_only_flags(prefs):
+    """Preferences > Training memory > "Faster block swap (send-only)": on unless switched off (the trainer's
+    --send_only_swap defaults on, so only the off switch is passed)."""
+    v = (prefs or {}).get("send_only_block_swap", "1")
+    off = v is False or str(v).strip().lower() in ("false", "0", "off", "no")
+    return ["--no-send_only_swap"] if off else []
 
 
 def reclaim_flags(prefs):
@@ -857,6 +866,7 @@ def train_command(desc, inputs, plan):
             cmd += ["--validation_early_stop", "--validation_patience",
                     str(max(1, int(_vi("VALIDATION_PATIENCE", "3"))))]
     cmd += reclaim_flags(st.get("vram_reclaim"))
+    cmd += send_only_flags(st.get("vram_reclaim"))
     if st.get("ADAPTIVE_LR") and desc.adaptive_lr and not ft_on(desc, st):   # a fine-tune trains at its own rate
         cmd += ["--adaptive_lr",
                 "--adaptive_lr_min", (str(st.get("ADAPTIVE_LR_MIN", "1e-4")).split() or ["1e-4"])[0],
