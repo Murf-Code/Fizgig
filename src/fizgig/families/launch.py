@@ -829,8 +829,8 @@ def train_command(desc, inputs, plan):
     cmd += reclaim_flags(st.get("vram_reclaim"))
     if st.get("ADAPTIVE_LR") and desc.adaptive_lr and not ft_on(desc, st):   # a fine-tune trains at its own rate
         cmd += ["--adaptive_lr",
-                "--adaptive_lr_min", str(st.get("ADAPTIVE_LR_MIN", "1e-4")).split(" ")[0],
-                "--adaptive_lr_max", str(st.get("ADAPTIVE_LR_MAX", "2e-4")).split(" ")[0]]
+                "--adaptive_lr_min", (str(st.get("ADAPTIVE_LR_MIN", "1e-4")).split() or ["1e-4"])[0],
+                "--adaptive_lr_max", (str(st.get("ADAPTIVE_LR_MAX", "2e-4")).split() or ["2e-4"])[0]]
     else:
         sched = _s(st.get("LR_SCHEDULER") or "constant") or "constant"
         if sched != "constant":

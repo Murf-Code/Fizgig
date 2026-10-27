@@ -758,6 +758,7 @@ function syncInputs(keys) {
     if (i.tagName === "SELECT" && [...i.options].some((o) => o.value === "__other")) {
       const row = (S.fam.form.sections.flatMap((s) => s.rows).find((r) => r && r.key === k)) || {choices: []};
       fillCombo(i, row.choices, S.values[k], row.labels);
+      if (i._other) i._other.style.display = "none";   // a redrawn value (a preset, Last Train) is in the list now
       continue;
     }
     if (i._sync) { i._sync(); continue; }         // a control that draws itself from the value (splitRow)

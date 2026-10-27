@@ -65,17 +65,27 @@ def dataset_config(path, must_exist=True):
     return []
 
 
+def lr_value(x):
+    """A learning-rate box's number - a preset's "1e-4", a label's "1e-4 (default)", or a value of your own typed
+    via Other... ("2.5e-5", " 0.00003 ") - or None when it isn't a positive, finite number."""
+    import math
+    parts = str(x if x is not None else "").split()
+    try:
+        f = float(parts[0]) if parts else None
+    except ValueError:
+        return None
+    return f if f is not None and math.isfinite(f) and f > 0 else None
+
+
 def learning_rate_range(v):
-    """With Adaptive LR on only Min < Max matters (the run starts at their geometric midpoint); off, the
-    Learning Rate must be positive."""
+    """With Adaptive LR on, Min and Max must be positive numbers (any, via Other...) with Min < Max (the run starts
+    at their geometric midpoint); off, the Learning Rate must be positive."""
     if v.get("ADAPTIVE_LR"):
-        try:
-            hi = str(v["ADAPTIVE_LR_MAX"]).split(" ")[0]
-            lo = str(v["ADAPTIVE_LR_MIN"]).split(" ")[0]
-            if float(lo) >= float(hi):
-                return [f"Adaptive Min LR ({lo}) must be lower than Max LR ({hi})."]
-        except (ValueError, KeyError):
-            return ["Adaptive Min/Max LR must be valid numbers."]
+        lo, hi = lr_value(v.get("ADAPTIVE_LR_MIN")), lr_value(v.get("ADAPTIVE_LR_MAX"))
+        if lo is None or hi is None:
+            return ["Adaptive Min/Max LR must be positive numbers (e.g. 1e-5)."]
+        if lo >= hi:
+            return [f"Adaptive Min LR ({lo:g}) must be lower than Max LR ({hi:g})."]
         return []
     try:
         if float(v.get("LEARNING_RATE")) <= 0:

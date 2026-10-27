@@ -270,8 +270,9 @@ def form(desc):
             _row("ADAPTIVE_LR", "Adaptive LR (auto-adjust based on loss, gradient clipping & weight-norm growth)",
                  "check", "When on, the Learning Rate box is ignored: the run starts at the geometric midpoint of "
                  "Min and Max and the watcher sets the rate from there."),
-            _row("ADAPTIVE_LR_MIN", "Min LR", "choice", choices=ADAPTIVE_MIN),
-            _row("ADAPTIVE_LR_MAX", "Max LR", "choice", choices=ADAPTIVE_MAX),
+            # the usual values, with Other... for one of your own (as Blocks Swap): any positive number, 1e-5 style too
+            _row("ADAPTIVE_LR_MIN", "Min LR", "combo", choices=ADAPTIVE_MIN),
+            _row("ADAPTIVE_LR_MAX", "Max LR", "combo", choices=ADAPTIVE_MAX),
         ]
     if desc.train_areas:
         names = [a[0] for a in desc.train_areas]
@@ -761,7 +762,8 @@ NOT_IN_PRESETS = ("FAMILY_TURBO_STRENGTH", "FAMILY_TURBO_STEPS", "FAMILY_TURBO_P
                   "FAMILY_PREVIEW_LOOK",
                   "RESUME_TRAINING", "CAPTION_TRIGGER_WORD")     # the trigger word is the training folder's
 # boxes a preset can't put an unknown value in (the desktop's _STRICT_COMBO_KEYS): the current choice stays
-STRICT_CHOICES = ("OPTIMIZER_TYPE", "ADAPTIVE_LR_MIN", "ADAPTIVE_LR_MAX", "LR_SCHEDULER", "NETWORK_TYPE")
+# (Adaptive LR's Min / Max take a value of your own, Other..., so a preset or Last Train brings theirs as it is)
+STRICT_CHOICES = ("OPTIMIZER_TYPE", "LR_SCHEDULER", "NETWORK_TYPE")
 LEGACY_AREAS = {"All Layers": "Full Model", "Identity Blocks": "Identity",
                 "Style+Composition Blocks": "Style+Composition", "Details Blocks": "Details"}
 
@@ -989,10 +991,13 @@ def state(desc, values, image_folder="", captioner="", speed_file=False, checkpo
     if lokr:
         notes["NETWORK_TYPE"] = "LoKR selected: set your learning rate to 5e-5 - or with Adaptive LR, set Max 1e-4 " \
                                 "and Min 5e-5."
+    bad_lr = {}
     if not values.get("ADAPTIVE_LR") or kind in ("slider", "finetune"):   # these train at the Learning Rate box
         hidden |= {"ADAPTIVE_LR_MIN", "ADAPTIVE_LR_MAX"}
     else:
         disabled.add("LEARNING_RATE")
+        bad_lr = adaptive_lr_notes(values)       # a value of your own (Other...): said under its box as you type
+        notes.update(bad_lr)
     if kind == "finetune":       # a fine-tune trains at its own fixed rate: no Adaptive LR, on any model
         hidden.add("ADAPTIVE_LR")
     from fizgig.training.optimizers import (
@@ -1146,7 +1151,7 @@ def state(desc, values, image_folder="", captioner="", speed_file=False, checkpo
         tip = "💡 Hint: " + small[1].format(n=n_pics)
         notes["MAX_TRAIN_EPOCHS"] = notes["MAX_TRAIN_EPOCHS"] + " " + tip if notes.get("MAX_TRAIN_EPOCHS") else tip
     lr_note = _lr_hint(desc, values, kind, image_folder)
-    if lr_note:
+    if lr_note and lr_note[0] not in bad_lr:       # a box's own problem (not a number, Min not below Max) first
         notes[lr_note[0]] = lr_note[1]
         actions[lr_note[0]] = ({"label": "Use 1e-4 / 2e-4", "values": {"ADAPTIVE_LR_MIN": "1e-4", "ADAPTIVE_LR_MAX": "2e-4"}}
                                if values.get("ADAPTIVE_LR") else {"label": "Use 1e-4", "values": {"LEARNING_RATE": "1e-4"}})
@@ -1312,6 +1317,20 @@ def state(desc, values, image_folder="", captioner="", speed_file=False, checkpo
 # switches the trainer ignores above Batch Size 1. Empty: the loss watch, per-image LR, the look warm-up and
 # auto-recaption work at any Batch Size (each image of a batch keeps its own loss, families/train.py)
 BATCH_ONE_SWITCHES = ()
+
+
+def adaptive_lr_notes(values):
+    """Adaptive LR's Min / Max as typed (a value of your own via Other...): {box: what's wrong} for one that isn't a
+    positive number (1e-5 style is fine) or a Min that isn't below Max; {} when both are fine."""
+    from fizgig.families.checks import lr_value
+    lo, hi = lr_value(values.get("ADAPTIVE_LR_MIN")), lr_value(values.get("ADAPTIVE_LR_MAX"))
+    out = {}
+    for k, v in (("ADAPTIVE_LR_MIN", lo), ("ADAPTIVE_LR_MAX", hi)):
+        if v is None:
+            out[k] = "Type a positive number, e.g. 1e-5 or 0.00002."
+    if lo is not None and hi is not None and lo >= hi:
+        out["ADAPTIVE_LR_MIN"] = "Min LR must be lower than Max LR."
+    return out
 
 
 def run_batch_size(desc, values):
