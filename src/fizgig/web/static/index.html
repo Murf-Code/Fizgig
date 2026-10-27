@@ -14,6 +14,10 @@
   <meta name="apple-mobile-web-app-title" content="Fizgig">
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
   <script>
+    // the theme this device picked, before the page paints (sidebar palette button; app.js THEMES)
+    try { var t = localStorage.getItem("fizgig.theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+  </script>
+  <script>
     // a pod's proxy can fail one request just after the pod comes up: the page then arrived without its styles.
     // A stylesheet or script that fails is fetched again, a little later each time.
     function fizgigRetry(el) {
@@ -39,7 +43,28 @@
   </header>
   <!-- over the page until its forms are built: a slow start looks like a start, not a broken page (#249) -->
   <div class="boot-cover" id="bootCover"><span class="me-spin boot-spin"></span>
-    <span id="bootCoverText">Starting Fizgig…</span></div>
+    <span id="bootCoverText">Starting Fizgig…</span>
+    <p class="boot-tip"><b>Tip</b><span id="bootTip"></span></p></div>
+  <script>
+    // a tip under the loading line, a random one each start
+    (function () {
+      var tips = [
+        "Preferences → Theme: eight looks for Fizgig.",
+        "Colour-blind safe, High contrast and Dim: Preferences → Theme.",
+        "Each device keeps its own theme.",
+        "Pause frees the GPU; Resume carries on.",
+        "Runs & outputs: Start again with these settings.",
+        "Judge a run by its previews, not its loss.",
+        "Studio fixes a finished LoRA block by block.",
+        "Image Prep's Look Filter finds faces that don't match.",
+        "Masked training learns the person, not the room.",
+        "LoRA Royale: pick the best epoch by eye.",
+        "Context LoRA: train alongside another LoRA.",
+        "Watch a run from your phone: Preferences → Web UI."
+      ];
+      document.getElementById("bootTip").textContent = tips[Math.floor(Math.random() * tips.length)];
+    })();
+  </script>
 
   <div class="app-window-body">
     <main class="notebook-container">
@@ -1790,6 +1815,11 @@
           <div class="tab-banner">
             <h1>Preferences</h1>
             <p>Where each model's files are on this machine. A path saves when you leave its box.</p>
+          </div>
+          <div class="section-card">
+            <div class="card-title"><span>Theme</span></div>
+            <div class="card-desc">How Fizgig looks on this device: a phone or another computer keeps its own.</div>
+            <div class="card-content"><div class="theme-pick" id="themePick"></div></div>
           </div>
           <div id="prefsForm"></div>
         </section>

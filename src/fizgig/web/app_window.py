@@ -112,15 +112,15 @@ _BAR_JS = r"""
   // the top middle: clear of the page's own top-right buttons (a full-screen picture's close)
   b.style.cssText = 'position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:2147483647;display:flex;' +
     'align-items:center;gap:10px;' +
-    'max-width:60vw;padding:5px 6px 5px 14px;border-radius:999px;background:#5B21B6;color:#F0F4F8;' +
-    'font:13px Segoe UI,system-ui,sans-serif;box-shadow:0 2px 10px rgba(0,0,0,.45)';
+    'max-width:60vw;padding:5px 6px 5px 14px;border-radius:999px;background:var(--app-bar, #5B21B6);color:var(--text-primary, #F0F4F8);' +
+    'font:13px Segoe UI,system-ui,sans-serif;box-shadow:0 2px 10px color-mix(in srgb, var(--shadow, #000) 45%, transparent)';
   var t = document.createElement('span');
   t.textContent = text;
   t.style.cssText = 'flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
   var h = document.createElement('button');
   h.textContent = button;
   h.title = title;
-  h.style.cssText = 'background:#F0F4F8;color:#1A2029;border:0;border-radius:999px;padding:4px 12px;cursor:pointer;' +
+  h.style.cssText = 'background:var(--text-primary, #F0F4F8);color:var(--bg-surface, #1A2029);border:0;border-radius:999px;padding:4px 12px;cursor:pointer;' +
     'font:600 13px Segoe UI,system-ui,sans-serif';
   h.onclick = function () { if (window.pywebview && window.pywebview.api) window.pywebview.api[call](); };
   b.appendChild(t); b.appendChild(h);
@@ -128,7 +128,7 @@ _BAR_JS = r"""
     var x = document.createElement('button');
     x.textContent = '✕';
     x.title = 'Hide this';
-    x.style.cssText = 'background:none;color:#F0F4F8;border:0;cursor:pointer;font:13px Segoe UI,system-ui,sans-serif;padding:2px 6px';
+    x.style.cssText = 'background:none;color:var(--text-primary, #F0F4F8);border:0;cursor:pointer;font:13px Segoe UI,system-ui,sans-serif;padding:2px 6px';
     x.onclick = function () { b.remove(); sp.remove(); if (window.pywebview && window.pywebview.api) window.pywebview.api.forget_pod(); };
     b.appendChild(x);
   }
@@ -203,25 +203,25 @@ _BLOCK_JS = r"""
   if (document.getElementById('fizgigBuildBlock')) return;
   var o = document.createElement('div');
   o.id = 'fizgigBuildBlock';
-  o.style.cssText = 'position:fixed;inset:0;z-index:2147483646;background:rgba(10,14,20,.92);display:flex;' +
-    'align-items:center;justify-content:center;padding:16px;font:14px Segoe UI,system-ui,sans-serif;color:#F0F4F8';
+  o.style.cssText = 'position:fixed;inset:0;z-index:2147483646;background:color-mix(in srgb, var(--overlay, #0A0E14) 92%, transparent);display:flex;' +
+    'align-items:center;justify-content:center;padding:16px;font:14px Segoe UI,system-ui,sans-serif;color:var(--text-primary, #F0F4F8)';
   var c = document.createElement('div');
-  c.style.cssText = 'max-width:560px;background:#1A2029;border:2px solid #F59E0B;border-radius:12px;padding:22px 24px';
+  c.style.cssText = 'max-width:560px;background:var(--bg-surface, #1A2029);border:2px solid var(--warning, #F59E0B);border-radius:12px;padding:22px 24px';
   var h = document.createElement('div');
   h.textContent = title;
-  h.style.cssText = 'font-size:18px;font-weight:700;color:#F59E0B;margin-bottom:10px';
+  h.style.cssText = 'font-size:18px;font-weight:700;color:var(--warning, #F59E0B);margin-bottom:10px';
   var p = document.createElement('div');
   p.textContent = message;
   p.style.cssText = 'line-height:1.5;margin-bottom:18px';
   var b = document.createElement('button');
   b.textContent = 'Switch to this computer';
-  b.style.cssText = 'background:#F0F4F8;color:#1A2029;border:0;border-radius:999px;padding:6px 16px;cursor:pointer;' +
+  b.style.cssText = 'background:var(--text-primary, #F0F4F8);color:var(--bg-surface, #1A2029);border:0;border-radius:999px;padding:6px 16px;cursor:pointer;' +
     'font:600 14px Segoe UI,system-ui,sans-serif';
   b.onclick = function () { if (window.pywebview && window.pywebview.api) window.pywebview.api.home(); };
   var a = document.createElement('button');
   a.textContent = 'Open anyway';
   a.title = "Use it as it is: most of it works, something newer than this computer's Fizgig may not";
-  a.style.cssText = 'margin-left:10px;background:none;color:#F0F4F8;border:1px solid #6B7280;border-radius:999px;' +
+  a.style.cssText = 'margin-left:10px;background:none;color:var(--text-primary, #F0F4F8);border:1px solid var(--text-muted, #6B7280);border-radius:999px;' +
     'padding:6px 16px;cursor:pointer;font:600 14px Segoe UI,system-ui,sans-serif';
   a.onclick = function () { o.remove(); };
   c.appendChild(h); c.appendChild(p); c.appendChild(b); c.appendChild(a); o.appendChild(c);
@@ -237,14 +237,14 @@ _NOTE_JS = r"""
   var n = document.createElement('div');
   n.id = 'fizgigBuildNote';
   n.style.cssText = 'position:fixed;top:52px;left:50%;transform:translateX(-50%);z-index:2147483646;display:flex;' +
-    'align-items:center;gap:8px;max-width:70vw;padding:6px 8px 6px 14px;border-radius:10px;background:#3A2A08;' +
-    'border:1px solid #F59E0B;color:#FCD34D;font:12.5px Segoe UI,system-ui,sans-serif;box-shadow:0 2px 10px rgba(0,0,0,.45)';
+    'align-items:center;gap:8px;max-width:70vw;padding:6px 8px 6px 14px;border-radius:10px;background:var(--app-note-bg, #3A2A08);' +
+    'border:1px solid var(--warning, #F59E0B);color:var(--warning-text, #FCD34D);font:12.5px Segoe UI,system-ui,sans-serif;box-shadow:0 2px 10px color-mix(in srgb, var(--shadow, #000) 45%, transparent)';
   var t = document.createElement('span');
   t.textContent = text;
   var x = document.createElement('button');
   x.textContent = '✕';
   x.title = 'Hide this';
-  x.style.cssText = 'background:none;color:#FCD34D;border:0;cursor:pointer;font:13px Segoe UI,system-ui,sans-serif';
+  x.style.cssText = 'background:none;color:var(--warning-text, #FCD34D);border:0;cursor:pointer;font:13px Segoe UI,system-ui,sans-serif';
   var sp = document.getElementById('fizgigAppBarSpace');
   x.onclick = function () { n.remove(); if (sp) sp.style.height = '54px'; };
   n.appendChild(t); n.appendChild(x);

@@ -1430,6 +1430,18 @@ def state_epochs_done(path, named):
     return named
 
 
+def _oom_note(run_id):
+    """What to do after a run ran out of GPU memory: Continue from its newest save (fresh memory - memory that
+    fragments over hours is the usual cause late in a run), or, with nothing saved yet, a lighter setup."""
+    pt = _continue_point(history.get(run_id))
+    if pt:
+        return (f"\nThe GPU ran out of memory. The run is saved at {pt['unit']} {pt['done']}: press Continue on its "
+                f"card in Runs & outputs to carry on from there, with fresh memory. Closing other programs that use "
+                f"the GPU (a browser, a game) helps too.\n")
+    return ("\nThe GPU ran out of memory before the run saved anything. Try a smaller picture size or more block "
+            "swap (Memory & Precision, on the Training tab), and close other programs that use the GPU.\n")
+
+
 def _continue_run(run_id, more="", queue_ok=True, values=None):
     """Continue on Runs & outputs: the run trains on from its newest save, with its own settings and into its own
     record. more: the epochs (a fine-tune: rotations) to train to, for a run that already trained all it was set to.
@@ -1678,12 +1690,14 @@ def _run_stages(stages, out_dir):
             return
         with _lock:
             _run["proc"] = proc
+        oom = False
         for line in proc.stdout:
             append_log(line)
             _es = early_stop_note(line)
             if _es:
                 with _lock:
                     _run["early_stop"] = _es
+            oom = oom or "out of memory" in line.lower()
             try:
                 upd = tracker.consume(line)
             except Exception:
@@ -1717,6 +1731,8 @@ def _run_stages(stages, out_dir):
             with _lock:
                 _run.update(state="failed", proc=None, ended_at=time.time())
             history.end(_run.get("history_id"), "failed", _run.get("progress"))
+            if oom:
+                append_log(_oom_note(_run.get("history_id")))
             webqueue.on_run_ended("failed", _run.get("lora"), _queue_starter)
             return
     paused = ((os.path.exists(os.path.join(out_dir, ".pause_requested")) or _run["pause"])
