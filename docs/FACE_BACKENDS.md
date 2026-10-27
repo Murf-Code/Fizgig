@@ -106,7 +106,8 @@ The embedder is also recorded in the score caches (`embedder`, `embedder_label`)
 - `sheath`
 - `pawpads`
 
-Fizgig uses only the **`face`** class and ignores the mask head.
+The face finder uses only the **`face`** class and ignores the mask head. Image Prep's **Crop to** can also crop to
+the other classes (see [below](#the-yolo-models-other-classes)).
 
 **Getting it.** Civitai lists the model as NSFW, and downloading it needs a free Civitai login. Fizgig does **not** download it for you. Download `fdetailerAdetailerFor_v11.pt` from the model page in your browser. If you use ADetailer in Forge/A1111, it's probably already in `models\adetailer`.
 
@@ -256,6 +257,23 @@ Masks card downloads, 1.75 GB, once), with the same score cutoff the masks use (
 - Padding and square crops work as they do for faces. A picture where nothing is found is left whole.
 - SAM 3.1 is freed from memory when the prep run ends. Without its file, Prepare stays off and says to press
   Download on the Masks card.
+
+### The YOLO model's other classes
+
+With the face finder on **Anime/furry/drawn (YOLO model)**, Fizgig reads the class names stored in the model file
+when it loads it. Every class besides the face one gets its own **Crop to** choice, after the face choices and before
+**Other…**. With Fdetailer v1.1 those are **Penis**, **Pussy**, **Anus**, **Sheath** and **Paw pads**. A face-only model
+(the free anime head finder, for example) adds none. Nothing is hard-coded, so any YOLO model with extra classes works.
+
+- These choices crop like **Other…** does: the biggest one found, the same padding, `Crop_penis_001.png`,
+  `Crop_pawpads_001.png`... beside the picture with **Resize + close-ups**, and a picture where none is found is left
+  whole. They don't need SAM 3.1.
+- Under **Other…**, a phrase that is one of the model's class names (case, spaces, `_` and `-` don't matter, so
+  `paw pads` is `pawpads`) is found by the YOLO model. The other phrases go to SAM 3.1, which is only needed when
+  some phrase isn't a class.
+- They use the face finder's score cutoff (0.35, `face_yolo_conf`), the same as the faces.
+- **Test finding this on one photo** boxes what it found and labels each box with its class and score.
+- Fizgig only loads your own copy of the model. It never ships or downloads Fdetailer.
 
 ## Captions on crops
 

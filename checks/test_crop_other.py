@@ -253,6 +253,7 @@ const fn = (name) => { const i = src.indexOf("function " + name + "("); const a 
   return src.slice(a, src.indexOf("\n}\n", i) + 3); };
 const code = src.match(/const \$ = \(id\)[^\n]*\n/)[0] + src.match(/const el = \(tag[\s\S]*?\n};\n/)[0] +
   src.match(/const prepSettings = [\s\S]*?\}\);\n/)[0] + src.match(/const prepOther = [^\n]*\n/)[0] +
+  src.match(/const prepClass = [^\n]*\n/)[0] + src.match(/const classKey = [^\n]*\n/)[0] + fn("prepYoloWords") +
   fn("prepTrimBlocked") + fn("prepFindBlocked") + "function prepBlocked() { return prepFindBlocked() || prepTrimBlocked(); }\n" +
   fn("prepFindShow") + fn("prepTaggerShow") + fn("prepTaggerInfo") + src.match(/const prepTaggerName = [^\n]*\n/)[0] +
   src.match(/const TAGGER_KEEP = [^\n]*\n/)[0] + src.match(/const TAGGER_HINTS = [\s\S]*?\n\};\n/)[0];

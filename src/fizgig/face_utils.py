@@ -14,7 +14,8 @@ FACE DETECTOR (FaceDetector) - where the faces are. prefs.json "face_detector":
                     once with src/fizgig/scripts/convert_yolo_to_onnx.py - see docs/FACE_BACKENDS.md). Blank =
                     deepghs' MIT anime/furry head detector, downloaded from Hugging Face on first use. Bbox and
                     segmentation exports both work (only the boxes are used); multi-class models (Fdetailer: face,
-                    pawpads, ...) are filtered to the "face" class.
+                    pawpads, ...) are filtered to the "face" class (Image Prep's Crop to can crop to the
+                    other classes: YoloOnnxBackend.extra_classes / find_classes).
   * "auto"        - BOTH on every image (~0.13 s + ~0.17 s CPU), boxes merged: where a confident InsightFace face
                     overlaps a YOLO box the InsightFace box (with gender) wins, every other YOLO box is kept - so human
                     photos, furry / anime characters and mixed sets all just work.
@@ -439,23 +440,89 @@ class YoloOnnxBackend:
                 return [low[c.lower()]]
         raise ValueError(f"{self.label}: none of the classes {self.classes} in this model ({self.names})")
 
-    def detect_rgb(self, rgb: np.ndarray) -> List[FaceInfo]:
+    def _boxes(self, rgb: np.ndarray, class_ids):
+        """[(x1, y1, x2, y2, score, class_id)] in the picture's own pixels, for these classes."""
         self.load()
         h, w = rgb.shape[:2]
         canvas, r, (left, top) = letterbox(rgb, self.size)
         x = canvas.astype(np.float32).transpose(2, 0, 1)[None] / 255.0
         outs = self._sess.run(None, {self._input: x})
-        boxes = decode_yolo(outs, self.conf, self.iou, self.class_ids,
+        boxes = decode_yolo(outs, self.conf, self.iou, class_ids,
                             n_classes=len(self.names) if self.names else None)
         res = []
-        for x1, y1, x2, y2, s, _c in boxes:
+        for x1, y1, x2, y2, s, c in boxes:
             x1, x2 = (x1 - left) / r, (x2 - left) / r
             y1, y2 = (y1 - top) / r, (y2 - top) / r
-            res.append(_face_info(max(0, x1), max(0, y1), min(w, x2), min(h, y2), "unknown", s, self.name))
+            res.append((max(0, x1), max(0, y1), min(w, x2), min(h, y2), s, c))
         return res
+
+    def detect_rgb(self, rgb: np.ndarray) -> List[FaceInfo]:
+        self.load()                                    # sets class_ids (the face class) first
+        return [_face_info(x1, y1, x2, y2, "unknown", s, self.name)
+                for x1, y1, x2, y2, s, _c in self._boxes(rgb, self.class_ids)]
+
+    # -- the model's other classes (Fdetailer: penis, pawpads, ...): Image Prep's Crop to can crop to them
+    def extra_classes(self) -> Dict[int, str]:
+        """{class id: name} of every class the model names besides the face one ({} for a one-class model)."""
+        self.load()
+        if not self.names or len(self.names) < 2:
+            return {}
+        face = set(self.class_ids or [])
+        return {k: v for k, v in sorted(self.names.items()) if k not in face}
+
+    def all_classes(self) -> Dict[int, str]:
+        self.load()
+        return dict(sorted((self.names or {}).items()))
+
+    def find_classes(self, rgb: np.ndarray, class_ids) -> list:
+        """[(x1, y1, x2, y2, score, class_id)] for these class ids, in the picture's pixels, strongest first."""
+        return self._boxes(rgb, list(class_ids))
 
     def detect_bgr(self, bgr) -> List[FaceInfo]:
         return self.detect_rgb(np.ascontiguousarray(bgr[..., ::-1]))
+
+
+CLASS_LABELS = {"pawpads": "Paw pads", "paw_pads": "Paw pads"}
+
+
+def class_label(name: str) -> str:
+    """A YOLO class name as the Crop to menu shows it: 'penis' -> 'Penis', 'pawpads' -> 'Paw pads'."""
+    n = str(name or "").strip()
+    low = n.lower()
+    if low in CLASS_LABELS:
+        return CLASS_LABELS[low]
+    n = n.replace("_", " ").strip()
+    return n[:1].upper() + n[1:] if n else n
+
+
+def class_key(text: str) -> str:
+    """What a typed phrase and a class name are compared by: lower case, no spaces, _ or - ('Paw pads' = 'pawpads')."""
+    import re
+    return re.sub(r"[\s_\-]+", "", str(text or "").lower())
+
+
+def yolo_backend(settings: Optional[dict] = None, download: bool = False) -> Optional["YoloOnnxBackend"]:
+    """The YOLO model the face settings pick, loaded - only when the face finder is the YOLO one. None otherwise, when
+    it can't load, or (download False) when it's the default head finder that isn't downloaded yet: nothing here
+    downloads a model just to fill a menu."""
+    st = load_face_settings(settings)
+    if st["face_detector"] != "yolo":
+        return None
+    b = YoloOnnxBackend(st["face_yolo_model"], conf=st["face_yolo_conf"])
+    if not b.available():
+        return None
+    if not b.model_path and not download:
+        try:
+            from huggingface_hub import hf_hub_download
+            hf_hub_download(repo_id=DEFAULT_YOLO["repo"], filename=DEFAULT_YOLO["file"],
+                            revision=DEFAULT_YOLO["revision"], local_files_only=True)
+        except Exception:
+            return None
+    try:
+        b.load()
+    except Exception:
+        return None
+    return b
 
 
 # ---------------------------------------------------------------------------------------------------------------

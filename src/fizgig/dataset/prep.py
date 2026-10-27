@@ -30,6 +30,7 @@ OTHER_TARGET = "Other…"           # the Face dropdown's Other…: crop to what
 FIND_SCORE = 0.5                  # SAM 3.1's cutoff for a hit: the same as Make masks uses
 FIND_MIN_SIDE = 16                # a hit smaller than this (pixels, either side) is too small to crop
 CROP_PREFIX = "Crop_"             # Find this close-ups: Crop_paw_001.png (faces keep FaceCrop_)
+CLASS_TARGET = "YOLO class: "     # Crop to's choices for the YOLO model's other classes: "YOLO class: penis"
 
 
 def bucket_step():
@@ -87,6 +88,17 @@ def is_other(label):
     return str(label or "").strip().lower().startswith("other")
 
 
+def class_of(label):
+    """The YOLO class a Crop to choice names ("YOLO class: penis" -> "penis"), else ""."""
+    t = str(label or "")
+    return t[len(CLASS_TARGET):].strip() if t.startswith(CLASS_TARGET) else ""
+
+
+def class_target(name):
+    """The Crop to value for a YOLO class (saved in the page's settings, so it keeps the model's own name)."""
+    return CLASS_TARGET + str(name)
+
+
 def word_slug(word):
     """'the left paw' -> 'the_left_paw': a phrase as a file-name part (letters, digits, _ and -; at most 24)."""
     import re
@@ -106,31 +118,64 @@ class ThingFinder:
     """Finds what the Find this box names with SAM 3.1 (or anything with SAM3Segmenter's masks()), as boxes the face
     crop code takes: FaceInfo with the phrase in `gender` and source "sam3". Each comma-separated phrase is searched
     on its own; hits under FIND_SCORE or under FIND_MIN_SIDE pixels a side are dropped; boxes are clamped to the
-    picture."""
+    picture.
 
-    def __init__(self, seg, words, threshold=FIND_SCORE, min_side=FIND_MIN_SIDE):
+    yolo / yolo_words: a phrase that names one of the YOLO face model's classes (Fdetailer's penis, pawpads, ...) is
+    found by that model instead (face_utils.YoloOnnxBackend.find_classes, its own score cutoff), source "yolo"; seg
+    may then be None when no phrase is left for SAM 3.1."""
+
+    def __init__(self, seg, words, threshold=FIND_SCORE, min_side=FIND_MIN_SIDE, yolo=None, yolo_words=None):
         self.seg, self.words = seg, list(dict.fromkeys(w for w in words if w))
         self.threshold, self.min_side = threshold, min_side
+        self.yolo = yolo
+        self.yolo_words = {w: int(c) for w, c in (yolo_words or {}).items() if w in self.words} if yolo else {}
+        self.sam_words = [w for w in self.words if w not in self.yolo_words]
+
+    def _yolo_label(self):
+        return getattr(self.yolo, "label", "") or "YOLO model"
 
     def describe(self):
-        return f"SAM 3.1, finding {', '.join(self.words)}"
+        parts = []
+        if self.yolo_words:
+            parts.append(f"{self._yolo_label()} (YOLO), finding {', '.join(self.yolo_words)}")
+        if self.sam_words:
+            parts.append(f"SAM 3.1, finding {', '.join(self.sam_words)}")
+        return "; ".join(parts)
+
+    def _clamped(self, box, w, h):
+        x1, y1, x2, y2 = box
+        x1, y1 = max(0, min(w, int(round(x1)))), max(0, min(h, int(round(y1))))
+        x2, y2 = max(0, min(w, int(round(x2)))), max(0, min(h, int(round(y2))))
+        if x2 - x1 < self.min_side or y2 - y1 < self.min_side:
+            return None
+        return x1, y1, x2, y2
 
     def find(self, img):
-        """[FaceInfo, ...] for every hit, strongest first per phrase."""
+        """[FaceInfo, ...] for every hit, strongest first per phrase, phrases in the order typed."""
         import numpy as np
         from fizgig.face_utils import _face_info
         arr = np.asarray(img.convert("RGB"))
         h, w = arr.shape[:2]
         out = []
-        for f in self.seg.masks(arr, self.words, threshold=self.threshold, refine=0):
-            if f.get("score", 1.0) < self.threshold:
-                continue
-            x1, y1, x2, y2 = f["box"]
-            x1, y1 = max(0, min(w, int(round(x1)))), max(0, min(h, int(round(y1))))
-            x2, y2 = max(0, min(w, int(round(x2)))), max(0, min(h, int(round(y2))))
-            if x2 - x1 < self.min_side or y2 - y1 < self.min_side:
-                continue
-            out.append(_face_info(x1, y1, x2, y2, gender=f["prompt"], score=f.get("score", 1.0), source="sam3"))
+        if self.sam_words and self.seg is not None:
+            for f in self.seg.masks(arr, self.sam_words, threshold=self.threshold, refine=0):
+                if f.get("score", 1.0) < self.threshold:
+                    continue
+                b = self._clamped(f["box"], w, h)
+                if b:
+                    out.append(_face_info(*b, gender=f["prompt"], score=f.get("score", 1.0), source="sam3"))
+        if self.yolo_words:
+            by_id = {}
+            for word, cid in self.yolo_words.items():
+                by_id.setdefault(cid, []).append(word)
+            for x1, y1, x2, y2, score, cid in self.yolo.find_classes(arr, sorted(by_id)):
+                b = self._clamped((x1, y1, x2, y2), w, h)
+                if b:
+                    for word in by_id.get(int(cid), []):
+                        out.append(_face_info(*b, gender=word, score=float(score), source="yolo"))
+        if self.yolo_words:                            # both finders' hits: phrases in the order typed
+            order = {wd: i for i, wd in enumerate(self.words)}
+            out.sort(key=lambda f: (order.get(f.gender, len(order)), -f.score))
         return out
 
     @staticmethod
@@ -419,7 +464,10 @@ class Prep:
                                                                              "insightface") != "insightface":
             self.log(f"Face finder: {self.detector.describe()}\n")      # only when it isn't the usual one
         if self.finder is not None and mode != "Resize Only":
-            self.log(f"Finding: {', '.join(self.finder.words)} (SAM 3.1)\n")
+            if getattr(self.finder, "yolo_words", None):      # some (or all) of it found by the YOLO model
+                self.log(f"Finding with {self.finder.describe()}\n")
+            else:
+                self.log(f"Finding: {', '.join(self.finder.words)} (SAM 3.1)\n")
         if mode == "Auto Prep (Face Crops)" and self.finder is not None:
             self.auto_prep_things(folder, folder, area, face_padding, replace)
         elif mode == "Face Crop Only" and self.finder is not None:

@@ -85,7 +85,19 @@ def face_settings():
             "defaults": {"detector": F.FACE_SETTING_DEFAULTS["face_detector"],
                          "identity": F.FACE_SETTING_DEFAULTS["face_identity"]},
             "finder": det.describe(), "has_gender": det.has_gender,
-            "insightface": F.is_insightface_available(), "local_model": F.LOCAL_YOLO_DEFAULT}
+            "insightface": F.is_insightface_available(), "local_model": F.LOCAL_YOLO_DEFAULT,
+            **_class_info()}
+
+
+def _class_info():
+    """face_settings()'s YOLO part: Crop to's extra classes, and every class name (Find this phrases the model finds
+    itself, so SAM 3.1 isn't needed for them)."""
+    b = _yolo()
+    try:
+        names = list(b.all_classes().values()) if b is not None else []
+    except Exception:
+        names = []
+    return {"classes": yolo_classes(b) if b is not None else [], "yolo_names": names}
 
 
 def save_face_settings(b):
@@ -136,21 +148,79 @@ def _log(text):
         _job["log"] = (_job["log"] + text)[-400_000:]
 
 
-def find_words(face_label, find):
-    """With the Face dropdown on Other…: (the Find this box's phrases, the SAM 3.1 file), checked - ValueError with a
-    plain note when the box is empty or SAM 3.1 isn't downloaded. ([], "") for a face choice."""
-    if not prep.is_other(face_label):
-        return [], ""
+def _yolo():
+    """The YOLO face model when it is the face finder (face_utils.yolo_backend), loaded, or None."""
+    from fizgig import face_utils as F
+    return F.yolo_backend()
+
+
+def yolo_classes(backend=None):
+    """Crop to's extra choices: the YOLO face model's other classes ([{value, label, name}]; [] for a face-only model,
+    or when the face finder isn't the YOLO one)."""
+    from fizgig import face_utils as F
+    b = backend if backend is not None else _yolo()
+    if b is None:
+        return []
+    try:
+        extra = b.extra_classes()
+    except Exception:
+        return []
+    return [{"value": prep.class_target(n), "label": F.class_label(n), "name": n} for _k, n in extra.items()]
+
+
+def yolo_words(words, backend=None):
+    """{phrase: class id} for each phrase that names one of the YOLO face model's classes (case, spaces, _ and -
+    ignored: 'paw pads' is 'pawpads'). {} when the face finder isn't the YOLO one."""
+    from fizgig import face_utils as F
+    b = backend if backend is not None else _yolo()
+    if b is None or not words:
+        return {}
+    try:
+        names = b.all_classes()
+    except Exception:
+        return {}
+    keys = {F.class_key(n): k for k, n in names.items()}
+    keys.update({F.class_key(F.class_label(n)): k for k, n in names.items()})
+    return {w: keys[F.class_key(w)] for w in words if F.class_key(w) in keys}
+
+
+def find_words(face_label, find, backend=None):
+    """With the Face dropdown on Other… or one of the YOLO model's classes: (the phrases to find, the SAM 3.1 file),
+    checked - ValueError with a plain note when the box is empty, or SAM 3.1 is needed (a phrase that isn't one of
+    the YOLO model's classes) and isn't downloaded. The SAM file is "" when the YOLO model finds every phrase.
+    ([], "") for a face choice."""
     from fizgig.dataset import sammask
     from fizgig.user_data import MODELS_DIR
+    cls = prep.class_of(face_label)
+    if cls:
+        b = backend if backend is not None else _yolo()
+        if not yolo_words([cls], b):
+            raise ValueError(f"The face model doesn't find {cls}: pick the YOLO face model that has it under "
+                             "Anime/furry/drawn characters, or pick another Crop to.")
+        return [cls], ""
+    if not prep.is_other(face_label):
+        return [], ""
     words = sammask.split_words(find)
     if not words:
         raise ValueError("Type what to find in Find this (e.g. paw, tail, hand).")
+    by_yolo = yolo_words(words, backend)
+    if all(w in by_yolo for w in words):
+        return words, ""
     path = sammask.find_model(MODELS_DIR)
     if not path:
         raise ValueError("Finding by words needs SAM 3.1: press Download on the Masks card (further down this tab) "
                          "first.")
     return words, path
+
+
+def thing_finder(words, sam_path, log=print, backend=None):
+    """The ThingFinder for these phrases: the YOLO face model for the ones it has a class for, SAM 3.1 for the rest
+    (loaded only when some phrase needs it). The caller holds sammask._use when sam_path is set."""
+    from fizgig.dataset import sammask
+    b = backend if backend is not None else _yolo()
+    by_yolo = yolo_words(words, b)
+    seg = sammask.segmenter(sam_path, log) if sam_path and any(w not in by_yolo for w in words) else None
+    return prep.ThingFinder(seg, words, yolo=b if by_yolo else None, yolo_words=by_yolo)
 
 
 def keep_score(v, default=None):
@@ -247,12 +317,17 @@ def start(folder, mode, mp, face_label, padding, replace, find="", captions=None
 
 
 def _things(words, sam_path, mode, folder, mp, face_label, padding, replace, caps=None):
-    """A prep run with Other…: SAM 3.1 finds the words; it is freed from memory when the run ends."""
+    """A prep run with Other… or a YOLO class: the YOLO face model finds its classes, SAM 3.1 the other words; SAM is
+    freed from memory when the run ends."""
     from fizgig.dataset import sammask
+    if not sam_path:                                   # the YOLO model finds it all: SAM 3.1 isn't touched
+        finder = thing_finder(words, "", _log)
+        prep.Prep(_log, None, finder, caps).run(mode, folder, float(mp), face_label, float(padding), bool(replace))
+        return
     if not sammask._use.acquire(blocking=False):
         raise ValueError("SAM 3.1 is busy with a mask preview. Try again in a moment.")
     try:
-        finder = prep.ThingFinder(sammask.segmenter(sam_path, _log), words)
+        finder = thing_finder(words, sam_path, _log)
         prep.Prep(_log, None, finder, caps).run(mode, folder, float(mp), face_label, float(padding), bool(replace))
     finally:
         sammask._use.release()
@@ -260,22 +335,27 @@ def _things(words, sam_path, mode, folder, mp, face_label, padding, replace, cap
 
 
 def test_things(path, words, sam_path):
-    """Test Find this on one photo: the picture with what was found boxed (the biggest green), writes nothing."""
+    """Test Find this (or a YOLO class) on one photo: the picture with what was found boxed and labelled with its
+    name and score (the one each phrase crops to green), writes nothing."""
     from PIL import Image, ImageDraw
     from fizgig.dataset import sammask
     if not os.path.isfile(path):
         raise ValueError("That picture isn't there.")
-    if not sammask._use.acquire(blocking=False):
-        raise ValueError("SAM 3.1 is busy. Try again in a moment.")
-    try:
-        finder = prep.ThingFinder(sammask.segmenter(sam_path), words)
-        with Image.open(path) as img:
-            img = upright(img).convert("RGB")
+    with Image.open(path) as img:
+        img = upright(img).convert("RGB")
+    if sam_path:
+        if not sammask._use.acquire(blocking=False):
+            raise ValueError("SAM 3.1 is busy. Try again in a moment.")
+        try:
+            finder = thing_finder(words, sam_path)
+            hits = finder.find(img)
+        finally:
+            sammask._use.release()
+    else:
+        finder = thing_finder(words, "")
         hits = finder.find(img)
-    finally:
-        sammask._use.release()
     if not hits:
-        return {"faces": [], "image": None, "finder": finder.describe()}
+        return {"faces": [], "image": None, "finder": finder.describe(), "things": True}
     picked = finder.per_word(hits)
     shown = img.copy()
     d = ImageDraw.Draw(shown)
@@ -288,8 +368,8 @@ def test_things(path, words, sam_path):
     buf = io.BytesIO()
     shown.save(buf, "JPEG", quality=88)
     return {"image": "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode("ascii"),
-            "finder": finder.describe(),
-            "faces": [{"gender": h.gender, "area": int(h.area), "selected": h in picked, "source": "sam3",
+            "finder": finder.describe(), "things": True,
+            "faces": [{"gender": h.gender, "area": int(h.area), "selected": h in picked, "source": h.source,
                        "score": round(h.score, 2)} for h in hits]}
 
 
