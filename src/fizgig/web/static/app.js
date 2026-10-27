@@ -7323,7 +7323,7 @@ function capTagState() {
       text: f.state === "failed" ? "Try the download again" : `Download the ${name} (${t.gb} GB)`, onclick: async () => {
         await api("/api/prep/tagger_fetch", {tagger: t.id}).catch((e) => { st.textContent = e.message; });
         capTagRefresh(); }}), el("span", {class: "field-hint", text: f.state === "failed" ?
-        ` The download failed: ${f.error}` : " Needed once, before the first caption."}));
+        downloadFailedText(f.error) : " Needed once, before the first caption."}));
   }
 }
 

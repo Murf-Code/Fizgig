@@ -196,5 +196,5 @@ def test_ui_hint_reads_the_login_line():
     assert "function downloadFailedText(err)" in js
     assert "/^Your Hugging Face login/" in js
     assert hf_public.EXPIRED.startswith("Your Hugging Face login")
-    assert js.count("downloadFailedText(f.error)") == 3
+    assert js.count("downloadFailedText(f.error)") == 4   # the 3 model downloads + the Captions tab tagger
     assert "` The download failed: ${f.error}`" not in js
