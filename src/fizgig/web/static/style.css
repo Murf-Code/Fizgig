@@ -2367,3 +2367,7 @@ a.pick-pill-vast:hover { border-color: var(--success); }
 .me-saved[data-state="unsaved"] { color: var(--warning); }
 .me-saved[data-state="saved"] { color: var(--success); }
 .me-saved[data-state="none"] { color: var(--text-muted); font-weight: 400; }
+
+/* the logs resize by dragging; app.js remembers the height */
+.console-terminal { resize: vertical; overflow: auto; min-height: 120px; max-height: none; flex-shrink: 0; }
+.console-terminal:empty { height: 0 !important; min-height: 0; resize: none; }
