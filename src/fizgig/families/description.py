@@ -520,6 +520,9 @@ class FamilyDescription:
     # training/adaptive_lr.AdaptiveLR clip_signal)
     adaptive_lr_clip_signal: bool = False
     adaptive_lr: bool = True          # the Adaptive LR control (off: hidden, never sent - MiniMax H3)
+    # Batch Size > 1 (families/train.py): the family's training_loss and DiT take a stack of same-size images with
+    # per-sample timesteps and noise (conditioning of different lengths padded, with a mask). False = batch 1 always
+    supports_batch: bool = False
     loss_watch: bool = True           # the per-image loss watch toggles (off: hidden, never sent - MiniMax H3)
     # masked training (fizgig/dataset/masks.py): the driver's training_loss takes loss_mask; opt in, so a family added
     # later never gets a tick its driver can't honour

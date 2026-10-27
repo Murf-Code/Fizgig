@@ -48,6 +48,7 @@ MOSS_IMAGE = FamilyDescription(
     key="moss_image",
     masked_training=True,
     arch_id="mossimage",
+    supports_batch=True,              # batched DiT forward (moss_image/model.py), per-sample t / noise
     display_name="MOSS-Image",
     gui_label="MOSS-Image",
     lora_name_suffix="moss",

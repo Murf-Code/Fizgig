@@ -149,6 +149,29 @@ def slider_on(desc, inputs, source=None):
     return on
 
 
+# what switches off at Batch Size > 1: each assumes one image (one loss, one caption) per step
+BATCH_OFF = ("the per-image loss watch (Problem Images and the run card's per-image loss)", "per-image LR",
+             "auto-recaption", "the look warm-up", "DOP (Leave the rest of the model alone)", "LR boost")
+# kinds of training that keep Batch Size 1 (their steps are per image, or untested batched)
+BATCH_ONE_KINDS = ("sliders", "edit training", "full fine-tune", "multi-person mode")
+
+
+def batch_size(desc, inputs):
+    """The Batch Size the run trains at: the box's value on a family that supports batching (description
+    supports_batch), on a standard LoRA run; 1 otherwise (and for anything that is not a whole number above 0)."""
+    if not getattr(desc, "supports_batch", False):
+        return 1
+    try:
+        n = int(str(inputs.get("batch_size", 1)).strip() or 1)
+    except ValueError:
+        return 1
+    if n <= 1 or slider_on(desc, inputs) or edit_on(desc, inputs) or ft_on(desc, inputs):
+        return 1
+    if bool(inputs.get("FAMILY_MULTI_PERSON")) and desc.subject_isolation:
+        return 1
+    return n
+
+
 def ft_on(desc, inputs):
     """A full fine-tune of the base model, for a family whose driver offers one (description.finetune)."""
     return bool(desc.finetune and inputs.get("FAMILY_FT"))
@@ -716,7 +739,7 @@ def train_command(desc, inputs, plan):
         cmd += ["--masked_training", "--mask_floor", f"{mask_floor(st):g}"]
         if mask_prior(desc, st):
             cmd += ["--mask_prior", f"{mask_prior(desc, st):g}"]
-    if dop_on(desc, st) or mp_subs:
+    if (dop_on(desc, st) or mp_subs) and batch_size(desc, st) <= 1:     # DOP is per image: off at Batch Size > 1
         trig, cls = dop_rules(st)
         if mp_subs:          # the captions are read fused: DOP swaps "zwxemwoman" for "a woman"
             trig, cls = [s["fused"] for s in mp_subs], [s["phrase"] for s in mp_subs]
@@ -777,10 +800,7 @@ def train_command(desc, inputs, plan):
             cmd += ["--ft_start_window", str(int(cont.get("start_window", 0))),
                     "--ft_epochs_done", str(int(cont.get("epochs_done", 0)))]
     # per-image loss watch (families/loss_watch.py), batch size 1 only
-    try:
-        bs1 = int(str(st.get("batch_size", 1)).strip() or 1) <= 1
-    except ValueError:
-        bs1 = True
+    bs1 = batch_size(desc, st) <= 1
     lw = (st.get("loss_watch") or {}) if desc.loss_watch else {}
     if multi_person_on(desc, st):    # the side-by-sides are hard on purpose: no verdicts, per-image LR or look warm-up
         lw = {**lw, "detect": False, "per_image_lr": False, "warmup": False}
@@ -1049,12 +1069,13 @@ def cache_dir_for(cache_root, image_dir):
 def dataset_toml(desc, inputs):
     """The dataset TOML for the run: the training folder at Target Megapixels (a square of that area on the
     16-pixel grid), an edit's originals or a slider's -1 end as its control folder, and its own cache folder.
-    Raises ValueError on a Target Megapixels that is not a number. Batch size is always 1 (one image a step)."""
+    Raises ValueError on a Target Megapixels that is not a number. Batch size: launch.batch_size (1 unless the family
+    supports batching)."""
     mp = float(inputs.get("megapixels"))
     if mp <= 0:
         raise ValueError(f"Target Megapixels {mp}")
     side = int((mp * 1_000_000) ** 0.5) // 16 * 16
-    batch = 1           # every family trains one image at a time (families/train.py); Gradient Accumulation for more
+    batch = batch_size(desc, inputs)    # 1 unless the family supports batching (families/train.py)
     folder = _s(inputs.get("image_folder"))
     extra = [_s(f) for f in (inputs.get("extra_folders") or []) if _s(f)] if desc.multi_concept else []
     lines = ["[general]", f"resolution = [{side}, {side}]",

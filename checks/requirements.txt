@@ -2,5 +2,8 @@ pytest>=8
 numpy
 pillow
 safetensors
+# the Batch Size checks: the dataset (cv2) and Anima's model (einops)
+opencv-python-headless
+einops
 # torch: CPU is enough. If it isn't installed yet:
 #   pip install torch --index-url https://download.pytorch.org/whl/cpu

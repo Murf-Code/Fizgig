@@ -144,12 +144,28 @@ class AnimaDriver(FamilyDriver):
     # ---- the model call -------------------------------------------------------------------------
     @staticmethod
     def _context(dit, cond, device):
+        if "qwen__valid" in cond or "t5_ids__valid" in cond:       # Batch Size > 1 with captions of different lengths
+            return AnimaDriver._batch_context(dit, cond, device)
         qwen = _batched("qwen", cond["qwen"]).to(device, DTYPE)
         ids = _batched("t5_ids", cond["t5_ids"]).to(device).long()
         ctx = dit.llm_adapter(qwen, ids)
         if ctx.shape[1] < CONTEXT_LEN:
             ctx = F.pad(ctx, (0, 0, 0, CONTEXT_LEN - ctx.shape[1]))
         return ctx
+
+    @staticmethod
+    def _batch_context(dit, cond, device):
+        """A batch whose captions the dataset zero-padded to the longest (`<key>__valid` = the real rows): each
+        caption's own rows through the LLM adapter, then each context zero-padded to 512 as batch 1 does - the
+        adapter's attention takes no mask, so its padding must never reach it."""
+        qwen, ids = cond["qwen"], cond["t5_ids"]
+        qv = cond.get("qwen__valid", torch.ones(qwen.shape[:2], dtype=torch.bool))
+        tv = cond.get("t5_ids__valid", torch.ones(ids.shape[:2], dtype=torch.bool))
+        out = []
+        for i in range(qwen.shape[0]):
+            one = {"qwen": qwen[i][qv[i].to(qwen.device)], "t5_ids": ids[i][tv[i].to(ids.device)]}
+            out.append(AnimaDriver._context(dit, one, device))
+        return torch.cat(out)
 
     def _velocity(self, dit, x, t, cond):
         """x (B, 16, 1, h, w), t (B,) in [0, 1] -> the predicted velocity (noise - x0), (B, 16, 1, h, w)."""
@@ -166,9 +182,22 @@ class AnimaDriver(FamilyDriver):
         if x0.dim() == 4:
             x0 = x0.unsqueeze(2)                                                    # (B, 16, 1, h, w)
         n = x0.shape[0]
-        t = torch.sigmoid(torch.randn(n, generator=generator))
-        t = (min_t + (max_t - min_t) * t).to(x0.device)
-        noise = torch.randn(x0.shape, generator=generator).to(x0.device)
+        if n > 1 and diff_ref is not None:
+            raise RuntimeError("Anima: image-pair sliders train at Batch Size 1")
+        rows = cond["qwen"].shape[0] if cond["qwen"].dim() == 3 else 1
+        if rows not in (1, n):
+            raise RuntimeError(f"Anima: {n} images but {rows} captions in the batch")
+        if n == 1:
+            t = torch.sigmoid(torch.randn(n, generator=generator))
+            t = (min_t + (max_t - min_t) * t).to(x0.device)
+            noise = torch.randn(x0.shape, generator=generator).to(x0.device)
+        else:       # Batch Size > 1: per image, in the order B batch-1 steps draw them (t, then noise)
+            ts, ns = [], []
+            for i in range(n):
+                ts.append(torch.sigmoid(torch.randn(1, generator=generator)))
+                ns.append(torch.randn(x0[i:i + 1].shape, generator=generator))
+            t = (min_t + (max_t - min_t) * torch.cat(ts)).to(x0.device)
+            noise = torch.cat(ns).to(x0.device)
         tb = t.view(-1, 1, 1, 1, 1)
         xt = (1 - tb) * x0 + tb * noise
         base = prior_base(prior, loss_mask, lambda: self._velocity(dit, xt, t, cond))

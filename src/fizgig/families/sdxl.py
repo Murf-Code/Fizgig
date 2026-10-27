@@ -31,6 +31,7 @@ SDXL = FamilyDescription(
     key="sdxl",
     masked_training=True,
     arch_id="sdxl",
+    supports_batch=True,              # Batch Size > 1: per-image t / noise (families/batching.py)
     display_name="SDXL",
     gui_label="SDXL (any checkpoint)",
     lora_name_suffix="sdxl",

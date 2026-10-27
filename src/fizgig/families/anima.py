@@ -28,6 +28,7 @@ ANIMA = FamilyDescription(
     key="anima",
     masked_training=True,
     arch_id="anima",
+    supports_batch=True,              # Batch Size > 1: per-image t / noise (families/batching.py)
     display_name="Anima",
     gui_label="Anima",
     lora_name_suffix="anima",

@@ -273,6 +273,8 @@ class MOSSImageDriver(FamilyDriver):
                       diff_weight=0.0, loss_mask=None, prior=None):
         if refs:
             raise RuntimeError("MOSS-Image has no edit (reference-image) conditioning")
+        if latents.shape[0] > 1:
+            return self._batched_loss(dit, latents, cond, generator, min_t, max_t, diff_ref)
         x0 = latents.float()
         noise = torch.randn(x0.shape, generator=generator).to(x0.device)
         t = self._sample_t(generator, min_t, max_t, self._t_mu())
@@ -299,6 +301,30 @@ class MOSSImageDriver(FamilyDriver):
         if base is not None:
             loss = with_prior(loss, prior, base, (pred - base).pow(2).mean(dim=1), mw, wgt)
         return loss, {"t": t}
+
+    def _batched_loss(self, dit, latents, cond, generator, min_t, max_t, diff_ref):
+        """Batch Size > 1: each image its own noise and timestep, drawn in the order B batch-1 steps draw them (noise,
+        then t, per image), so the loss is the mean of what those B steps would give. The DiT runs them together
+        (padded captions masked by `hidden_states__valid`)."""
+        if diff_ref is not None:
+            raise RuntimeError("MOSS-Image: image-pair sliders train at Batch Size 1")
+        x0 = latents.float()
+        b = x0.shape[0]
+        hidden = cond["hidden_states"]
+        if hidden.dim() != 3 or hidden.shape[0] != b:
+            raise RuntimeError(f"MOSS-Image: {b} images but {hidden.shape[0] if hidden.dim() == 3 else 1} captions "
+                               "in the batch")
+        noise, ts = [], []
+        for i in range(b):
+            noise.append(torch.randn(x0[i:i + 1].shape, generator=generator))
+            ts.append(self._sample_t(generator, min_t, max_t, self._t_mu()))
+        noise = torch.cat(noise).to(x0.device)
+        tv = torch.tensor(ts, dtype=torch.float32, device=x0.device)
+        xt = (1 - tv.view(-1, 1, 1, 1)) * x0 + tv.view(-1, 1, 1, 1) * noise
+        valid = cond.get("hidden_states__valid")
+        pred = dit(xt, tv * S.TRAIN_STEPS, hidden.to(xt.device),
+                   None if valid is None else valid.to(xt.device)).float()
+        return F.mse_loss(pred, noise - x0), {"t": sum(ts) / b, "ts": ts}
 
     def noise_latents(self, latents, generator, *, min_t=0.0, max_t=1.0):
         x0 = latents.float()

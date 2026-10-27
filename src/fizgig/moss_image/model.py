@@ -42,16 +42,23 @@ def _rotate(x, rope):
     return x * cos + torch.cat((-b, a), -1) * sin
 
 
-def _attention(q, k, v, rope, heads):
+def _attention(q, k, v, rope, heads, attn_mask=None):
     shape = (*q.shape[:2], heads, q.shape[-1] // heads)
     q = _rotate(q.reshape(shape), rope).transpose(1, 2)
     k = _rotate(k.reshape(shape), rope).transpose(1, 2)
     v = v.reshape(shape).transpose(1, 2)
     q, k = q.to(v.dtype), k.to(v.dtype)
     from fizgig.modules import int8_attention as _i8a      # workbench renders only, when opted in; else None
-    out = _i8a.attend(q, k, v)
-    if out is None:
-        out = F.scaled_dot_product_attention(q, k, v)
+    if attn_mask is None:
+        out = _i8a.attend(q, k, v)
+        if out is None:
+            out = F.scaled_dot_product_attention(q, k, v)
+    else:
+        # batched path: [B, 1, 1, S] key-padding mask (True = real token); the int8 kernel declines a mask that
+        # excludes anything, so SDPA (memory-efficient / math kernel, not flash) runs then
+        out = _i8a.attend(q, k, v, attn_mask)
+        if out is None:
+            out = F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask)
     return out.transpose(1, 2).flatten(2)
 
 
@@ -66,11 +73,11 @@ class _TextBlock(nn.Module):
         self.ffn_gate, self.ffn_up = nn.Linear(dim, ffn_dim), nn.Linear(dim, ffn_dim)
         self.ffn_down = nn.Linear(ffn_dim, dim)
 
-    def forward(self, x, rope):
+    def forward(self, x, rope, attn_mask=None):
         q, k, v = self.qkv(self.norm1(x)).chunk(3, -1)
         q = self.q_norm(q.unflatten(-1, (self.heads, -1))).flatten(2)
         k = self.k_norm(k.unflatten(-1, (self.heads, -1))).flatten(2)
-        x = x + self.proj(_attention(q, k, v, rope, self.heads))
+        x = x + self.proj(_attention(q, k, v, rope, self.heads, attn_mask))
         y = self.norm2(x)
         return x + self.ffn_down(_situ(self.ffn_up(y), self.ffn_gate(y)))
 
@@ -81,10 +88,10 @@ class _TextProjection(nn.Module):
         self.proj = nn.Linear(text_dim, dim)
         self.blocks = nn.ModuleList([_TextBlock(dim, ffn_dim, heads) for _ in range(2)])
 
-    def forward(self, x, rope):
+    def forward(self, x, rope, attn_mask=None):
         x = self.proj(x.to(self.proj.weight.dtype))
         for block in self.blocks:
-            x = block(x, rope)
+            x = block(x, rope, attn_mask)
         return x
 
 
@@ -98,7 +105,7 @@ class _Block(nn.Module):
         self.proj["ffn_up_gate"] = nn.Linear(dim, 2 * ffn_dim, bias=False)
         self.proj["ffn_down"] = nn.Linear(ffn_dim, dim, bias=False)
 
-    def forward(self, x, rope, modulation):
+    def forward(self, x, rope, modulation, attn_mask=None):
         shift_a, scale_a, gate_a, shift_f, scale_f, gate_f = modulation.unbind(1)
         y = self.norm1(x) * (1 + scale_a[:, None]) + shift_a[:, None]
         # the reference reads proj["q"].weight.dtype; Fizgig wraps (LoRA) or quantises (INT8 / NF4) that Linear, so the
@@ -107,7 +114,7 @@ class _Block(nn.Module):
         y = y.to(dtype)
         q = self.q_norm(self.proj["q"](y).unflatten(-1, (self.heads, -1))).flatten(2)
         k = self.k_norm(self.proj["k"](y).unflatten(-1, (self.heads, -1))).flatten(2)
-        x = x + self.proj["o"](_attention(q, k, self.proj["v"](y), rope, self.heads)) * gate_a[:, None]
+        x = x + self.proj["o"](_attention(q, k, self.proj["v"](y), rope, self.heads, attn_mask)) * gate_a[:, None]
         y = self.norm2(x) * (1 + scale_f[:, None]) + shift_f[:, None]
         hidden, gate = self.proj["ffn_up_gate"](y.to(dtype)).chunk(2, -1)
         return x + self.proj["ffn_down"](_situ(hidden, gate)) * gate_f[:, None]
@@ -158,6 +165,7 @@ class MOSSImageDiT(nn.Module):
         self.gradient_checkpointing = False
         self.blocks_to_swap = 0
         self.offloader = None
+        self.batched_forward = True     # batch > 1 runs all samples through each block at once (False: per sample)
 
     def enable_gradient_checkpointing(self, on: bool = True):
         self.gradient_checkpointing = on
@@ -230,6 +238,8 @@ class MOSSImageDiT(nn.Module):
         time = self.time_embedding(embedding.to(self._io_dtype(self.time_embedding[0]))).float()
         mod = self.shared_block_modulation(time.to(self._io_dtype(self.shared_block_modulation))).view(batch, 6, -1)
         head = self.video_head_modulation(time.to(self._io_dtype(self.video_head_modulation))).view(batch, 2, -1)
+        if batch > 1 and self.batched_forward:
+            return self._forward_batched(hidden_states, encoder_hidden_states, mask, mod, head, skip)
         layers = list(self.layers) if self.blocks_to_swap else None
         outputs = []
         for index in range(batch):
@@ -259,6 +269,57 @@ class MOSSImageDiT(nn.Module):
             x = self.final_linear_video(x.to(self._io_dtype(self.final_linear_video)))
             outputs.append(x.transpose(1, 2).reshape(1, -1, height, width))
         return torch.cat(outputs)
+
+    def _forward_batched(self, hidden_states, encoder_hidden_states, mask, mod, head, skip):
+        """The per-sample loop's maths for B samples in one pass. Each sample's real text tokens are packed to the
+        front and zero-padded to the batch's longest caption; a key-padding mask keeps every real token from seeing
+        the padding (padded queries compute throwaway rows, dropped with the text at the end). RoPE is per sample:
+        the image's t coordinate is that sample's own text length, as in the loop."""
+        batch, _, height, width = hidden_states.shape
+        device, hw = hidden_states.device, height * width
+        mask = mask.bool()
+        lengths = [int(n) for n in mask.sum(1).tolist()]
+        if min(lengths) == 0:
+            raise ValueError("Each sample needs at least one valid text token.")
+        longest = max(lengths)
+        padded = any(n != longest for n in lengths)
+        context = encoder_hidden_states.new_zeros(batch, longest, encoder_hidden_states.shape[-1])
+        for index in range(batch):
+            context[index, :lengths[index]] = encoder_hidden_states[index, mask[index]]
+        video = hidden_states.flatten(2).transpose(1, 2)
+        video = self.video_embedder(video.to(self._io_dtype(self.video_embedder)).contiguous())
+        ropes = []
+        for n in lengths:
+            r = self.rope(height, width, n, device)
+            if n < longest:
+                r = torch.cat((r, r.new_zeros(1, longest - n, r.shape[-1])), 1)
+            ropes.append(r)
+        rope = torch.cat(ropes).to(video.dtype)
+        text_mask = full_mask = None
+        if padded:
+            real = torch.arange(longest, device=device)[None] < torch.tensor(lengths, device=device)[:, None]
+            text_mask = real[:, None, None, :]
+            full_mask = torch.cat((real.new_ones(batch, hw), real), 1)[:, None, None, :]
+        text = self.text_embedder(context, rope[:, hw:], text_mask)
+        x = torch.cat((video, text), 1)
+        extra = (full_mask,) if padded else ()
+        layers = list(self.layers) if self.blocks_to_swap else None
+        for i, layer in enumerate(self.layers):
+            if self.blocks_to_swap:
+                self.offloader.wait_for_block(i)
+            if i not in skip:
+                if getattr(layer, "_handles_checkpointing", False):
+                    x = layer(x, rope, mod, *extra)
+                elif torch.is_grad_enabled() and self.gradient_checkpointing:
+                    x = checkpoint(layer, x, rope, mod, *extra, use_reentrant=False)
+                else:
+                    x = layer(x, rope, mod, *extra)
+            if self.blocks_to_swap:
+                self.offloader.submit_move_blocks_forward(layers, i)
+        x = self.final_norm_video(x[:, :hw].to(self.final_norm_video.weight.dtype))
+        x = x * (1 + head[:, 1, None]) + head[:, 0, None]
+        x = self.final_linear_video(x.to(self._io_dtype(self.final_linear_video)))
+        return x.transpose(1, 2).reshape(batch, -1, height, width)
 
 
 # ---- weights ---------------------------------------------------------------------------------------------------

@@ -212,8 +212,42 @@ class SDXLDriver(FamilyDriver):
         xt = state["xt"]
         return self._unet(dit, xt, torch.tensor([state["t"]], device=xt.device), cond, h, w)
 
+    def _batched_loss(self, dit, latents, cond, generator, min_t, max_t):
+        """Batch Size > 1: each image its own DDPM timestep and noise, drawn exactly as B batch-1 steps draw them;
+        the loss (Min-SNR weighted per image when on) is their mean. Captions of different lengths (77-token
+        chunks) are brought to one by repetition (pad_conditioning: exact, as cross-attention has no mask) - never
+        by the dataset's zero rows, which are dropped here first."""
+        n = latents.shape[0]
+        hs, pooled = cond["hidden_states"], cond["pooled"]
+        if hs.dim() != 3 or hs.shape[0] != n:
+            raise RuntimeError(f"SDXL: {n} images but {hs.shape[0] if hs.dim() == 3 else 1} captions in the batch")
+        valid = cond.get("hidden_states__valid")
+        ones = [{"hidden_states": hs[i][valid[i].to(hs.device)] if valid is not None else hs[i],
+                 "pooled": pooled[i]} for i in range(n)]
+        ones = self.pad_conditioning([{k: _batched(k, v) for k, v in c.items()} for c in ones])
+        cond = {k: torch.cat([c[k] for c in ones]) for k in ("hidden_states", "pooled")}
+        sts = [self.noise_latents(latents[i:i + 1], generator, min_t=min_t, max_t=max_t) for i in range(n)]
+        xt = torch.cat([s["xt"] for s in sts])
+        x0 = torch.cat([s["x0"] for s in sts])
+        noise = torch.cat([s["noise"] for s in sts])
+        a = torch.stack([s["a"] for s in sts]).view(-1, 1, 1, 1)
+        h, w = sts[0]["hw"]
+        t = torch.tensor([s["t"] for s in sts], device=xt.device)
+        pred = self._unet(dit, xt, t, cond, h, w).float()
+        target = (a.sqrt() * noise - (1 - a).sqrt() * x0) if self._v_pred() else noise
+        per = (pred - target).pow(2).flatten(1).mean(1)                                 # each image's MSE
+        gamma = float(self.options.get("min_snr") or 0.0)
+        if gamma:
+            snr = (a / (1 - a)).flatten()
+            per = per * (torch.clamp(snr, max=gamma) / ((snr + 1) if self._v_pred() else snr))
+        return per.mean(), {"t": sum(s["t"] for s in sts) / 999.0 / n, "ts": [s["t"] / 999.0 for s in sts]}
+
     def training_loss(self, dit, latents, cond, generator, *, min_t=0.0, max_t=1.0, refs=None, diff_ref=None,
                       diff_weight=0.0, loss_mask=None, prior=None):
+        if latents.shape[0] > 1:
+            if diff_ref is not None:
+                raise RuntimeError("SDXL: image-pair sliders train at Batch Size 1")
+            return self._batched_loss(dit, latents, cond, generator, min_t, max_t)
         st = self.noise_latents(latents, generator, min_t=min_t, max_t=max_t)
         a, x0, noise = st["a"], st["x0"], st["noise"]
         base = prior_base(prior, loss_mask, lambda: self.predict(dit, st, cond))

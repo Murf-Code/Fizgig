@@ -620,6 +620,15 @@ class BucketBatchManager:
         # Stack tensors per key
         stacked: dict[str, Any] = {}
         for key, tensors in batch_tensor_data.items():
+            if key.startswith("cond__") and len({tuple(t.shape) for t in tensors}) > 1 \
+                    and len({t.dim() for t in tensors}) == 1 and len({tuple(t.shape[1:]) for t in tensors}) == 1:
+                # Batch Size > 1: per-caption conditioning of different lengths (dim 0) - zero-padded to the batch's
+                # longest so it stacks, with `<key>__valid` (True = a real row) for the family's DiT to mask. Only
+                # reached where torch.stack would have raised, so batch 1 never gets here
+                n = max(t.shape[0] for t in tensors)
+                stacked[key + "__valid"] = torch.stack([torch.arange(n) < t.shape[0] for t in tensors])
+                tensors = [t if t.shape[0] == n else torch.cat(
+                    [t, t.new_zeros((n - t.shape[0],) + tuple(t.shape[1:]))], dim=0) for t in tensors]
             stacked[key] = torch.stack(tensors)
 
         if self.timestep_pool is not None:

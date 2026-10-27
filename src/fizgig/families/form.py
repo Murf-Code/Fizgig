@@ -44,7 +44,7 @@ DEFAULTS = {
     "NETWORK_TYPE": "LoRA (standard)", "LOKR_FACTOR": "8", "MAX_TRAIN_EPOCHS": "12", "SAVE_EVERY_N_EPOCHS": "1",
     "SAVE_LATER": False, "SAVE_UNTIL_EPOCH": "10", "SAVE_EVERY_AFTER": "1",
     "SEED": "42", "BLOCKS_SWAP": "Auto (detect from GPU)", "RESUME_TRAINING": "", "OPTIMIZER_TYPE": "adamw8bit",
-    "OPTIMIZER_ARGS": "", "GRADIENT_ACCUMULATION": "1", "MAX_GRAD_NORM": "1.0", "LR_SCHEDULER": "constant",
+    "OPTIMIZER_ARGS": "", "GRADIENT_ACCUMULATION": "1", "DATASET_BATCH_SIZE": "1", "MAX_GRAD_NORM": "1.0", "LR_SCHEDULER": "constant",
     "LR_WARMUP_STEPS": "", "ADAPTIVE_LR": False, "ADAPTIVE_LR_MIN": "1e-5", "ADAPTIVE_LR_MAX": "4e-4",
     "CONTEXT_LORA_PATH": "", "CONTEXT_LORA_STRENGTH": "1.0", "FAMILY_DOP": False, "FAMILY_MULTI_PERSON": False, "FAMILY_DOP_TRIGGER": "",
     "FAMILY_DOP_CLASS": "", "FAMILY_DOP_TRIGGER2": "", "FAMILY_DOP_CLASS2": "",
@@ -588,9 +588,16 @@ def form(desc):
     add("optimizer", "Optimizer", "training", [
         _row("OPTIMIZER_TYPE", "Optimizer Type", "choice", choices=_optimizers()),
         _row("OPTIMIZER_ARGS", "Optimizer Args"),
-        _row("GRADIENT_ACCUMULATION", "Gradient Accumulation", hint="Every model trains one image at a time. For a "
+        _row("DATASET_BATCH_SIZE", "Batch Size", hint="Images trained together in one step (same size, from one "
+             "bucket). Faster per image when the card has room; more memory. 2 or 3 is the most a 12 GB card "
+             "usually fits at 1 MP - above that, expect block swap. Above 1, these switch off: " +
+             "; ".join(launch.BATCH_OFF) + ". Sliders, edit, fine-tune and multi-person runs stay at 1.",
+             default="1") if getattr(desc, "supports_batch", False) else None,
+        _row("GRADIENT_ACCUMULATION", "Gradient Accumulation", hint=("Raise this for a larger effective batch at "
+             "no extra memory: the same averaged gradient as a bigger batch." if getattr(desc, "supports_batch", False)
+             else "Every model trains one image at a time. For a "
              "larger effective batch, raise this: the same averaged gradient as a bigger batch, at the memory of "
-             "batch 1."),
+             "batch 1.")),
         _row("MAX_GRAD_NORM", "Max Grad Norm"),
     ], collapsed=True)
     add("other", "Other Options", "training", [
@@ -1181,6 +1188,25 @@ def state(desc, values, image_folder="", captioner="", speed_file=False, checkpo
                                                 "or download it from Preferences.")
             elif state == "done":
                 notes["FAMILY_PREVIEW_LOOK"] = "Downloaded: previews use it from the next one."
+    # Batch Size (a family with supports_batch): above 1, what assumes one image a step greys out, with why
+    if getattr(desc, "supports_batch", False):
+        try:
+            asked = int(str(values.get("DATASET_BATCH_SIZE", "1")).strip() or 1)
+        except ValueError:
+            asked = 1
+        bs = launch.batch_size(desc, {**values, "batch_size": asked})
+        if asked > 1 and bs == 1:
+            notes["DATASET_BATCH_SIZE"] = ("This kind of training runs at Batch Size 1 (" +
+                                           ", ".join(launch.BATCH_ONE_KINDS) + " always do).")
+        elif bs > 1:
+            off = ("KREA2_LOSS_WATCH", "KREA2_PER_IMAGE_LR", "KREA2_WARMUP_LOOK", "KREA2_AUTO_RECAPTION")
+            disabled |= set(off)
+            for k in off:
+                notes.setdefault(k, f"Off at Batch Size {bs}: a step's loss is the batch's average, not one image's.")
+            if values.get("FAMILY_DOP"):
+                notes["FAMILY_PEOPLE_MODE"] = f"DOP is off at Batch Size {bs}: set Batch Size 1 to use it."
+            notes["DATASET_BATCH_SIZE"] = (f"Batch Size {bs}: switched off - " + "; ".join(launch.BATCH_OFF) + "." +
+                                           (" Above 3 will likely need block swap on a 12 GB card." if bs > 3 else ""))
     return {"hidden": sorted(hidden), "disabled": sorted(disabled), "notes": notes, "kind": kind,
             "media": sorted(media), "turbo_file": bool(speed_file), "force": force, "actions": actions,
             "shown": shown, "checkpoint_file": bool(checkpoint_file), "labels": labels, "checkpoint_turbo": ck_turbo,
@@ -1341,7 +1367,8 @@ def inputs(desc, values, *, models, python, repo_dir, image_folder, cache_root, 
         MASKED_TRAINING=b("MASKED_TRAINING") and desc.masked_training, MASK_FLOOR=s("MASK_FLOOR"),
         MASK_PRIOR=s("MASK_PRIOR"),
         python=python, repo_dir=repo_dir, models=models, image_folder=image_folder,
-        caption_ext=s("DATASET_CAPTION_EXT") or ".txt", batch_size=1, megapixels=s("DATASET_MEGAPIXELS"),
+        caption_ext=s("DATASET_CAPTION_EXT") or ".txt", batch_size=(s("DATASET_BATCH_SIZE") or "1") if getattr(desc, "supports_batch", False) else 1,
+        megapixels=s("DATASET_MEGAPIXELS"),
         clip_megapixels=s("CLIP_MEGAPIXELS") if "clip" in desc.media else "",
         enable_bucket=b("ENABLE_BUCKET"), no_upscale=b("BUCKET_NO_UPSCALE"), cache_root=cache_root,
         blocks_swap=s("BLOCKS_SWAP"), enable_cache=b("ENABLE_CACHE"), resuming=bool(s("RESUME_TRAINING")),

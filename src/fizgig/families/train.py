@@ -38,6 +38,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 from fizgig.dataset.config import (BlueprintGenerator, ConfigSanitizer,  # noqa: E402
                                    generate_dataset_group_by_blueprint, load_user_config)
 from fizgig.families import quant  # noqa: E402
+from fizgig.families.batching import batch_features, batch_plan as _batch_plan  # noqa: E402
 from fizgig.families.lora import FamilyLoRA  # noqa: E402
 from fizgig.families.registry import get as get_family  # noqa: E402
 from fizgig.training.adaptive_lr import AdaptiveLR  # noqa: E402
@@ -1212,11 +1213,17 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
             logger.info("[slider] previews use the pairs' caption: '%s'", shared)
     if slider:
         driver.slider_setup(group)           # e.g. H3: still previews unless the pairs are clips
-    for ds in group.datasets:
-        if getattr(ds, "batch_size", 1) != 1:
-            raise RuntimeError("Fizgig trains one image at a time: set batch_size = 1 in the dataset config. For a "
-                               "larger effective batch use --gradient_accumulation_steps (the same averaged "
-                               "gradient, at the memory of batch 1).")
+    batch_size = _batch_plan(desc, group, slider=slider, finetune=finetune)
+    if batch_size > 1:
+        _f = batch_features(batch_size, dict(log_per_image_loss=log_per_image_loss, per_image_lr=per_image_lr,
+                                             auto_recaption=auto_recaption, warmup_look_outliers=warmup_look_outliers,
+                                             dop=dop, lr_boost=lr_boost))
+        log_per_image_loss, per_image_lr, auto_recaption = (_f["log_per_image_loss"], _f["per_image_lr"],
+                                                            _f["auto_recaption"])
+        warmup_look_outliers, dop, lr_boost = _f["warmup_look_outliers"], _f["dop"], _f["lr_boost"]
+        logger.info(f"[batch] Batch Size {batch_size}: images of one bucket train together (a bucket's last batch "
+                    "may be smaller)" + (" - above 3 a 12 GB card will likely need block swap" if batch_size > 3
+                                         else ""))
     loader = DataLoader(group, batch_size=1, shuffle=True, num_workers=0,
                         collate_fn=(lambda b: b[0]) if slider_prompts else _Collator(shared_epoch, group))
     steps_per_epoch = len(loader)
@@ -1267,6 +1274,7 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
         req = (precision, blocks_to_swap)
         res = user_config.get("general", {}).get("resolution") or [1024, 1024]
         mp = (res[0] * res[1] if isinstance(res, (list, tuple)) else res * res) / 1e6
+        mp *= batch_size                     # activations scale with the batch: priced as resolution x batch
         own = driver.plan_run(precision, blocks_to_swap, group=group, run=dict(
             dit_path=dit_path, network_type=network_type, network_dim=network_dim, lokr_factor=lokr_factor,
             optimizer_type=optimizer_type, training_adapter=training_adapter, context_lora_path=context_lora_path,
@@ -1275,7 +1283,7 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
             precision, blocks_to_swap, why = own
         else:
             precision, blocks_to_swap, why = quant.plan(desc, driver, precision, blocks_to_swap, megapixels=mp)
-            why += f" at {mp:.2f} MP"
+            why += f" at {mp:.2f} MP" + (f" (resolution x batch {batch_size})" if batch_size > 1 else "")
             if share_worker is not None:
                 # a helper's share trains at the lead's precision (the same base numbers): say so plainly, before the
                 # model loads, when this card can't hold it even with the most blocks swapped (the lead trains on)
