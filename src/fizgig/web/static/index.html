@@ -241,27 +241,27 @@
               <div class="card-title">1 · What to do</div>
               <div class="card-content">
                 <label class="radio-label"><input type="radio" name="prepMode" value="Auto Prep (Face Crops)">
-                  Resize + face close-ups — recommended for people</label>
-                <div class="field-hint radio-hint">Every photo is resized and saved as PNG, plus a zoomed-in copy of
-                  the face saved beside it: more detail shots for better likeness. 💡 Works best on high-res
-                  originals: if your photos are already shrunk to training size, the face close-ups come out soft.
-                  Start from the biggest versions you have.</div>
+                  Resize + close-up crops (recommended for people and characters)</label>
+                <div class="field-hint radio-hint">Every picture is resized and saved as PNG, plus a zoomed-in crop of
+                  what you picked under Crop to (a face, or anything you type) saved beside it: more detail shots for
+                  better likeness. 💡 Works best on high-res originals: if your pictures are already shrunk to
+                  training size, the crops come out soft. Start from the biggest versions you have.</div>
                 <label class="radio-label"><input type="radio" name="prepMode" value="Resize Only"> Resize only</label>
                 <div class="field-hint radio-hint">Just resize and convert to PNG. Use for styles, objects, or
                   already-cropped sets.</div>
                 <label class="radio-label"><input type="radio" name="prepMode" value="Face Crop Only">
-                  Face close-ups only</label>
-                <div class="field-hint radio-hint">Keep only the cropped face from each photo: the full shot is not
-                  kept.</div>
+                  Close-up crops only</label>
+                <div class="field-hint radio-hint">Keep only the crop from each picture (a face, or whatever you
+                  picked under Crop to). The full picture isn't kept.</div>
                 <div class="field-row prep-opts">
                   <span class="field-label">Target megapixels:</span><select id="prepMp" class="w-combo"></select>
                   <span class="field-hint">MP (larger images shrink to fit; smaller are left alone)</span>
                 </div>
                 <div class="field-row prep-opts prep-face">
-                  <span class="field-label">Face:</span><select id="prepFace" class="w-combo"></select>
+                  <span class="field-label">Crop to:</span><select id="prepFace" class="w-combo"></select>
                   <span class="field-label">Padding:</span>
                   <input type="text" id="prepPadding" class="w-num" value="20">
-                  <span class="field-hint">% around the face</span>
+                  <span class="field-hint">% around the crop</span>
                 </div>
                 <div class="field-row prep-opts prep-face" id="prepFindRow" style="display:none">
                   <span class="field-label">Find this:</span>

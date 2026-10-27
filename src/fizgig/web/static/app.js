@@ -5176,8 +5176,8 @@ function faceSettingsShow(f, msg) {
   $("prepYoloRow").style.display = f.detector === "insightface" ? "none" : "";
   $("prepDetectorHint").textContent = FACE_HINTS[f.detector] || "";
   $("prepFinderNow").textContent = f.detector === "insightface" ?
-    "Face finder: People. For furry, anime or drawn faces, pick Anime/furry/drawn under Anime/furry/drawn characters below." :
-    `Face finder: ${(f.detectors.find((d) => d[0] === f.detector) || [, f.detector])[1]}.`;
+    "Face finder (for the face choices): People. For furry, anime or drawn faces, pick Anime/furry/drawn under Anime/furry/drawn characters below." :
+    `Face finder (for the face choices): ${(f.detectors.find((d) => d[0] === f.detector) || [, f.detector])[1]}.`;
   $("prepIdentityHint").textContent = f.identity === "auto" && f.detector !== "auto" ?
     `With this face finder that means ${f.detector === "yolo" ? "Anime/furry/drawn" : "People (the default)"}.` :
     LOOK_HINTS[f.identity] || "";
