@@ -156,7 +156,7 @@ RefMod is in the web UI's model list, right after MiniMax H3, with its RefMod ca
 
 ## Image Prep
 
-The Image Prep tab: resize and convert to PNG, face close-ups, the What will happen summary, Test face detection on one photo, the Look Consistency Filter (pick 3 baselines from the folder's pictures, scan, Auto-Suggest, mark, move the marked ones to `excluded_by_look`), and Make masks for [masked training](MASKED_TRAINING.md). It all runs on the Fizgig machine, on its CPU. Face tools need insightface there (`install_fizgig.py` adds it). Gizmo, for cutting video clips and voice segments, opens in its own window, so it stays in the desktop app.
+The Image Prep tab: resize and convert to PNG, face close-ups, the What will happen summary, Test the crop on one photo (its words and hover text follow Crop to), the Look Consistency Filter (pick 3 baselines from the folder's pictures, scan, Auto-Suggest, mark, move the marked ones to `excluded_by_look`), and Make masks for [masked training](MASKED_TRAINING.md). It all runs on the Fizgig machine, on its CPU. Face tools need insightface there (`install_fizgig.py` adds it). Gizmo, for cutting video clips and voice segments, opens in its own window, so it stays in the desktop app.
 
 ## Captions
 

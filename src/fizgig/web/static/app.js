@@ -4483,11 +4483,8 @@ async function loadPrep() {
     S.prep.opts = await api("/api/prep/options");
     const o = S.prep.opts, saved = S.prepSaved || {};
     $("prepMp").innerHTML = ""; for (const m of o.megapixels) $("prepMp").append(el("option", {value: m, text: m}));
-    $("prepFace").innerHTML = ""; for (const f of o.faces) $("prepFace").append(el("option", {value: f, text: f}));
-    if (o.other) $("prepFace").append(el("option", {value: o.other, text: o.other}));   // Other…: Find this (SAM 3.1)
+    prepFaceOptions(o.face_settings, saved.face);
     $("prepMp").value = saved.mp || "1.0";
-    $("prepFace").value = saved.face || "Largest Face";
-    if (!$("prepFace").value) $("prepFace").value = "Largest Face";
     $("prepFind").value = saved.find || "";
     $("prepCapCopy").checked = saved.capCopy !== false;             // on unless turned off
     $("prepCapTrim").checked = !!saved.capTrim;
@@ -5063,6 +5060,27 @@ function meTool(t) {
   $("meTool").querySelectorAll("button").forEach((b) => b.classList.toggle("active", b.dataset.tool === t));
 }
 
+// Crop to's choices: the faces, then the YOLO face model's other classes (Fdetailer's Penis, Paw pads, ...: only with
+// the YOLO face finder, read from the model itself), then Other…. `want` is kept when it is still offered.
+function prepFaceOptions(f, want) {
+  const o = S.prep.opts || {}, sel = $("prepFace"), keep = want || sel.value;
+  sel.innerHTML = ""; for (const x of o.faces || []) sel.append(el("option", {value: x, text: x}));
+  for (const c of (f || {}).classes || []) sel.append(el("option", {value: c.value, text: c.label}));
+  if (o.other) $("prepFace").append(el("option", {value: o.other, text: o.other}));   // Other…: Find this (SAM 3.1)
+  sel.value = keep || "Largest Face";
+  if (!sel.value) sel.value = "Largest Face";
+  return sel.value !== keep;
+}
+const prepClass = () => $("prepFace").value.startsWith("YOLO class: ");
+// Find this phrases the YOLO face model has a class for (case, spaces, _ and - don't matter: "paw pads" = pawpads):
+// it finds those itself, so SAM 3.1 is only needed for the rest
+const classKey = (t) => String(t || "").toLowerCase().replace(/[\s_-]+/g, "");
+function prepYoloWords() {
+  const names = new Set((((S.prep || {}).face || {}).yolo_names || []).map(classKey));
+  const words = prepSettings().find.split(/[,\n]/).map((w) => w.trim()).filter(Boolean);
+  return {words, yolo: words.filter((w) => names.has(classKey(w)))};
+}
+
 // the Face dropdown's Other…: a Find this box, found with SAM 3.1 (the Masks card's download). The note why Prepare
 // is blocked, or "" (an empty box, or SAM 3.1 not downloaded yet)
 const prepOther = () => ((S.prep.opts || {}).other || "Other…") === $("prepFace").value;
@@ -5078,8 +5096,8 @@ function prepFindBlocked() {
   const p = prepSettings();
   if (p.mode === "Resize Only" || !prepOther()) return "";
   if (!p.find.split(/[,\n]/).some((w) => w.trim())) return "Type what to find in Find this (e.g. paw, tail, hand).";
-  const sam = (S.prep.maskOpts || {}).sam;
-  if (sam && !sam.path) return "Finding by words needs SAM 3.1: press Download on the Masks card below first.";
+  const sam = (S.prep.maskOpts || {}).sam, yw = prepYoloWords();
+  if (sam && !sam.path && yw.yolo.length < yw.words.length) return "Finding by words needs SAM 3.1: press Download on the Masks card below first.";
   return "";
 }
 function prepBlocked() { return prepFindBlocked() || prepTrimBlocked(); }
@@ -5091,11 +5109,20 @@ function prepFindShow() {
   const find = prepFindBlocked(), trim = prepTrimBlocked();
   prepTaggerShow();
   $("prepTrimNote").textContent = trim;
-  $("prepFindHint").textContent = find || "SAM 3.1 finds what you type. Separate things with commas; each gets its " +
+  const yw = prepYoloWords(), who = !yw.yolo.length ? "SAM 3.1 finds what you type." :
+    yw.yolo.length === yw.words.length ? "Your YOLO face model finds these, so SAM 3.1 isn't needed." :
+    `Your YOLO face model finds ${yw.yolo.join(", ")}; SAM 3.1 finds the rest.`;
+  $("prepFindHint").textContent = find || who + " Separate things with commas; each gets its " +
     "own close-up (the biggest one found). Pictures where nothing is found are left whole.";
   $("prepFindHint").classList.toggle("problems", !!find);
-  if (!S.prep.running) $("prepRun").disabled = !!(find || trim);
-  $("prepTest").disabled = !faceOn || (other ? !!find : !S.prep.opts.face_tools);
+  if (!S.prep.running) { $("prepRun").disabled = !!(find || trim); $("prepRun").title = find || trim; }
+  // the Test button: its words follow Crop to, and when it's greyed out, hovering says why (the one place it's set)
+  const test = !faceOn ? "Resize only makes no crops, so there's nothing to test." : other ? find :
+    (S.prep.opts || {}).face_tools ? "" : "Face detection isn't installed on the Fizgig computer: run install_fizgig.py there to add it.";
+  $("prepTest").textContent = !faceOn ? "Test the crop on one photo…" : other || prepClass() ? "Test finding this on one photo…" :
+    "Test the face crop on one photo…";
+  $("prepTest").disabled = !!test;
+  $("prepTest").title = test;
 }
 
 // Trim tags that don't fit: the chosen tagger's download (taggers.py, through /api/masks/info's "taggers"; an older
@@ -5136,7 +5163,6 @@ async function prepSummary() {
   const p = prepSettings(), faceOn = p.mode !== "Resize Only";
   document.querySelectorAll(".prep-face select, .prep-face input").forEach((i) => {
     i.disabled = !faceOn || (!S.prep.opts.face_tools && !(i.id === "prepFind" || (i.id === "prepFace" && prepOther()))); });
-  $("prepTest").disabled = !faceOn || !S.prep.opts.face_tools;
   $("prepCapCopy").disabled = !faceOn;
   $("prepCapTrim").disabled = !faceOn || !$("prepCapCopy").checked;
   prepFindShow();
@@ -5164,6 +5190,7 @@ async function pollPrep() {
     const was = S.prep.running;
     S.prep.running = r.state === "running";
     $("prepRun").disabled = S.prep.running || !!prepBlocked();
+    $("prepRun").title = S.prep.running ? "" : prepBlocked();
     if (S.prep.running) $("prepRun").textContent = "Preparing…";
     $("prepState").textContent = S.prep.running ? "Working on the Fizgig computer: you can leave this page." :
       r.state === "done" ? "Done." : r.state === "failed" ? "It stopped with an error: see the log." : "";
@@ -5212,6 +5239,7 @@ function faceSettingsShow(f, msg) {
     $(id).value = v;
   }
   if (document.activeElement !== $("prepYolo")) $("prepYolo").value = f.yolo_model;
+  if (S.prep.opts && $("prepFace").options.length) prepFaceOptions(f);   // the YOLO model's classes follow it
   $("prepYoloRow").style.display = f.detector === "insightface" ? "none" : "";
   $("prepDetectorHint").textContent = FACE_HINTS[f.detector] || "";
   $("prepFinderNow").textContent = f.detector === "insightface" ?
@@ -5227,7 +5255,7 @@ function faceSettingsShow(f, msg) {
   if (custom) $("prepChars").open = true;              // never hide a choice that is changing what you get
 }
 async function faceSettingsSave(changes, msg) {
-  try { faceSettingsShow(await api("/api/prep/face_settings", changes), msg); }
+  try { faceSettingsShow(await api("/api/prep/face_settings", changes), msg); prepSummary(); }
   catch (e) { $("prepFaceMsg").textContent = e.message; }
 }
 function faceSettingsWire() {
@@ -5257,8 +5285,8 @@ function faceSettingsWire() {
 function prepTest() {
   pick(S.imageFolder, false, async (path) => {
     const host = $("prepTestResult");
-    const other = prepOther();
-    host.replaceChildren(el("div", {class: "field-hint", text: other ? "Finding… (the first time loads SAM 3.1)" :
+    const other = prepOther() || prepClass();
+    host.replaceChildren(el("div", {class: "field-hint", text: prepOther() ? "Finding… (the first time loads SAM 3.1)" :
       "Finding faces… (the first time loads the face model)"}));
     try {
       const r = await api("/api/prep/test", {path, face: $("prepFace").value, find: $("prepFind").value});
