@@ -46,7 +46,8 @@ DEFAULTS = {
     "SEED": "42", "BLOCKS_SWAP": "Auto (detect from GPU)", "RESUME_TRAINING": "", "OPTIMIZER_TYPE": "adamw8bit",
     "OPTIMIZER_ARGS": "", "GRADIENT_ACCUMULATION": "1", "DATASET_BATCH_SIZE": "1", "MAX_GRAD_NORM": "1.0", "LR_SCHEDULER": "constant",
     "LR_WARMUP_STEPS": "", "VALIDATION_LOSS": False, "VALIDATION_IMAGES": "4", "VALIDATION_TIMESTEPS": "4",
-    "VALIDATION_SEED": "42", "VALIDATION_EVERY_STEPS": "0", "VALIDATION_PICKED": [], "ADAPTIVE_LR": False, "ADAPTIVE_LR_MIN": "1e-5", "ADAPTIVE_LR_MAX": "4e-4",
+    "VALIDATION_SEED": "42", "VALIDATION_EVERY_STEPS": "0", "VALIDATION_PICKED": [],
+    "VALIDATION_EARLY_STOP": False, "VALIDATION_PATIENCE": "3", "ADAPTIVE_LR": False, "ADAPTIVE_LR_MIN": "1e-5", "ADAPTIVE_LR_MAX": "4e-4",
     "CONTEXT_LORA_PATH": "", "CONTEXT_LORA_STRENGTH": "1.0", "FAMILY_DOP": False, "FAMILY_MULTI_PERSON": False, "FAMILY_DOP_TRIGGER": "",
     "FAMILY_DOP_CLASS": "", "FAMILY_DOP_TRIGGER2": "", "FAMILY_DOP_CLASS2": "",
     "FAMILY_DOP_TRIGGER3": "", "FAMILY_DOP_CLASS3": "", "FAMILY_DOP_TRIGGER4": "", "FAMILY_DOP_CLASS4": "",
@@ -746,6 +747,12 @@ def form(desc):
         _row("VALIDATION_EVERY_STEPS", "How often to check", "valevery", "Every epoch checks once at the end of "
              "each epoch (recommended). Every N steps checks that often instead, starting once each picked image "
              "has come up in training.", default="0", n_default=str(VALIDATION_N_DEFAULT)),
+        _row("VALIDATION_EARLY_STOP", "Stop when validation stops improving", "check",
+             "Finishes the run once the validation loss hasn't got better for the Patience number of checks in a "
+             "row. The best check's LoRA becomes the final LoRA; the normal saves are kept. Off by default.",
+             full=True),
+        _row("VALIDATION_PATIENCE", "Patience: checks", hint="How many checks in a row without a better validation "
+             "loss before the run stops (a tiny change, under 0.1%, doesn't count as better)."),
     ], collapsed=True)
     # the Training tab's order: what every run sets, then (after the Extras divider) the features you choose to use
     order = {sid: i for i, sid in enumerate(TRAINING_ORDER)}
@@ -944,6 +951,12 @@ def state(desc, values, image_folder="", captioner="", speed_file=False, checkpo
         disabled.add("VALIDATION_EVERY_N")
     if not _ve.isdigit():
         notes["VALIDATION_EVERY_STEPS"] = "Steps must be a whole number above 0 - checking every epoch until then."
+    _on = lambda k: str(values.get(k, "")).lower() not in ("", "false", "0", "off", "none")
+    if not _on("VALIDATION_LOSS"):                      # early stop goes by the validation loss
+        disabled |= {"VALIDATION_EARLY_STOP", "VALIDATION_PATIENCE"}
+        tips["VALIDATION_EARLY_STOP"] = "Turn on Fixed validation loss first: early stop goes by it."
+    elif not _on("VALIDATION_EARLY_STOP"):
+        disabled.add("VALIDATION_PATIENCE")
     if picked_list(values.get("VALIDATION_PICKED")):    # your own validation images: the count is not used
         disabled.add("VALIDATION_IMAGES")
         notes["VALIDATION_IMAGES"] = "Not used: your picked images are checked instead."

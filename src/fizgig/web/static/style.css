@@ -2266,6 +2266,9 @@ a.pick-pill-vast:hover { border-color: var(--success); }
 .lg-ravg { fill: none; stroke: #FFC233; stroke-width: 2.5; }
 .lg-val { fill: none; stroke: #12C2B0; stroke-width: 2.5; stroke-dasharray: 6 3; }
 .lg-val-dot { fill: #12C2B0; stroke: #fff; stroke-width: 1.2; }
+.loss-graph-svg .lg-stop { stroke: #E5484D; stroke-width: 1.5; stroke-dasharray: 5 4; vector-effect: non-scaling-stroke; }
+.loss-graph-svg .lg-stop-label { fill: #E5484D; }
+.loss-graph-svg .lg-stop-best { fill: none; stroke: #E5484D; stroke-width: 2; vector-effect: non-scaling-stroke; }
 .lg-sw-best { width: 9px; height: 9px; border: 0; border-radius: 50%; background: var(--success, #10B981); }
 .lg-sw-epoch { width: 0; height: 12px; border-top: 0; border-left: 1px solid var(--border); }
 .loss-graph-svg .lg-axis-title { font-weight: 600; }

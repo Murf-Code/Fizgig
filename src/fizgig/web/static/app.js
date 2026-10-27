@@ -4157,6 +4157,22 @@ function lossGraph(data) {
       for (const part of valSections(val)) line("lg-val", part, 2, VY);
       dots("lg-val-dot", val, 2, (p) => `Validation at step ${p[0]} (epoch ${p[1]}): ${p[2].toFixed(4)}`, VY);
     }
+    // early stop: a dashed line where the run stopped, and a ring on the check whose LoRA is the final one
+    const es = data.stop;
+    if (es) {
+      const sx = X(es.step);
+      const ln = mk("line", {x1: sx, x2: sx, y1: T, y2: H - B, class: "lg-stop"});
+      const lt = mk("title", {}); lt.textContent = `Stopped early at step ${es.step}: validation stopped improving`;
+      ln.append(lt); svg.append(ln);
+      const tx = mk("text", {x: sx - 4, y: T + 14, class: "lg-axis lg-stop-label", "text-anchor": "end"});
+      tx.textContent = "early stop"; svg.append(tx);
+      if (set.val && hasVal) {
+        const ring = mk("circle", {cx: X(es.best_step), cy: VY(es.best), r: 6, class: "lg-stop-best"});
+        const rt = mk("title", {});
+        rt.textContent = `Best validation ${es.best.toFixed(4)} at step ${es.best_step} (epoch ${es.best_epoch}): the final LoRA`;
+        ring.append(rt); svg.append(ring);
+      }
+    }
     // the learning rate, on its own scale at the right (adaptive LR moves it)
     const lrPts = pts.filter((p) => p[3] != null);
     if (hasLr && set.lr && lrPts.length > 1) {
@@ -4191,7 +4207,8 @@ function lossGraph(data) {
       `(smoothed ${sm[i].toFixed(4)})` + (pts[i][3] != null ? ` · LR ${Number(pts[i][3]).toExponential(2)}` : "");
     const base = () => read.textContent = `${data.steps} steps · lowest smoothed loss ${sm[bi].toFixed(4)} at step ` +
       `${pts[bi][0]} (epoch ${pts[bi][1]})` + (data.stride > 1 ? ` · every ${data.stride}th step drawn` : "") +
-      (set.val && hasVal ? ` · validation ${val[val.length - 1][2].toFixed(4)} (best ${Math.min(...val.map((p) => p[2])).toFixed(4)})` : "");
+      (set.val && hasVal ? ` · validation ${val[val.length - 1][2].toFixed(4)} (best ${Math.min(...val.map((p) => p[2])).toFixed(4)})` : "") +
+      (data.stop ? ` · stopped early at step ${data.stop.step}, final LoRA = step ${data.stop.best_step} (epoch ${data.stop.best_epoch})` : "");
     svg.addEventListener("pointermove", (ev) => {
       const r = svg.getBoundingClientRect(), x = x0 + (x1 - x0) * Math.min(1, Math.max(0, ((ev.clientX - r.left) / r.width * W - L) / (W - L - R)));
       let i = 0;

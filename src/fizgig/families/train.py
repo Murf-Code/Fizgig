@@ -1090,6 +1090,7 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
                  log_per_image_loss=False, per_image_lr=False, auto_recaption=False, warmup_look_outliers=False,
                  validation_loss=False, validation_images=4, validation_timesteps=4, validation_seed=42,
                  validation_every_steps=0, validation_picked=None,
+                 validation_early_stop=False, validation_patience=3, validation_min_delta=0.001,
                  auto_reclaim_vram=True, reclaim_slowdown=1.5, reclaim_slow_steps=20, reclaim_warmup_steps=50,
                  reclaim_min_free_gb=vram_reclaim.RECLAIM_FREE_GB, reclaim_cooldown=200, reclaim_max_tries=3,
                  trigger_word=None, trigger_position="start", recaption_triggers=None, recaption_instruction=None,
@@ -1729,6 +1730,8 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
 
     start_epoch = global_step = 0
     resume_mid = None                # a Save & stop restore point: where inside its epoch the run stopped
+    resume_es = None                 # the early stop's count, from the resumed state
+    es = None                        # early stopping on the validation loss (training/early_stop.py)
     if resume_state_dir:
         _fresh_lrs = [g["lr"] for g in optimizer.param_groups] if optimizer is not None else []
         start_epoch, global_step, meta = _load_state(resume_state_dir, net, optimizer, device, arch,
@@ -1737,6 +1740,7 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
             global_step = start_epoch * steps_per_epoch
         if isinstance(meta.get("mid_epoch"), dict) and meta["own_state"]:
             resume_mid = meta["mid_epoch"]
+        resume_es = meta.get("early_stop")
         if adaptive:
             adaptive.load_state_dict(meta.get("adaptive_lr_state"))
         if (optimizer is not None and meta.get("own_state") and not meta.get("fresh_optimizer")
@@ -2199,7 +2203,8 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
                             arch_id=arch, ema=ema, folder_epoch=None if mid is None else epoch + 1,
                             extra={"learning_rate": box_learning_rate,
                                    **({"adaptive_lr_state": adaptive.state_dict()} if adaptive else {}),
-                                   **({"mid_epoch": mid} if mid is not None else {})})
+                                   **({"mid_epoch": mid} if mid is not None else {}),
+                                   **({"early_stop": es.state_dict()} if es is not None else {})})
                 return True
             except (OSError, RuntimeError) as e:
                 if attempt == 2 and mid is not None:
@@ -2382,6 +2387,31 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
             ema.update()                   # after the clipped step, so the average tracks what was applied
         pending = 0
 
+    def _early_final(final, epoch):
+        """Early stop: the best check's LoRA becomes the final one (name.safetensors). The normal saves stay; the
+        stop's own epoch is left unnumbered when it stopped inside it (every-N-steps checks)."""
+        whole = not stop_mid[0]                     # stopped at an epoch's end, its saves made
+        if es.best_saved and os.path.isfile(best_path):
+            shutil.copyfile(best_path, final)
+            os.remove(best_path)                    # the final is the best now: one file, not two
+            logger.info(f"[early stop] Final LoRA = best validation, step {es.best_step} (epoch {es.best_epoch}): "
+                        f"{os.path.basename(final)}")
+        else:
+            save_lora(final, epoch + 1)
+            logger.warning("[early stop] the best LoRA wasn't kept, so the final LoRA is the last weights")
+        if save_state_on_train_end:
+            state(epoch + 1) if whole else state(epoch, mid=_mid_point(epoch))
+        logger.info(f"Training complete -> {final}")
+        return final
+
+    def _mid_point(epoch):
+        """Where inside epoch `epoch` + 1 the run is: what a restore point there needs to train only the rest."""
+        return {"epoch": epoch + 1, "steps": len(epoch_done), "steps_per_epoch": steps_per_epoch,
+                "global_step": global_step, "batches": [list(b) for b in epoch_done],
+                # each dataset's shuffle seed (drawn afresh at every launch): the resume makes the same batches
+                "dataset_seeds": [getattr(ds, "seed", None) for ds in getattr(group, "datasets", [])],
+                "scheduler_steps": None if scheduler is None else int(scheduler.last_epoch)}
+
     def _save_and_stop(epoch, only):
         """Pause pressed a second time: a full restore point now (between optimizer steps), then a clean stop - the
         server records the run as paused, and Resume trains the rest of this epoch from it. Not saved: the run goes
@@ -2396,11 +2426,7 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
         elif optimizer is None:
             why = "this run has no optimizer state to save mid-epoch"
         else:
-            mid = {"epoch": epoch + 1, "steps": len(epoch_done), "steps_per_epoch": steps_per_epoch,
-                   "global_step": global_step, "batches": [list(b) for b in epoch_done],
-                   # each dataset's shuffle seed (drawn afresh at every launch): the resume makes the same batches
-                   "dataset_seeds": [getattr(ds, "seed", None) for ds in getattr(group, "datasets", [])],
-                   "scheduler_steps": None if scheduler is None else int(scheduler.last_epoch)}
+            mid = _mid_point(epoch)
             steplog.flush()
             if validator is not None:
                 validator.save()
@@ -2465,6 +2491,18 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
                     os.remove(_vsnap)        # an earlier run of this name's: this run keeps its own
                 except OSError:
                     pass
+    best_path = os.path.join(output_dir, f"{output_name}-best.safetensors")
+    if validation_early_stop and validator is None:
+        logger.info("[early stop] off: it needs Image Validation, which this run doesn't have")
+    elif validation_early_stop:
+        from fizgig.training.early_stop import EarlyStop
+        es = EarlyStop(validation_patience, validation_min_delta)
+        if resume_es is not None and not es.load_state_dict(resume_es):
+            logger.info("[early stop] continuing after an early stop: counting afresh from the best so far")
+        logger.info(f"[early stop] on: stops after {es.patience} checks without a better validation loss. The "
+                    f"best check's LoRA is kept as {os.path.basename(best_path)}")
+    stop_now = [False]                # early stop: validation stopped improving, the run finishes
+    stop_mid = [False]                # ... inside an epoch (a check every N steps): that epoch isn't whole
 
     def _validate(epoch_no):
         nonlocal validator
@@ -2485,6 +2523,26 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
         logger.info(f"[validation] step {step_off + global_step} (epoch {epoch_no}): loss {v:.5f}  "
                     f"[{', '.join(f't{t:.2f} {x:.4f}' for t, x in zip(validator.ts, per_t))}]  "
                     f"{len(validator.batches)} image(s), {sec:.1f}s")
+        if es is None:
+            return
+        verdict = es.observe(v, step_off + global_step, epoch_no, seg=validator.seg)
+        if verdict == "best":
+            _tb = time.time()
+            try:                              # the best so far, kept: it becomes the final LoRA if the run stops
+                save_lora(best_path, epoch_no)
+                es.best_saved = True
+            except (OSError, RuntimeError) as e:
+                logger.warning(f"[early stop] couldn't keep the best LoRA ({e}); training goes on")
+            progress.start_t += time.time() - _tb
+            logger.info(f"[early stop] best so far: {v:.5f} at step {es.best_step}")
+        elif verdict == "wait":
+            logger.info(f"[early stop] no better for {es.bad}/{es.patience} checks (best {es.best:.5f} at step "
+                        f"{es.best_step})")
+        else:
+            stop_now[0] = True
+            steplog.add_stop(step_off + global_step, epoch_no, es.best_step, es.best_epoch, es.best)
+            logger.info(f"[early stop] no better for {es.patience} checks: stopping at step {step_off + global_step}. "
+                        f"Best was step {es.best_step} (epoch {es.best_epoch}), {es.best:.5f}")
 
     share_skip = [0]
     share_off_said = [False]
@@ -2865,7 +2923,14 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
                 watch.observe(epoch + 1, global_step, batch, _info.get("t", 0.5), loss.item())
             progress.set_postfix(avr_loss=f"{recorder.moving_average:.4f}", refresh=False)
             progress.update(1)
+            if stop_now[0]:                    # early stop at a check every N steps
+                break
 
+        if stop_now[0] and len(epoch_done) < steps_per_epoch:   # early stop inside an epoch (every N steps)
+            if pending:
+                _update()
+            stop_mid[0] = True
+            break
         if pending:                        # a partial group: settle the optimizer before the epoch-end work
             _update()
         if resume_left and epoch == start_epoch:
@@ -2950,7 +3015,7 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
                 own = sample_for_epoch(output_dir, output_name, done)
                 if own:
                     refresh_checkpoint_thumbnail(os.path.join(output_dir, f"{output_name}-{done:06d}.safetensors"), own)
-        if (os.path.exists(pause_flag) and done < max_train_epochs
+        if (os.path.exists(pause_flag) and done < max_train_epochs and not stop_now[0]
                 and not (share_now[0] is not None and done < share_now[0]["last"])):   # a share round ends first
             if state_saved:
                 logger.info(f"[pause] requested - state for epoch {done} already saved; exiting cleanly")
@@ -2967,6 +3032,8 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
             _tp = time.time()
             slider_live(done)
             progress.start_t += time.time() - _tp       # the bar's s/it is training speed
+        if stop_now[0]:                  # early stop at an epoch's check: that epoch's own saves are done
+            break
 
     if share_worker:                     # a helper's share: the lead keeps the LoRA
         progress.close()
@@ -2990,7 +3057,12 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
             previews(max_train_epochs + ftr.epochs_done)
         logger.info(f"Fine-tune complete -> {final}")
         return final
+    if stop_now[0]:
+        return _early_final(final, epoch)
     save_lora(final, max_train_epochs)
+    if es is not None and es.best_saved and os.path.isfile(best_path):
+        logger.info(f"[early stop] didn't stop early. Best validation was step {es.best_step} (epoch "
+                    f"{es.best_epoch}): {os.path.basename(best_path)}")
     # the last epoch under its number too (#176): a resumed run that extends this one ends on the same plain name, and
     # without a numbered copy that epoch would be overwritten and lost
     shutil.copyfile(final, os.path.join(output_dir, f"{output_name}-{max_train_epochs:06d}.safetensors"))
@@ -3028,6 +3100,13 @@ def setup_parser():
     p.add_argument("--validation_every_steps", type=int, default=0, help="0 = at the end of each epoch")
     p.add_argument("--validation_pick", action="append", default=None,
                    help="a training image to check (its file name; repeat for more). None: an even spread")
+    p.add_argument("--validation_early_stop", action="store_true",
+                   help="with --validation_loss: finish the run once validation stops improving; the best check's "
+                        "LoRA becomes the final one")
+    p.add_argument("--validation_patience", type=int, default=3,
+                   help="early stop: checks in a row without a better validation loss before the run stops")
+    p.add_argument("--validation_min_delta", type=float, default=0.001,
+                   help="early stop: what counts as better - below the best by more than this fraction of it")
     p.add_argument("--auto_reclaim_vram", action=argparse.BooleanOptionalAction, default=True,
                    help="after a sustained slowdown (Windows put part of the run in system RAM), move the run back "
                         "into VRAM once the card has room again (CUDA only)")
@@ -3200,6 +3279,8 @@ def main():
         validation_loss=a.validation_loss, validation_images=a.validation_images,
         validation_timesteps=a.validation_timesteps, validation_seed=a.validation_seed,
         validation_every_steps=a.validation_every_steps, validation_picked=a.validation_pick,
+        validation_early_stop=a.validation_early_stop, validation_patience=a.validation_patience,
+        validation_min_delta=a.validation_min_delta,
         auto_reclaim_vram=a.auto_reclaim_vram, reclaim_slowdown=a.reclaim_slowdown,
         reclaim_slow_steps=a.reclaim_slow_steps, reclaim_warmup_steps=a.reclaim_warmup_steps,
         reclaim_min_free_gb=a.reclaim_min_free_gb, reclaim_cooldown=a.reclaim_cooldown,

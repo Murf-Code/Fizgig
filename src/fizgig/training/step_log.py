@@ -64,6 +64,15 @@ class StepLog:
         self.buf.append(json.dumps(rec) + "\n")
         self.flush()
 
+    def add_stop(self, step, epoch, best_step, best_epoch, best):
+        """Early stop (training/early_stop.py): {"k": "stop", "s", "e", "bs": best step, "be": its epoch, "v": its
+        validation loss} - where the run stopped and the check whose LoRA is the final one. Written straight away."""
+        if self.path is None:
+            return
+        self.buf.append(json.dumps({"k": "stop", "s": int(step), "e": int(epoch), "bs": int(best_step),
+                                    "be": int(best_epoch), "v": round(float(best), 6)}) + "\n")
+        self.flush()
+
     def flush(self):
         if self.path is None or not self.buf:
             return
@@ -135,13 +144,18 @@ def read(path, max_points=4000):
     """The graph's data: {"points": [[step, epoch, loss, lr], ...] (every k-th when longer than max_points, the
     last always kept), "epochs": [[epoch, first step], ...], "steps": total, and the trend views, worked out from
     every step: "epoch_mean", "running_avg" and "val"
-    ([[step, epoch, loss, [per timestep]], ...], the fixed validation checks)}."""
-    rows, val = [], []
+    ([[step, epoch, loss, [per timestep]], ...], the fixed validation checks), and "stop": where an early stop
+    finished the run ({step, epoch, best_step, best_epoch, best}) or None}."""
+    rows, val, stop = [], [], None
     try:
         with open(path, encoding="utf-8") as f:
             for line in f:
                 try:
                     d = json.loads(line)
+                    if d.get("k") == "stop":
+                        stop = {"step": int(d["s"]), "epoch": int(d["e"]), "best_step": int(d["bs"]),
+                                "best_epoch": int(d["be"]), "best": float(d["v"])}
+                        continue
                     if d.get("k") == "val":
                         val.append([int(d["s"]), int(d["e"]), float(d["v"]), d.get("vt") or []]
                                    + ([int(d["seg"])] if d.get("seg") else []))   # [.., seg] from a new section
@@ -161,4 +175,4 @@ def read(path, max_points=4000):
     if rows and pts[-1] is not rows[-1]:
         pts.append(rows[-1])
     return {"points": pts, "epochs": epochs, "steps": len(rows), "stride": k, "epoch_mean": epoch_means(rows),
-            "running_avg": _thin(running_avg(rows), max_points), "val": val}
+            "running_avg": _thin(running_avg(rows), max_points), "val": val, "stop": stop}

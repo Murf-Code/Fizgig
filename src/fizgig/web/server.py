@@ -87,7 +87,8 @@ def _phone_pass_take(p) -> bool:
 
 _login_fails: dict = {}    # client address -> (wrong guesses, locked until, last miss)
 _run = {"proc": None, "state": "idle", "stage": "", "lora": "", "output_dir": "", "family": "", "values": {},
-        "image_folder": "", "pause": False, "save_stop": False, "save_stop_note": ""}
+        "image_folder": "", "pause": False, "save_stop": False, "save_stop_note": "",
+        "early_stop": ""}
 _log: list[tuple[int, str]] = []        # (line number, text), the last 5000
 _log_n = [0]
 _log_event = threading.Condition(_lock)
@@ -1082,7 +1083,8 @@ def output_folders() -> list:
     return out
 
 
-_CKPT = re.compile(r"^(.*)-(?:(\d{6})|step(\d{7}))$")   # an epoch's checkpoint, or a Save now (-step0001234)
+# an epoch's checkpoint, a Save now (-step0001234), or early stop's best so far (-best)
+_CKPT = re.compile(r"^(.*)-(?:(\d{6})|step(\d{7})|best)$")
 
 
 def list_outputs(fizgig_only=True) -> dict:
@@ -1528,7 +1530,7 @@ def _start_one(family_key, values, image_folder, resume, ft_continue, note, mode
             pass
     with _lock:
         _run.update(state="starting", stage="", lora=inputs["LORA_NAME"], output_dir=out_dir, family=family_key,
-                    values=dict(values), image_folder=image_folder, pause=False, save_stop=False, save_stop_note="",
+                    values=dict(values), image_folder=image_folder, pause=False, save_stop=False, save_stop_note="", early_stop="",
                     resume="", resume_mode="")
     save_state({"last_run": {"family": family_key, "values": values, "image_folder": image_folder}})
     hid = history.start("web", family_key, inputs["LORA_NAME"], out_dir, image_folder, dict(values),
@@ -1653,6 +1655,10 @@ def _run_stages(stages, out_dir):
             _run["proc"] = proc
         for line in proc.stdout:
             append_log(line)
+            _es = early_stop_note(line)
+            if _es:
+                with _lock:
+                    _run["early_stop"] = _es
             try:
                 upd = tracker.consume(line)
             except Exception:
@@ -1689,7 +1695,11 @@ def _run_stages(stages, out_dir):
             webqueue.on_run_ended("failed", _run.get("lora"), _queue_starter)
             return
     paused = ((os.path.exists(os.path.join(out_dir, ".pause_requested")) or _run["pause"])
-              and _run.get("family") != refmod.KEY)                  # a RefMod finishes in one go
+              and _run.get("family") != refmod.KEY                   # a RefMod finishes in one go
+              and not _run.get("early_stop"))                        # an early stop finished the run
+    if _run.get("early_stop"):              # the run card says which LoRA is the final one
+        with _lock:
+            _run["progress"] = {**(_run.get("progress") or _progress_dict({})), "note": _run["early_stop"]}
     if paused and not _record_pause(out_dir):
         append_log("\n[pause] No checkpoint or saved state was found after the pause, so there is nothing to resume "
                    "from: treating the run as ended.\n")
@@ -1699,11 +1709,20 @@ def _run_stages(stages, out_dir):
     history.end(_run.get("history_id"), "paused" if paused else "finished", _run.get("progress"))
     webqueue.on_run_ended("paused" if paused else "finished", _run.get("lora"), _queue_starter)
     append_log(("\n⏸ Restore point saved and training stopped. Resume continues from it.\n" if _run.get("save_stop")
-                else "\n⏸ Paused. Resume continues from the saved state.\n") if paused else "\n✔ Run complete.\n")
+                else "\n⏸ Paused. Resume continues from the saved state.\n") if paused else
+               f"\n✔ Run complete. {_run['early_stop']}\n" if _run.get("early_stop") else "\n✔ Run complete.\n")
     from fizgig.web import helpers as _h
     if not paused and not webqueue.status()["items"] and not _h.moved_in_waiting(out_dir):
         from fizgig.web import pod_stop                    # the last run done: a pod can stop billing (a run moved
         pod_stop.maybe_start(load_prefs(), append_log)     # here waits until its computer has taken it back)
+
+
+def early_stop_note(line):
+    """The trainer's early-stop line ("[early stop] Final LoRA = best validation, step S (epoch E): name") -> the
+    run card's note, or ""."""
+    m = re.search(r"\[early stop\] Final LoRA = best validation, step (\d+) \(epoch (\d+)\)", line)
+    return (f"Stopped early: validation stopped improving. Final LoRA = the best check, step {m.group(1)} "
+            f"(epoch {m.group(2)}).") if m else ""
 
 
 def _stop_and_wait(timeout=20.0):

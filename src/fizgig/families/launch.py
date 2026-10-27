@@ -826,6 +826,10 @@ def train_command(desc, inputs, plan):
                 "--validation_every_steps", str(validation_every_steps(st.get("VALIDATION_EVERY_STEPS")))]
         for name in picked_list(st.get("VALIDATION_PICKED")):     # your own images: the count is not used
             cmd += ["--validation_pick", name]
+        if st.get("VALIDATION_EARLY_STOP") and str(st.get("VALIDATION_EARLY_STOP")).lower() not in ("false", "0",
+                                                                                                    "off"):
+            cmd += ["--validation_early_stop", "--validation_patience",
+                    str(max(1, int(_vi("VALIDATION_PATIENCE", "3"))))]
     cmd += reclaim_flags(st.get("vram_reclaim"))
     if st.get("ADAPTIVE_LR") and desc.adaptive_lr and not ft_on(desc, st):   # a fine-tune trains at its own rate
         cmd += ["--adaptive_lr",
