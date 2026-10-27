@@ -472,6 +472,41 @@ class BucketSelector:
 # BucketBatchManager
 # ---------------------------------------------------------------------------
 
+def _stack_keys(batch_tensor_data: dict) -> dict:
+    """Each key's per-item tensors stacked into the batch."""
+    stacked: dict[str, Any] = {}
+    for key, tensors in batch_tensor_data.items():
+        if key.startswith("cond__") and len({tuple(t.shape) for t in tensors}) > 1 \
+                and len({t.dim() for t in tensors}) == 1 and len({tuple(t.shape[1:]) for t in tensors}) == 1:
+            # Batch Size > 1: per-caption conditioning of different lengths (dim 0) - zero-padded to the batch's
+            # longest so it stacks, with `<key>__valid` (True = a real row) for the family's DiT to mask. Only
+            # reached where torch.stack would have raised, so batch 1 never gets here
+            n = max(t.shape[0] for t in tensors)
+            stacked[key + "__valid"] = torch.stack([torch.arange(n) < t.shape[0] for t in tensors])
+            tensors = [t if t.shape[0] == n else torch.cat(
+                [t, t.new_zeros((n - t.shape[0],) + tuple(t.shape[1:]))], dim=0) for t in tensors]
+        stacked[key] = torch.stack(tensors)
+    return stacked
+
+
+def original_text_batch(batch: dict) -> dict:
+    """A training batch with every image's conditioning back to its own caption (the text cache as written), for
+    what must not see tag shuffle or caption dropout (the fixed validation check). A batch with no picks, or only
+    "orig" ones, comes back as it is."""
+    picks = batch.get("caption_pick") or []
+    if not any(p != "orig" for p in picks):
+        return batch
+    per: dict[str, list] = {}
+    for path in batch.get("item_te_paths") or []:
+        for k, v in load_file(path).items():
+            if k.startswith("cond__"):
+                per.setdefault(k, []).append(v)
+    out = {k: v for k, v in batch.items() if not k.startswith("cond__")}
+    out.update(_stack_keys(per))
+    out["caption_pick"] = ["orig"] * len(picks)
+    return out
+
+
 class BucketBatchManager:
     """Manages batched iteration over bucketed items, loading cached tensors."""
 
@@ -488,6 +523,8 @@ class BucketBatchManager:
         self.bucket_resos = sorted(self.buckets.keys(), key=lambda k: tuple(str(x) for x in k))
         self.num_timestep_buckets = num_timestep_buckets
         self.timestep_pool: Optional[list[list[float]]] = None
+        self.variants = None          # tag_variants.VariantPicker: a cached caption variant per image per step
+        self.epoch = 0
 
         self.bucket_batch_indices: list[Tuple[Tuple[int, int], int]] = []
         for reso in self.bucket_resos:
@@ -531,10 +568,26 @@ class BucketBatchManager:
         end = min(start + self.batch_size, len(bucket))
 
         batch_tensor_data: dict[str, list[torch.Tensor]] = {}
+        picks = []
 
-        for item_info in bucket[start:end]:
+        for pos, item_info in enumerate(bucket[start:end], start=start):
             sd_latent = load_file(item_info.latent_cache_path)
             sd_te = load_file(item_info.text_encoder_output_cache_path)
+            if self.variants is not None:
+                # this image's caption this step: its own, a shuffled / tag-dropped variant, or the empty caption -
+                # by (seed, epoch, image, which repeat of it this is), so a resume picks the same
+                occ = sum(1 for x in bucket[:pos] if x is item_info)
+                ch = self.variants.choose(item_info.item_key, item_info.text_encoder_output_cache_path, self.epoch,
+                                          occ)
+                if ch != "orig":
+                    try:
+                        sd_te = {**{k: v for k, v in sd_te.items() if not k.startswith("cond__")},
+                                 **self.variants.load(item_info.text_encoder_output_cache_path, ch)}
+                    except Exception:
+                        logger.warning(f"[tags] could not read the caption variants of {item_info.item_key} - "
+                                       "it trains on its own caption", exc_info=True)
+                        ch = "orig"
+                picks.append(ch)
             if getattr(item_info, "still_only", False):
                 # the clip's still item: the cached sharpest-face frame when the cache pass
                 # made one, else frame 0 sliced from the clip latent [C, T, H, W] -> [C, H, W]
@@ -618,18 +671,7 @@ class BucketBatchManager:
             batch_tensor_data["loss_mask"] = masks
 
         # Stack tensors per key
-        stacked: dict[str, Any] = {}
-        for key, tensors in batch_tensor_data.items():
-            if key.startswith("cond__") and len({tuple(t.shape) for t in tensors}) > 1 \
-                    and len({t.dim() for t in tensors}) == 1 and len({tuple(t.shape[1:]) for t in tensors}) == 1:
-                # Batch Size > 1: per-caption conditioning of different lengths (dim 0) - zero-padded to the batch's
-                # longest so it stacks, with `<key>__valid` (True = a real row) for the family's DiT to mask. Only
-                # reached where torch.stack would have raised, so batch 1 never gets here
-                n = max(t.shape[0] for t in tensors)
-                stacked[key + "__valid"] = torch.stack([torch.arange(n) < t.shape[0] for t in tensors])
-                tensors = [t if t.shape[0] == n else torch.cat(
-                    [t, t.new_zeros((n - t.shape[0],) + tuple(t.shape[1:]))], dim=0) for t in tensors]
-            stacked[key] = torch.stack(tensors)
+        stacked: dict[str, Any] = _stack_keys(batch_tensor_data)
 
         if self.timestep_pool is not None:
             stacked["timesteps"] = self.timestep_pool[idx][:end - start]
@@ -643,6 +685,10 @@ class BucketBatchManager:
         # (each folder caches in its own folder) - DOP's per-item caption and targets key on it
         stacked["item_te_paths"] = [str(getattr(item_info, "text_encoder_output_cache_path", "") or "")
                                     for item_info in bucket[start:end]]
+        if picks:
+            # which caption each image trained on ("orig", "empty" or a variant's index): validation keeps the
+            # originals (original_text_batch), the loss watch keys on item_keys as ever
+            stacked["caption_pick"] = picks
 
         return stacked
 
@@ -880,6 +926,9 @@ class ImageDataset(torch.utils.data.Dataset):
     # on its latent's grid as `loss_mask` in the batch. Set on the CLASS by the trainer before the dataset group is
     # generated, like clip_still_as_photo.
     loss_masks: bool = False
+    # Tag variants (dataset/tag_variants.py): the run's seed, set on the CLASS by the trainer like loss_masks. None (the
+    # cache pass, tools) = no per-step picks: every item trains on its own caption.
+    variant_seed: Optional[int] = None
 
     def __init__(
         self,
@@ -901,9 +950,21 @@ class ImageDataset(torch.utils.data.Dataset):
         photos_only: bool = False,
         mask_directory: Optional[str] = None,
         item_prefix: str = "",
+        tag_shuffle: bool = False,
+        keep_first_tags: int = 1,
+        tag_dropout: float = 0.0,
+        caption_dropout: float = 0.0,
+        caption_variants: int = 4,
+        keep_words: Optional[list] = None,
         **kwargs,
     ):
         super().__init__()
+        # Tag shuffle / tag dropout / caption dropout (dataset/tag_variants.py): the cache pass encodes the variants,
+        # training picks one per image per step. Percentages in the TOML.
+        from fizgig.dataset.tag_variants import TagSettings
+        self.tag_settings = TagSettings.from_params(
+            shuffle=tag_shuffle, keep_first=keep_first_tags, tag_dropout=float(tag_dropout or 0) / 100.0,
+            caption_dropout=float(caption_dropout or 0) / 100.0, variants=caption_variants, keep_words=keep_words)
         # Each picture's training key is item_prefix + its name: a training folder's own pictures have none, a
         # sub-folder's is its path ("outfits/red/"), another subject's or the regularisation set's a tag ("s2:",
         # "reg:") - so same-named pictures in two folders stay apart, and the loss watch finds each one's folder
@@ -1435,6 +1496,9 @@ class ImageDataset(torch.utils.data.Dataset):
                 logger.warning(f"[masks] {len(misfit_masks)} mask(s) can't be used - those pictures train WITHOUT a "
                                f"mask: {shown}")
         self.batch_manager = BucketBatchManager(bucketed, self.batch_size, num_timestep_buckets=num_timestep_buckets)
+        if self.tag_settings.active and self.variant_seed is not None:
+            from fizgig.dataset.tag_variants import VariantPicker
+            self.batch_manager.variants = VariantPicker(self.tag_settings, self.variant_seed)
         self.batch_manager.show_bucket_info()
         self.num_train_items = sum(len(b) for b in bucketed.values())
 
@@ -1500,6 +1564,7 @@ class ImageDataset(torch.utils.data.Dataset):
             logger.warning(f"epoch not incremented: current={self.current_epoch}, got={epoch}")
             self.current_epoch = epoch
 
+        self.batch_manager.epoch = self.current_epoch      # the tag variants' pick depends on it
         return self.batch_manager[idx]
 
 

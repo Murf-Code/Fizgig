@@ -294,6 +294,7 @@ MINIMAX = FamilyDescription(
     finetune=True,
     ft_learning_rate=3e-5,            # the tested H3 fine-tune rate (1e-4 destroys; 1e-5 too slow to judge from)                    # the old rotation FT (component windows on an NF4 trunk, int8 ConvRot saves)
     media=("photo", "clip", "voice"),
+    caption_variants=False,          # tag shuffle / caption dropout: not on this family's own text cache
     model_note="Previews default to 768×768 56-frame clips with sound; Sample length has stills and other lengths. "
                "📖 Full write-ups in the README.",
     samples_text=(

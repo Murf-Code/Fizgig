@@ -58,6 +58,7 @@ ACESTEP15 = FamilyDescription(
     vae_label="ACE-Step 1.5 VAE",
 
     media=("voice",),
+    caption_variants=False,          # songs' captions aren't tags: no tag shuffle / caption dropout
     subject_isolation=False,         # songs: no DOP and no LoRA Isolation (the Subjects card keeps its subject folders)
     latent_channels=64,
     spatial_factor=1,

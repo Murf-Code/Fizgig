@@ -71,6 +71,7 @@ DEFAULTS = {
     "FAMILY_FT_FUSED": True, "FAMILY_FT_REG_DIR": "", "FAMILY_FT_REG_MULT": "0.2",
     "DATASET_MEGAPIXELS": "0.25", "DATASET_CAPTION_EXT": ".txt", "ENABLE_BUCKET": True, "BUCKET_NO_UPSCALE": True,
     "ENABLE_CACHE": True, "MASKED_TRAINING": False, "MASK_FLOOR": "0.1 (recommended)", "MASK_PRIOR": "Off",
+    "TAG_SHUFFLE": False, "TAG_KEEP_FIRST": "1", "TAG_DROPOUT": "0", "CAPTION_DROPOUT": "0", "TAG_VARIANTS": "4",
     "METADATA_TITLE": "", "METADATA_AUTHOR": "", "METADATA_DESCRIPTION": "", "METADATA_LICENSE": "",
     "METADATA_TAGS": "", "METADATA_TRIGGER_PHRASE": "", "METADATA_THUMBNAIL": "",
     "SAMPLE_ENABLED": True, "SAMPLE_PROMPT": "A high quality photo", "SAMPLE_PAIRS": "", "SAMPLE_PAIRED": False, "SAMPLE_SEED": "1234",
@@ -444,6 +445,26 @@ def form(desc):
                  "still keeps it to the model's own picture. Each step takes longer (up to about half again). The "
                  "higher the number, the firmer.",
                  launch.MASK_PRIORS),
+        ])
+    if getattr(desc, "caption_variants", True):
+        # tag shuffle / tag dropout / caption dropout (dataset/tag_variants.py): the text encoder is frozen, so the
+        # cache holds a few variants of each caption and every step each picture picks one
+        add("captions", "Caption shuffle & dropout", "training", [
+            _row("TAG_SHUFFLE", "Shuffle tags", "check",
+                 "For tag captions (1girl, red dress, smiling, ...): each step a picture trains on its tags in another "
+                 "order, so the LoRA doesn't lock onto one order and every tag keeps working on its own. Captions "
+                 "written as sentences are left as they are."),
+            _row("TAG_KEEP_FIRST", "Keep first N tags", hint="These tags always stay at the front, as written: your "
+                 "trigger and character, say. The folder's trigger word is always kept first wherever it is in the "
+                 "caption."),
+            _row("TAG_DROPOUT", "Tag dropout %", "combo", "Each tag after the kept ones is left out of a variant at "
+                 "this rate, so the LoRA learns the picture's other details without leaning on every tag. 5-10 is "
+                 "usual; 0 = off.", ("0", "5", "10", "15", "20")),
+            _row("CAPTION_DROPOUT", "Caption dropout %", "combo", "Trains a few percent of steps with no caption, "
+                 "so the LoRA does not lean entirely on the trigger word. 5 is usual; 0 = off.", ("0", "5", "10")),
+            _row("TAG_VARIANTS", "Variants per caption", "combo", "How many shuffled / dropped versions of each "
+                 "caption are cached; each step picks one at random (by the run's seed, so a resume picks the same). "
+                 "More variants = more variety, a longer first cache and more disk.", launch.TAG_VARIANT_CHOICES),
         ])
     add("subjects", "Subjects", "training", subjects,
         help={"href": VIDEO, "text": "How to set up Fizgig LoRA Isolation",
@@ -999,6 +1020,7 @@ def state(desc, values, image_folder="", captioner="", speed_file=False, checkpo
             if kind in ("slider", "finetune"):      # it switches the LoRA off for a step: a slider or a fine-tune has none
                 disabled.add("MASK_PRIOR")
                 notes["MASK_PRIOR"] = "For a LoRA: a slider or a fine-tune trains without it."
+    _tag_state(desc, values, image_folder, kind, hidden, disabled, notes)
     lokr = str(values.get("NETWORK_TYPE", "")).startswith("LoKR") and kind not in ("slider", "finetune")
     hidden |= {"NETWORK_DIM", "NETWORK_ALPHA"} if lokr else {"LOKR_FACTOR"}
     if lokr:
@@ -1381,6 +1403,55 @@ def _extras_found(desc, values, image_folder):
                f" ({counts[0]} each)" if counts else ""))
     loose = len(orphans) + len(misnamed)
     return line + (f". {loose} picture(s) here match no photo's name." if loose else ".")
+
+
+def tag_cost_note(values, pictures):
+    """The extra caching the tag settings cost, for the line under Variants per caption ("" when off)."""
+    shuffle = bool(values.get("TAG_SHUFFLE"))
+    try:
+        td, cd = launch._pct(values.get("TAG_DROPOUT")), launch._pct(values.get("CAPTION_DROPOUT"))
+        k = int(float(str(values.get("TAG_VARIANTS") or "4").split(" ")[0]))
+    except (TypeError, ValueError):
+        return ""
+    varies = shuffle or td > 0
+    if not (varies or cd > 0):
+        return ""
+    per = (k if varies else 0) + (1 if cd > 0 else 0)
+    n = f", {pictures * per} extra for your {pictures} pictures" if pictures else ""
+    what = (f"{k} variant(s)" if varies else "") + (" + " if varies and cd > 0 else "") + \
+        ("the empty caption" if cd > 0 else "")
+    return (f"Extra caching: {per} encoding(s) a caption ({what}){n}, the first time. The text encoder runs once "
+            f"per variant, so text caching takes about {per + 1}x as long and the text cache about {per + 1}x the "
+            "disk. Later runs reuse them; changing these settings or a caption re-encodes only the new variants. "
+            "Training speed and memory are unchanged.")
+
+
+def _tag_state(desc, values, image_folder, kind, hidden, disabled, notes):
+    """The Caption shuffle & dropout card: hidden where a run can't use it, its count boxes greyed while nothing
+    varies, the caching cost under Variants per caption."""
+    if not getattr(desc, "caption_variants", True):
+        return
+    if kind in ("edit", "slider"):
+        hidden.add("captions")
+        return
+    if values.get("FAMILY_MULTI_PERSON"):
+        disabled.update(launch.TAG_KEYS)
+        notes["TAG_SHUFFLE"] = "Off with Fizgig LoRA Isolation (Subjects card): it reads the trigger words as written."
+        return
+    try:
+        varies = bool(values.get("TAG_SHUFFLE")) or launch._pct(values.get("TAG_DROPOUT")) > 0
+    except ValueError:
+        varies = True
+        notes["TAG_DROPOUT"] = "A percentage from 0 to 100."
+    try:
+        launch._pct(values.get("CAPTION_DROPOUT"))
+    except ValueError:
+        notes["CAPTION_DROPOUT"] = "A percentage from 0 to 100."
+    if not varies:
+        disabled.update({"TAG_KEEP_FIRST", "TAG_VARIANTS"})
+    cost = tag_cost_note(values, _picture_count(image_folder) if image_folder else 0)
+    if cost:
+        notes["TAG_VARIANTS"] = cost
 
 
 def _timestep_note(values):

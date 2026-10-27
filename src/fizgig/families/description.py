@@ -527,6 +527,10 @@ class FamilyDescription:
     # masked training (fizgig/dataset/masks.py): the driver's training_loss takes loss_mask; opt in, so a family added
     # later never gets a tick its driver can't honour
     masked_training: bool = False
+    # tag shuffle / tag dropout / caption dropout (dataset/tag_variants.py): cached caption variants on the shared text
+    # cache. Off for a family that caches its text its own way (MiniMax H3, which has its own caption dropout) or
+    # whose captions aren't tags (ACE-Step's songs)
+    caption_variants: bool = True
     network_hint: str = ""            # the line under Network Type in place of the LoRA / LoKR trade
     ema_hint: str = ""                # the line under Weight averaging (EMA) in place of the shared one
     ema_section: str = ""             # "other": the EMA row sits in Other Options (MiniMax H3's place)
