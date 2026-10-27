@@ -373,6 +373,18 @@ def _session_key() -> str:
         return _SESSION_KEY[0]
 
 
+def sammask_words(text):
+    """The Find this / Mask these box's phrases (sammask.split_words)."""
+    from fizgig.dataset import sammask
+    return sammask.split_words(text)
+
+
+def _tagger_info():
+    """Image Prep's Trim tags line: the WD tagger's folder ("" before the download) and how a download is going."""
+    from fizgig.dataset import wd_tagger
+    return wd_tagger.info(user_data.MODELS_DIR)
+
+
 def _sam_info():
     """The masks card's SAM 3.1 line: the downloaded file ("" before the download) and how a download is going."""
     from fizgig.dataset import sammask
@@ -3029,7 +3041,8 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/prep/options":            # Image Prep: its choices, and whether face tools are here
             from fizgig.dataset import prep as _prep
             return self.json({"modes": list(_prep.MODES), "megapixels": _prep.MEGAPIXELS,
-                              "faces": _prep.FACE_TARGETS, "face_tools": prep_jobs.faces_available(),
+                              "faces": _prep.FACE_TARGETS, "other": _prep.OTHER_TARGET,
+                              "face_tools": prep_jobs.faces_available(),
                               "face_settings": prep_jobs.face_settings()})
         if path in ("/api/masks/edit/list", "/api/masks/edit/picture", "/api/masks/edit/mask"):   # the mask editor
             from fizgig.web import mask_edit
@@ -3054,7 +3067,7 @@ class Handler(BaseHTTPRequestHandler):
                               "model_here": os.path.isfile(automask.model_path(user_data.MODELS_DIR)),
                               "model_mb": automask.MODEL_MB, "pictures": len(pics), "with_mask": have,
                               "baselines": bool(prep_jobs.look_baselines(folder)) if folder else False,
-                              "faces": prep_jobs.faces_available(), "sam": _sam_info()})
+                              "faces": prep_jobs.faces_available(), "sam": _sam_info(), "tagger": _tagger_info()})
         if path == "/api/prep/summary":            # the What will happen card
             from fizgig.dataset import prep as _prep
             g = lambda k, d="": (qs.get(k) or [d])[0]
@@ -3064,7 +3077,8 @@ class Handler(BaseHTTPRequestHandler):
                 train = float(g("train_mp")) if g("train_mp") else None
             except ValueError:
                 mp, train = 1.0, None
-            r = _prep.summary(folder, g("mode", _prep.MODES[0]), g("replace") == "1", mp, train)
+            find = ", ".join(sammask_words(g("find"))) if _prep.is_other(g("face")) else ""
+            r = _prep.summary(folder, g("mode", _prep.MODES[0]), g("replace") == "1", mp, train, find)
             try:
                 names = os.listdir(folder)
             except OSError:
@@ -4109,6 +4123,10 @@ class Handler(BaseHTTPRequestHandler):
                         str(b.get("dir") or ""), str(b.get("dataset") or ""), b.get("baselines") or [])})
                 except ValueError as e:
                     return self.json({"error": str(e)}, 400)
+            if path == "/api/prep/tagger_fetch":    # the WD tagger for Trim tags that don't fit (1.2 GB, once)
+                from fizgig.dataset import wd_tagger
+                wd_tagger.download(user_data.MODELS_DIR)
+                return self.json({"ok": True, "tagger": _tagger_info()})
             if path == "/api/masks/sam_fetch":      # SAM 3.1 into the models folder (1.75 GB, once)
                 from fizgig.dataset import sammask
                 sammask.download(user_data.MODELS_DIR)
@@ -4166,7 +4184,8 @@ class Handler(BaseHTTPRequestHandler):
                     if path == "/api/prep/run":
                         return self.json(prep_jobs.start(folder, str(b.get("mode") or ""), b.get("mp") or 1.0,
                                                          str(b.get("face") or "Largest Face"),
-                                                         b.get("padding") or 20, bool(b.get("replace"))))
+                                                         b.get("padding") or 20, bool(b.get("replace")),
+                                                         str(b.get("find") or ""), b.get("captions")))
                     if path == "/api/look/scan":
                         return self.json(prep_jobs.look_scan(folder, b.get("baselines") or []))
                     if path == "/api/masks/edit/save":
@@ -4193,6 +4212,9 @@ class Handler(BaseHTTPRequestHandler):
                     return self.json({"error": str(e)}, 400)
             if path == "/api/prep/test":              # Test face detection on one photo (writes nothing)
                 try:
+                    words, sam_path = prep_jobs.find_words(str(b.get("face") or ""), str(b.get("find") or ""))
+                    if words:                          # Other…: what Find this names, found with SAM 3.1
+                        return self.json(prep_jobs.test_things(str(b.get("path") or ""), words, sam_path))
                     return self.json(prep_jobs.test_faces(str(b.get("path") or ""), str(b.get("face") or "")))
                 except ValueError as e:
                     return self.json({"error": str(e)}, 400)
