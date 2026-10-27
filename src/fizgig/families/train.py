@@ -660,6 +660,23 @@ def _load_dop_cond(path):
     return {k[len("cond__"):]: v[None] for k, v in load_file(path).items() if k.startswith("cond__")}
 
 
+def send_only_plan(wanted, blocks_to_swap, precision, gradient_checkpointing, gc_off_blocks, finetune):
+    """Whether this run's block swap may go send-only (host -> device only, nothing copied back). Only where it is
+    exactly the classic swap's maths: a LoRA run (a fine-tune trains the base, and streams its own way), every block
+    checkpointed (send-only refills a GPU ring in place, so a block must re-read its weights at the backward's
+    recompute - an un-checkpointed block would keep the ring's next tenant), and swap actually on (NF4 never swaps).
+    The driver must also offer it (quant.load_base), and the offloader checks the blocks themselves."""
+    if not wanted or finetune or not blocks_to_swap or int(blocks_to_swap) <= 0 or precision == "nf4":
+        return False
+    if not gradient_checkpointing:
+        logger.info("[block swap] send-only off: gradient checkpointing is off this run - classic swap")
+        return False
+    if gc_off_blocks:
+        logger.info(f"[block swap] send-only off: {gc_off_blocks} block(s) run un-checkpointed - classic swap")
+        return False
+    return True
+
+
 def _dop_step(driver, dit, net, latents, cond, gen, *, weight, min_t, max_t, accum, swapped=False):
     """Differential Output Preservation (AI-Toolkit's DOP, by Ostris): the same picture, freshly noised, with the
     trigger swapped for the class word. The target is the model's own prediction there with the adapter at 0, so
@@ -1078,6 +1095,7 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
                  validation_every_steps=0, validation_picked=None,
                  auto_reclaim_vram=True, reclaim_slowdown=1.5, reclaim_slow_steps=20, reclaim_warmup_steps=50,
                  reclaim_min_free_gb=vram_reclaim.RECLAIM_FREE_GB, reclaim_cooldown=200, reclaim_max_tries=3,
+                 send_only_swap=True,
                  trigger_word=None, trigger_position="start", recaption_triggers=None, recaption_instruction=None,
                  recaption_instruction_detailed=None, recaption_task=None, recaption_task_detailed=None,
                  captioner=None, finetune=False, ft_rotations=10, ft_save_every_rotations=1, ft_rotate_every=1, ft_max_parts=0,
@@ -1502,7 +1520,9 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
 
     # ---- model ----------------------------------------------------------------------------------
     logger.info(f"Loading {desc.display_name} DiT ({precision}) from {dit_path}")
-    dit, swapped = quant.load_base(driver, dit_path, device, precision, blocks_to_swap)
+    send_only = send_only_plan(send_only_swap, blocks_to_swap, precision, gradient_checkpointing, gc_off_blocks,
+                               finetune)
+    dit, swapped = quant.load_base(driver, dit_path, device, precision, blocks_to_swap, send_only=send_only)
     if gradient_checkpointing:
         driver.enable_gradient_checkpointing(dit, True)
         dit.gc_off_blocks = gc_off_blocks       # the compiled blocks / H3's loop leave the last ones un-checkpointed
@@ -2914,6 +2934,9 @@ def setup_parser():
     p.add_argument("--validation_every_steps", type=int, default=0, help="0 = at the end of each epoch")
     p.add_argument("--validation_pick", action="append", default=None,
                    help="a training image to check (its file name; repeat for more). None: an even spread")
+    p.add_argument("--send_only_swap", action=argparse.BooleanOptionalAction, default=True,
+                   help="block swap on a LoRA run streams the frozen base host -> device only, never copying a block "
+                        "back (Krea 2, MOSS-Image); --no-send_only_swap = the classic swap")
     p.add_argument("--auto_reclaim_vram", action=argparse.BooleanOptionalAction, default=True,
                    help="after a sustained slowdown (Windows put part of the run in system RAM), move the run back "
                         "into VRAM once the card has room again (CUDA only)")
@@ -3086,7 +3109,7 @@ def main():
         validation_loss=a.validation_loss, validation_images=a.validation_images,
         validation_timesteps=a.validation_timesteps, validation_seed=a.validation_seed,
         validation_every_steps=a.validation_every_steps, validation_picked=a.validation_pick,
-        auto_reclaim_vram=a.auto_reclaim_vram, reclaim_slowdown=a.reclaim_slowdown,
+        auto_reclaim_vram=a.auto_reclaim_vram, reclaim_slowdown=a.reclaim_slowdown, send_only_swap=a.send_only_swap,
         reclaim_slow_steps=a.reclaim_slow_steps, reclaim_warmup_steps=a.reclaim_warmup_steps,
         reclaim_min_free_gb=a.reclaim_min_free_gb, reclaim_cooldown=a.reclaim_cooldown,
         reclaim_max_tries=a.reclaim_max_tries,

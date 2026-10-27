@@ -1053,6 +1053,10 @@ function vramReclaimCard() {
   const grey = () => { for (const b of boxes) b.disabled = !on.checked; };
   on.addEventListener("change", () => api("/api/prefs", {changes: {auto_reclaim_vram: on.checked}})
     .then(() => { S.set.auto_reclaim_vram = on.checked ? "1" : "0"; grey(); }));
+  const sendOnly = el("input", {type: "checkbox", id: "prefSendOnlySwap"});
+  sendOnly.checked = String(S.set.send_only_block_swap ?? "1") !== "0";
+  sendOnly.addEventListener("change", () => api("/api/prefs", {changes: {send_only_block_swap: sendOnly.checked}})
+    .then(() => { S.set.send_only_block_swap = sendOnly.checked ? "1" : "0"; }));
   grey();
   const adv = el("div", {class: "card-content collapsed"}, ...rows);
   return el("div", {class: "section-card", id: "prefsReclaim"},
@@ -1064,7 +1068,14 @@ function vramReclaimCard() {
         "needed and never changes the training itself. The Reclaim VRAM button does the same by hand."},
         on, " Auto-reclaim VRAM after a slowdown"),
       el("div", {class: "field-hint", text: "On by default. For every training run started on this machine; " +
-        "the Reclaim VRAM button on the Run panel works either way."})),
+        "the Reclaim VRAM button on the Run panel works either way."}),
+      el("label", {class: "checkbox-label", title: "Krea 2 and MOSS-Image LoRA runs with Blocks Swap: the base " +
+        "model never changes while a LoRA trains, so each swapped block is only copied to the GPU and dropped " +
+        "after use, never copied back. Same VRAM, same results, less copying. Turn it off to use the classic " +
+        "swap if a run misbehaves."},
+        sendOnly, " Faster block swap (send-only)"),
+      el("div", {class: "field-hint", text: "On by default. LoRA runs with Blocks Swap on Krea 2 and MOSS-Image; " +
+        "fine-tunes and other models keep the classic swap."})),
     el("div", {class: "card-title collapsible-header", onclick: () => adv.classList.toggle("collapsed")},
       el("span", {text: "Advanced: VRAM reclaim"})), adv);
 }
