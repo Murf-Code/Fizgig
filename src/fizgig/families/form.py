@@ -1013,8 +1013,9 @@ def state(desc, values, image_folder="", captioner="", speed_file=False, checkpo
         notes["OPTIMIZER_TYPE"] = "automagic3 sets its own learning rate: Adaptive LR, per-image LR and the look " \
                                   "warm-up are off."
     elif opt == "prodigy":
-        disabled |= {"LEARNING_RATE", "ADAPTIVE_LR", "KREA2_PER_IMAGE_LR", "KREA2_WARMUP_LOOK"}
-        force.update({k: False for k in ("ADAPTIVE_LR", "KREA2_PER_IMAGE_LR", "KREA2_WARMUP_LOOK") if values.get(k)})
+        # per-image LR stays: with Prodigy it is a weight on that image's loss, not a write to the group rate
+        disabled |= {"LEARNING_RATE", "ADAPTIVE_LR", "KREA2_WARMUP_LOOK"}
+        force.update({k: False for k in ("ADAPTIVE_LR", "KREA2_WARMUP_LOOK") if values.get(k)})
         hidden |= {"ADAPTIVE_LR_MIN", "ADAPTIVE_LR_MAX"}
         if str(values.get("LEARNING_RATE") or "").strip() != "1.0":
             force["LEARNING_RATE"] = "1.0"
@@ -1022,7 +1023,8 @@ def state(desc, values, image_folder="", captioner="", speed_file=False, checkpo
         if want_args != raw_args:
             force["OPTIMIZER_ARGS"] = want_args
         notes["OPTIMIZER_TYPE"] = ("prodigy estimates its own learning rate (d): Learning Rate is locked to 1.0, and "
-                                   "Adaptive LR, per-image LR and the look warm-up are off.")
+                                   "Adaptive LR and the look warm-up are off. Per-image LR still works, as a loss "
+                                   "weight on each image.")
         notes["OPTIMIZER_ARGS"] = ("Prodigy defaults: decouple=True weight_decay=0.01 d_coef=1.0 "
                                    "use_bias_correction=True safeguard_warmup=True (also accepts betas=0.9,0.99, "
                                    "d0=1e-6, slice_p=11).")

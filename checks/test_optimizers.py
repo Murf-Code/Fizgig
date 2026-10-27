@@ -4,6 +4,7 @@ and Adaptive LR while auto-filling RMS-matched args; clean reset on optimizer tr
 
 import builtins
 import logging
+import os
 import subprocess
 import sys
 
@@ -211,7 +212,7 @@ def test_form_state_prodigy_and_muon_transitions(tmp_path):
     krea = registry.get("krea2")
     sdxl = registry.get("sdxl")
 
-    # 1. Selecting prodigy locks LEARNING_RATE="1.0", disables Adaptive LR / per-image LR / warmup,
+    # 1. Selecting prodigy locks LEARNING_RATE="1.0", disables Adaptive LR / warmup (per-image LR stays: a loss weight),
     #    and auto-fills PRODIGY_DEFAULT_ARGS
     vals = {
         **form.DEFAULTS,
@@ -225,15 +226,18 @@ def test_form_state_prodigy_and_muon_transitions(tmp_path):
     st = form.state(krea, vals)
     assert "LEARNING_RATE" in st["disabled"]
     assert "ADAPTIVE_LR" in st["disabled"]
-    assert "KREA2_PER_IMAGE_LR" in st["disabled"]
+    assert "KREA2_PER_IMAGE_LR" not in st["disabled"]
     assert "KREA2_WARMUP_LOOK" in st["disabled"]
     assert "OPTIMIZER_ARGS" not in st["disabled"]
     assert {"ADAPTIVE_LR_MIN", "ADAPTIVE_LR_MAX"} <= set(st["hidden"])
     assert st["force"]["LEARNING_RATE"] == "1.0"
     assert st["force"]["OPTIMIZER_ARGS"] == PRODIGY_DEFAULT_ARGS
     assert st["force"]["ADAPTIVE_LR"] is False
-    assert st["force"]["KREA2_PER_IMAGE_LR"] is False
+    assert "KREA2_PER_IMAGE_LR" not in st["force"]
     assert st["force"]["KREA2_WARMUP_LOOK"] is False
+    assert st["notes"]["OPTIMIZER_TYPE"].endswith("Per-image LR still works, as a loss weight on each image.")
+    st_off = form.state(krea, {**vals, "KREA2_PER_IMAGE_LR": False})   # its own state is left as it is, either way
+    assert "KREA2_PER_IMAGE_LR" not in st_off["force"] and "KREA2_PER_IMAGE_LR" not in st_off["disabled"]
 
     # 2. Switching from prodigy to muon unlocks LEARNING_RATE (restores "1e-4"), strips Prodigy args,
     #    auto-fills MUON_DEFAULT_ARGS, and keeps Adaptive LR available
@@ -359,9 +363,11 @@ eval(snippet + "\nglobalThis.onValue = onValue; globalThis.PRODIGY_DEFAULT_ARGS 
 onValue({key: "OPTIMIZER_TYPE"}, "prodigy");
 if (S.values.LEARNING_RATE !== "1.0") throw new Error("Expected LR 1.0, got " + S.values.LEARNING_RATE);
 if (S.values.OPTIMIZER_ARGS !== PRODIGY_DEFAULT_ARGS) throw new Error("Expected prodigy args, got " + S.values.OPTIMIZER_ARGS);
-if (S.values.ADAPTIVE_LR !== false || S.values.KREA2_PER_IMAGE_LR !== false || S.values.KREA2_WARMUP_LOOK !== false) {
-  throw new Error("Expected adaptive/per-image/warmup off");
+if (S.values.ADAPTIVE_LR !== false || S.values.KREA2_WARMUP_LOOK !== false) {
+  throw new Error("Expected adaptive/warmup off");
 }
+if (S.values.KREA2_PER_IMAGE_LR !== true) throw new Error("Expected per-image LR left on with prodigy");
+if (synced.includes("KREA2_PER_IMAGE_LR")) throw new Error("per-image LR should not be touched by prodigy");
 
 // 2. Switch from prodigy to muon
 onValue({key: "OPTIMIZER_TYPE"}, "muon");
@@ -401,3 +407,54 @@ def test_lr_scheduler_in_optimizer_section():
     assert opt_keys.index("LR_WARMUP_STEPS") == opt_keys.index("LR_SCHEDULER") + 1
     assert "LR_SCHEDULER" not in other_keys
     assert "LR_WARMUP_STEPS" not in other_keys
+
+
+def test_automagic_still_turns_per_image_lr_off():
+    krea = registry.get("krea2")
+    st = form.state(krea, {**form.DEFAULTS, "OPTIMIZER_TYPE": "automagic3", "LEARNING_RATE": "1e-6",
+                           "ADAPTIVE_LR": True, "KREA2_PER_IMAGE_LR": True, "KREA2_WARMUP_LOOK": True})
+    assert {"ADAPTIVE_LR", "KREA2_PER_IMAGE_LR", "KREA2_WARMUP_LOOK"} <= set(st["disabled"])
+    assert st["force"]["ADAPTIVE_LR"] is False and st["force"]["KREA2_PER_IMAGE_LR"] is False
+    assert st["force"]["KREA2_WARMUP_LOOK"] is False
+    assert st["notes"]["OPTIMIZER_TYPE"] == ("automagic3 sets its own learning rate: Adaptive LR, per-image LR and the "
+                                             "look warm-up are off.")
+
+
+@pytest.mark.parametrize("opt,lr,keeps", [("prodigy", "1.0", True), ("automagic3", "1e-6", False),
+                                          ("adamw8bit", "1e-4", True)])
+def test_launch_per_image_lr_with_prodigy(tmp_path, opt, lr, keeps):
+    krea = registry.get("krea2")
+    img_dir = tmp_path / "imgs"
+    img_dir.mkdir()
+    (img_dir / "a.png").write_bytes(b"x")
+    (img_dir / "a.txt").write_text("zwxem a photo", encoding="utf-8")
+    models = {}
+    for mf in krea.model_files:
+        if mf.required or mf.pref_key == krea.training_adapter:
+            f = tmp_path / f"{mf.pref_key}.safetensors"
+            f.write_bytes(b"0")
+            models[mf.pref_key] = str(f)
+    inp = form.inputs(krea, {**form.DEFAULTS, "LORA_NAME": "t", "LORA_OUTPUT_DIR": str(tmp_path / "out"),
+                             "DATASET_CONFIG": str(tmp_path / "dataset.toml"), "OPTIMIZER_TYPE": opt,
+                             "LEARNING_RATE": lr, "OPTIMIZER_ARGS": "", "ADAPTIVE_LR": True,
+                             "KREA2_LOSS_WATCH": True, "KREA2_PER_IMAGE_LR": True, "KREA2_WARMUP_LOOK": True},
+                      models=models, python=sys.executable, repo_dir=str(tmp_path), image_folder=str(img_dir),
+                      cache_root=str(tmp_path / "cache"), samples_dir=str(tmp_path / "out" / "sample"))
+    pl = launch.plan(krea, inp)
+    assert pl.problems == []
+    cmd = pl.stages[-1].cmd
+    assert ("--per_image_lr" in cmd) is keeps
+    assert "--log_per_image_loss" in cmd
+    if opt != "adamw8bit":
+        assert "--warmup_look_outliers" not in cmd and "--adaptive_lr" not in cmd
+
+
+def test_trainer_keeps_per_image_lr_only_for_prodigy():
+    src = open(os.path.join(os.path.dirname(__file__), "..", "src", "fizgig", "families", "train.py"),
+               encoding="utf-8").read()
+    blk = src[src.index("    if owns_its_rate(optimizer):        # Automagic v3"):]
+    blk = blk[:blk.index("box_learning_rate = learning_rate")]
+    assert '_keeps_pilr = str(optimizer_type or "").strip().lower() == "prodigy"' in blk
+    assert "adaptive_lr = warmup_look_outliers = False" in blk
+    assert "if not _keeps_pilr:\n            per_image_lr = False" in blk
+    assert "m = 1.0                        # Automagic v3 / Prodigy owns the rate" in src   # lr_acc path untouched

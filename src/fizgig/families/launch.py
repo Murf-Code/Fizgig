@@ -1529,9 +1529,10 @@ def plan(desc, inputs):
     if folder and not os.path.isabs(folder):
         inputs["image_folder"] = os.path.abspath(folder)     # the subprocesses run from the Fizgig folder
     inputs["LORA_NAME"] = tidy_name(_s(inputs.get("LORA_NAME")))[0]
-    if automagic(inputs) or prodigy(inputs):   # it owns the rate: Adaptive LR, per-image LR and the look warm-up are off
+    if automagic(inputs) or prodigy(inputs):   # it owns the rate: Adaptive LR and the look warm-up are off
         inputs["ADAPTIVE_LR"] = False
-        inputs["loss_watch"] = {**(inputs.get("loss_watch") or {}), "per_image_lr": False, "warmup": False}
+        off = {"warmup": False} if prodigy(inputs) else {"per_image_lr": False, "warmup": False}
+        inputs["loss_watch"] = {**(inputs.get("loss_watch") or {}), **off}   # Prodigy: per-image LR is a loss weight
     from fizgig.training.optimizers import (
         MUON_DEFAULT_ARGS, PRODIGY_DEFAULT_ARGS, strip_muon_args, strip_prodigy_args,
     )

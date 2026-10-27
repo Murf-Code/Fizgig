@@ -1650,11 +1650,18 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
         optimizer, opt_label = create_optimizer(optimizer_type, opt_params, learning_rate, _oargs,
                                                 eps_floor_8bit=desc.optimizer_eps_floor_8bit)
     if owns_its_rate(optimizer):        # Automagic v3 / Prodigy sets its own rate: the watcher and schedulers stand down
+        # Prodigy keeps per-image LR: it weights that image's loss (loss * mult), it never writes the group rate
+        _keeps_pilr = str(optimizer_type or "").strip().lower() == "prodigy"
         if adaptive_lr:
             logger.info("[adaptive_lr] ignored - the optimizer sets its own learning rate")
-        if per_image_lr or warmup_look_outliers:
-            logger.info("[per-image LR] per-image LR and the look warm-up are off - the optimizer sets its own rate")
-        adaptive_lr = per_image_lr = warmup_look_outliers = False
+        if warmup_look_outliers or (per_image_lr and not _keeps_pilr):
+            logger.info(("[per-image LR] the look warm-up is off" if _keeps_pilr else
+                         "[per-image LR] per-image LR and the look warm-up are off") + " - the optimizer sets its own rate")
+        if per_image_lr and _keeps_pilr:
+            logger.info("[per-image LR] on with Prodigy, as a loss weight on each image")
+        adaptive_lr = warmup_look_outliers = False
+        if not _keeps_pilr:
+            per_image_lr = False
         logger.info(f"[optimizer] {opt_label} owns the learning rate from here ({optimizer_lr(optimizer):.2e} is its start); "
                     f"the LR scheduler stands down")
     box_learning_rate = learning_rate   # the Learning Rate box, before adaptive LR's midpoint (saved for a resume)

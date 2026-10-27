@@ -697,10 +697,9 @@ function onValue(r, val) {
     if (opt === "prodigy") {
       S.values.LEARNING_RATE = "1.0";
       S.values.ADAPTIVE_LR = false;
-      S.values.KREA2_PER_IMAGE_LR = false;
-      S.values.KREA2_WARMUP_LOOK = false;
+      S.values.KREA2_WARMUP_LOOK = false;               // per-image LR stays as it was: a loss weight with Prodigy
       S.values.OPTIMIZER_ARGS = curArgs || PRODIGY_DEFAULT_ARGS;
-      syncInputs(["LEARNING_RATE", "ADAPTIVE_LR", "KREA2_PER_IMAGE_LR", "KREA2_WARMUP_LOOK", "OPTIMIZER_ARGS"]);
+      syncInputs(["LEARNING_RATE", "ADAPTIVE_LR", "KREA2_WARMUP_LOOK", "OPTIMIZER_ARGS"]);
     } else if (opt === "muon") {
       const touched = ["OPTIMIZER_ARGS"];
       if (wasProdigy || parseFloat(S.values.LEARNING_RATE) >= 0.1) {
