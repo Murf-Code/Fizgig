@@ -275,7 +275,7 @@ def test_caption_match_measure():
     assert abs(prose - 3 / 7) < 1e-9                                            # a, red, fox of 7 words
 
 
-def test_paired_badge_heat_scale_and_best_per_prompt():
+def test_paired_badge_fixed_bands_and_best_per_prompt():
     import shutil
     import subprocess
     import pytest
@@ -284,29 +284,30 @@ def test_paired_badge_heat_scale_and_best_per_prompt():
         pytest.skip("node not installed")
     js = _app_js()
     fn = js[js.index("const PAIR_COLD"):js.index("// ---- paired likeness (fizgig/web/sample_pairs.py)")]
-    def run(paired):
-        return json.loads(subprocess.run([node, "-e", fn + f"\nconsole.log(JSON.stringify(pairBadgeInfo({json.dumps(paired)})))"],
+    def ev(expr):
+        return json.loads(subprocess.run([node, "-e", fn + f"\nconsole.log(JSON.stringify({expr}))"],
                                          capture_output=True, text=True, check=True).stdout)
+    def run(paired):
+        return ev(f"pairBadgeInfo({json.dumps(paired)})")
+    DR, R, O, Y, B, G, P = "#A93226", "#FF5A4E", "#FF9F43", "#FFE04A", "#4DA8FF", "#2ECC71", "#B57BFF"
+    scores = [0.10, 0.399, 0.40, 0.49, 0.50, 0.59, 0.60, 0.699, 0.70, 0.79, 0.80, 0.899, 0.90, 1.0]
+    got = ev(f"{json.dumps(scores)}.map((s) => pairHeat(s).color)")
+    assert got == [DR, DR, R, R, O, O, Y, Y, B, B, G, G, P, P]
+    assert ev("[0.1 + 0.2 + 0.3, 0.7 + 0.1].map((s) => pairHeat(s).color)") == [Y, G]   # float noise: 0.6000001 / 0.7999999
+    assert len(set(ev("PAIR_BANDS.map((b) => b[1])"))) == 7                              # every band its own colour
+    assert ev("pairHeat(0.2).text") == "#FFFFFF" and ev("pairHeat(0.85).text") == "#10202A"
     out = run({"f1": {"score": 0.60, "index": 0}, "f2": {"score": 0.65, "index": 0}, "f3": {"score": 0.55, "index": 0},
                "d1": {"score": 0.41, "index": 1}, "d2": {"score": 0.80, "index": 1}, "d3": {"score": 0.90, "index": 1},
                "bad": {"score": None, "index": 0}})
-    assert "bad" not in out and all(v["cold"] == 0.41 for v in out.values())   # coldest = lowest in the run, all prompts
-    assert out["d1"]["color"] == "rgb(255, 59, 48)" and out["d1"]["rank"] == 3
-    assert out["d2"]["color"] == out["d3"]["color"] == "rgb(46, 204, 113)"     # 0.80 and up: green
-    assert out["d3"]["best"] and out["f2"]["best"] and not out["f1"]["best"] and out["f3"]["rank"] == 3
-    assert abs(out["f1"]["t"] - 0.19 / 0.39) < 1e-9 and out["f1"]["n"] == 3
-    solo = run({"s": {"score": 0.55, "index": 0}})                                # one score: 0.30 base
-    assert solo["s"]["cold"] == 0.30 and abs(solo["s"]["t"] - 0.5) < 1e-9 and not solo["s"]["best"]
-    high = run({"a": {"score": 0.85, "index": 0}, "b": {"score": 0.90, "index": 1}})  # all >= 0.80: 0.30 base
-    assert high["a"]["cold"] == 0.30 and high["a"]["color"] == "rgb(46, 204, 113)"
-    stops = json.loads(subprocess.run([node, "-e", fn + "\nconsole.log(JSON.stringify([0, .25, .5, .75, 1].map((t) => pairHeat(.4 + .4 * t, .4).color)))"],
-                                      capture_output=True, text=True, check=True).stdout)
-    assert stops == ["rgb(255, 59, 48)", "rgb(255, 140, 66)", "rgb(255, 210, 63)", "rgb(61, 165, 255)", "rgb(46, 204, 113)"]
-    mids = json.loads(subprocess.run([node, "-e", fn + "\nconsole.log(JSON.stringify([...Array(41).keys()].map((i) => pairHeat(.4 + .01 * i, .4).hsl)))"],
-                                     capture_output=True, text=True, check=True).stdout)
-    assert min(m[1] for m in mids) > 0.6                                            # vivid all the way: never grey
-    assert "pairLegend" not in js and "PAIR_HOT = 0.80" in js and "may be overcooked" in js   # no legend strip; hint in tooltip
-    assert "pairBadgeInfo(d.paired" in js and "rank ${bi.rank} of ${bi.n}" in js
+    assert "bad" not in out
+    assert out["d1"]["color"] == R and out["d1"]["rank"] == 3
+    assert out["d2"]["color"] == G and out["d3"]["color"] == P                    # 0.90+ purple, not green
+    assert out["f1"]["color"] == out["f2"]["color"] == Y and out["f3"]["color"] == O   # fixed: no per-run rescaling
+    assert out["d3"]["best"] and out["f2"]["best"] and not out["f1"]["best"] and out["f3"]["rank"] == 3 and out["f1"]["n"] == 3
+    solo = run({"s": {"score": 0.55, "index": 0}})
+    assert solo["s"]["color"] == O and not solo["s"]["best"]
+    assert "pairLegend" not in js and "may be overcooked" in js and "fades from" not in js
+    assert "pairBadgeInfo(d.paired" in js and "rank ${bi.rank} of ${bi.n}" in js and "b.style.color = bi.text" in js
 
 
 def test_resolve_pairs_updates_on_manual_or_copied_prompt_edit():

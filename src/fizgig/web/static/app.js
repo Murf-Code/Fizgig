@@ -2225,9 +2225,10 @@ async function likenessShow(dir, items, run, view) {
     if (ps && bi) {
       const b = el("span", {class: `lik-badge pair-badge${bi.best ? " pair-best" : ""}`,
         title: `Paired ${ps.score.toFixed(3)} - whole-image DINOv2 similarity to ${ps.image}\n` +
-          `Prompt ${ps.index + 1}: rank ${bi.rank} of ${bi.n} epochs` + (ps.score >= PAIR_HOT ? " - 0.80+ may be overcooked" : "") + (bi.n > 1 ? ` (range ${bi.min.toFixed(2)}-${bi.max.toFixed(2)})` : ""),
+          `Prompt ${ps.index + 1}: rank ${bi.rank} of ${bi.n} epochs` + ` - band ${bi.label}` + (ps.score >= PAIR_OVER ? ", may be overcooked" : "") + (bi.n > 1 ? ` (range ${bi.min.toFixed(2)}-${bi.max.toFixed(2)})` : ""),
         text: `${bi.best ? "★ " : ""}Paired ${ps.score.toFixed(2)}`});
       b.style.background = bi.color;
+      b.style.color = bi.text;
       fig.append(b);
     }
   }
@@ -2260,47 +2261,43 @@ async function likenessShow(dir, items, run, view) {
     if (i % every === 0 || i === best) { g.fillStyle = "#95A5A6"; g.fillText(epochs[i], x(i) - 6, H - 6); }
   });
 }
-const PAIR_COLD = 0.30, PAIR_HOT = 0.80;     // low (red) = the run's lowest score (0.30 fallback), 0.80 and up high (green; may be overcooked)
-const PAIR_STOPS = [[255, 59, 48], [255, 140, 66], [255, 210, 63], [61, 165, 255], [46, 204, 113]];   // red, orange, yellow, blue, green
-function pairRgbToHsl([r, g, b]) {
-  r /= 255; g /= 255; b /= 255;
-  const mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2, d = mx - mn;
-  if (!d) return [0, 0, l];
-  const s = d / (1 - Math.abs(2 * l - 1));
-  const h = mx === r ? ((g - b) / d + 6) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
-  return [h * 60, s, l];
+const PAIR_COLD = 0.40, PAIR_HOT = 0.80, PAIR_OVER = 0.90;   // fixed bands per 0.1; 0.80-0.89 sweet spot, 0.90+ may be overcooked
+const PAIR_BANDS = [     // [lowest score, colour, text colour, label]; one fixed colour per 0.1 step, same for every run and prompt
+  [-Infinity, "#A93226", "#FFFFFF", "below 0.40"],
+  [0.40, "#FF5A4E", "#10202A", "0.40-0.49"],
+  [0.50, "#FF9F43", "#10202A", "0.50-0.59"],
+  [0.60, "#FFE04A", "#10202A", "0.60-0.69"],
+  [0.70, "#4DA8FF", "#10202A", "0.70-0.79"],
+  [0.80, "#2ECC71", "#10202A", "0.80-0.89 (sweet spot)"],
+  [0.90, "#B57BFF", "#10202A", "0.90+ (may be overcooked)"],
+];
+function pairBand(score) {
+  // round to 3 places first so 0.6 stored as 0.59999... still lands in 0.60-0.69
+  const s = Math.round(score * 1000) / 1000;
+  let k = 0;
+  for (let i = 1; i < PAIR_BANDS.length; i++) if (s >= PAIR_BANDS[i][0]) k = i;
+  return k;
 }
-function pairHslToRgb([h, s, l]) {
-  const c = (1 - Math.abs(2 * l - 1)) * s, x = c * (1 - Math.abs((h / 60) % 2 - 1)), m = l - c / 2;
-  const [r, g, b] = h < 60 ? [c, x, 0] : h < 120 ? [x, c, 0] : h < 180 ? [0, c, x] : h < 240 ? [0, x, c] : h < 300 ? [x, 0, c] : [c, 0, x];
-  return [r, g, b].map((v) => Math.round((v + m) * 255));
-}
-function pairHeat(score, cold = PAIR_COLD) {
-  // equal steps from the low base to 0.80; each step blends in HSL (shorter way round the hue wheel), so
-  // yellow -> blue passes through bright green, never grey
-  const t = Math.min(1, Math.max(0, (score - cold) / (PAIR_HOT - cold)));
-  const n = PAIR_STOPS.length - 1, k = Math.min(n - 1, Math.floor(t * n)), u = t * n - k;
-  const a = pairRgbToHsl(PAIR_STOPS[k]), b = pairRgbToHsl(PAIR_STOPS[k + 1]);
-  let dh = b[0] - a[0]; if (dh > 180) dh -= 360; if (dh < -180) dh += 360;
-  const hsl = [((a[0] + dh * u) % 360 + 360) % 360, a[1] + (b[1] - a[1]) * u, a[2] + (b[2] - a[2]) * u];
-  return {t, color: `rgb(${pairHslToRgb(hsl).join(", ")})`, hsl};
+function pairHeat(score) {
+  // fixed colour band for a paired score (no fading, no per-run scale). t = band position 0..1.
+  const k = pairBand(score), [, color, text, label] = PAIR_BANDS[k];
+  return {t: k / (PAIR_BANDS.length - 1), band: k, color, text, label};
 }
 function pairBadgeInfo(paired) {
-  // paired = {file: {score, index, image}}. Color fades from the run's lowest score (red) to 0.80 (green), one scale for every prompt;
-  // rank and the best-epoch star are per prompt. Returns {file: {color, t, best, rank, n, min, max}}.
+  // paired = {file: {score, index, image}}. Colour is a fixed band per 0.1 (see PAIR_BANDS), the same for every prompt and run;
+  // rank and the best-epoch star are per prompt. Returns {file: {color, text, label, t, best, rank, n, min, max}}.
   const groups = {}, out = {};
   for (const [name, ps] of Object.entries(paired || {})) {
     if (!ps || typeof ps.score !== "number" || !isFinite(ps.score)) continue;
     (groups[ps.index] = groups[ps.index] || []).push([name, ps.score]);
   }
-  const all = Object.values(groups).flat().map((x) => x[1]), low = Math.min(...all);
-  const cold = all.length > 1 && low < PAIR_HOT ? low : PAIR_COLD;   // shared by every prompt in the run
   for (const list of Object.values(groups)) {
     const sorted = list.map((x) => x[1]).sort((a, b) => b - a);
     const max = sorted[0], min = sorted[sorted.length - 1], n = list.length;
     for (const [name, s] of list) {
-      const h = pairHeat(s, cold);
-      out[name] = {color: h.color, t: h.t, cold, best: n > 1 && s === max && max > min, rank: 1 + sorted.filter((v) => v > s).length, n, min, max};
+      const h = pairHeat(s);
+      out[name] = {color: h.color, text: h.text, label: h.label, t: h.t, cold: PAIR_COLD, best: n > 1 && s === max && max > min,
+        rank: 1 + sorted.filter((v) => v > s).length, n, min, max};
     }
   }
   return out;
