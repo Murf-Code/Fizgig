@@ -136,12 +136,78 @@ def _log(text):
         _job["log"] = (_job["log"] + text)[-400_000:]
 
 
-def start(folder, mode, mp, face_label, padding, replace):
+def find_words(face_label, find):
+    """With the Face dropdown on Other…: (the Find this box's phrases, the SAM 3.1 file), checked - ValueError with a
+    plain note when the box is empty or SAM 3.1 isn't downloaded. ([], "") for a face choice."""
+    if not prep.is_other(face_label):
+        return [], ""
+    from fizgig.dataset import sammask
+    from fizgig.user_data import MODELS_DIR
+    words = sammask.split_words(find)
+    if not words:
+        raise ValueError("Type what to find in Find this (e.g. paw, tail, hand).")
+    path = sammask.find_model(MODELS_DIR)
+    if not path:
+        raise ValueError("Finding by words needs SAM 3.1: press Download on the Masks card (further down this tab) "
+                         "first.")
+    return words, path
+
+
+def keep_score(v):
+    """Trim's keep score from the page: a number from 0 to 1 (ValueError otherwise); blank is the default."""
+    from fizgig.dataset import wd_tagger
+    if v is None or str(v).strip() == "":
+        return wd_tagger.KEEP_SCORE
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        f = -1.0
+    if not 0.0 < f < 1.0:
+        raise ValueError("Keep tags scored at least: a number between 0 and 1, like 0.35.")
+    return f
+
+
+def caption_settings(c):
+    """The page's caption settings for crops ({copy, trim, keep_score, ext, trigger}), checked: (settings or None,
+    the tagger's folder or ""). ValueError when Trim is on and the tagger isn't downloaded."""
+    if not isinstance(c, dict):
+        return None, ""
+    from fizgig.dataset import wd_tagger
+    from fizgig.user_data import MODELS_DIR
+    from fizgig.web.captions import caption_ext
+    c = {"copy": c.get("copy", True) is not False, "trim": bool(c.get("trim")), "keep_score": keep_score(
+        c.get("keep_score")), "ext": caption_ext(c.get("ext")), "trigger": str(c.get("trigger") or "").strip()}
+    folder = ""
+    if c["copy"] and c["trim"]:
+        folder = wd_tagger.find_model(MODELS_DIR)
+        if not folder:
+            raise ValueError(f"Trim tags that don't fit needs the {wd_tagger.LABEL}: press Download under it first, "
+                             "or untick Trim.")
+    return c, folder
+
+
+def crop_captions(c, tagger=None):
+    """Checked caption settings (caption_settings) as a CropCaptions, trimming with `tagger`; None for none."""
+    if c is None:
+        return None
+    from fizgig.dataset.crop_captions import CropCaptions
+    return CropCaptions(copy=c["copy"], ext=c["ext"], keep=[c["trigger"]], tagger=tagger if c["trim"] else None,
+                        keep_score=c["keep_score"])
+
+
+def _tagger(folder):
+    from fizgig.dataset import wd_tagger
+    return wd_tagger.Tagger(folder, log=_log)
+
+
+def start(folder, mode, mp, face_label, padding, replace, find="", captions=None):
     if not folder or not os.path.isdir(folder):
         raise ValueError("Choose the training folder on the Start tab first.")
     if mode not in prep.MODES:
         raise ValueError("Pick what to do.")
-    if mode != "Resize Only" and not faces_available():
+    words, sam_path = find_words(face_label, find) if mode != "Resize Only" else ([], "")
+    cap_settings, tagger_dir = caption_settings(captions) if mode != "Resize Only" else (None, "")
+    if mode != "Resize Only" and not words and not faces_available():
         raise ValueError("Face detection isn't installed on this machine: run install_fizgig.py to add it.")
     with _lock:
         if _job["state"] == "running":
@@ -152,8 +218,18 @@ def start(folder, mode, mp, face_label, padding, replace):
 
     def work():
         try:
-            det = _face_detector() if mode != "Resize Only" else None
-            prep.Prep(_log, det).run(mode, folder, float(mp), face_label, float(padding), bool(replace))
+            tagger = _tagger(tagger_dir) if tagger_dir else None
+            try:
+                caps = crop_captions(cap_settings, tagger)
+                if words:
+                    _things(words, sam_path, mode, folder, mp, face_label, padding, replace, caps)
+                else:
+                    det = _face_detector() if mode != "Resize Only" else None
+                    prep.Prep(_log, det, captions=caps).run(mode, folder, float(mp), face_label, float(padding),
+                                                            bool(replace))
+            finally:
+                if tagger is not None:
+                    tagger.close()                        # the tagger is freed when the run ends
             _log("\nDone.\n")
             end = "done"
         except Exception as e:
@@ -163,6 +239,53 @@ def start(folder, mode, mp, face_label, padding, replace):
             _job["state"] = end
     threading.Thread(target=work, daemon=True).start()
     return {"ok": True}
+
+
+def _things(words, sam_path, mode, folder, mp, face_label, padding, replace, caps=None):
+    """A prep run with Other…: SAM 3.1 finds the words; it is freed from memory when the run ends."""
+    from fizgig.dataset import sammask
+    if not sammask._use.acquire(blocking=False):
+        raise ValueError("SAM 3.1 is busy with a mask preview. Try again in a moment.")
+    try:
+        finder = prep.ThingFinder(sammask.segmenter(sam_path, _log), words)
+        prep.Prep(_log, None, finder, caps).run(mode, folder, float(mp), face_label, float(padding), bool(replace))
+    finally:
+        sammask._use.release()
+        sammask.unload()
+
+
+def test_things(path, words, sam_path):
+    """Test Find this on one photo: the picture with what was found boxed (the biggest green), writes nothing."""
+    from PIL import Image, ImageDraw
+    from fizgig.dataset import sammask
+    if not os.path.isfile(path):
+        raise ValueError("That picture isn't there.")
+    if not sammask._use.acquire(blocking=False):
+        raise ValueError("SAM 3.1 is busy. Try again in a moment.")
+    try:
+        finder = prep.ThingFinder(sammask.segmenter(sam_path), words)
+        with Image.open(path) as img:
+            img = upright(img).convert("RGB")
+        hits = finder.find(img)
+    finally:
+        sammask._use.release()
+    if not hits:
+        return {"faces": [], "image": None, "finder": finder.describe()}
+    picked = finder.per_word(hits)
+    shown = img.copy()
+    d = ImageDraw.Draw(shown)
+    lw = max(2, min(shown.size) // 250)
+    for h in hits:
+        col = (40, 200, 70) if h in picked else (240, 200, 40)
+        d.rectangle(h.bbox, outline=col, width=lw)
+        d.text((h.bbox[0] + lw + 2, h.bbox[1] + lw + 2), f"{h.gender} {h.score:.2f}", fill=col)
+    shown.thumbnail((1400, 1400))
+    buf = io.BytesIO()
+    shown.save(buf, "JPEG", quality=88)
+    return {"image": "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode("ascii"),
+            "finder": finder.describe(),
+            "faces": [{"gender": h.gender, "area": int(h.area), "selected": h in picked, "source": "sam3",
+                       "score": round(h.score, 2)} for h in hits]}
 
 
 def test_faces(path, face_label):

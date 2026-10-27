@@ -4433,6 +4433,8 @@ const thumbOf = (p) => `/api/thumb?path=${encodeURIComponent(p)}&t=${encodeURICo
 const prepSettings = () => ({
   mode: (document.querySelector('input[name="prepMode"]:checked') || {}).value || "Auto Prep (Face Crops)",
   mp: $("prepMp").value || "1.0", face: $("prepFace").value || "Largest Face", padding: $("prepPadding").value || "20",
+  find: $("prepFind").value || "", capCopy: $("prepCapCopy").checked, capTrim: $("prepCapTrim").checked,
+  keepScore: $("prepKeepScore").value || "0.35",
   replace: (document.querySelector('input[name="prepReplace"]:checked') || {}).value === "1"});
 const savePrepSoon = debounce(() => { S.prepSaved = prepSettings(); api("/api/state", {prep: S.prepSaved}).catch(() => {}); }, 600);
 
@@ -4442,8 +4444,14 @@ async function loadPrep() {
     const o = S.prep.opts, saved = S.prepSaved || {};
     $("prepMp").innerHTML = ""; for (const m of o.megapixels) $("prepMp").append(el("option", {value: m, text: m}));
     $("prepFace").innerHTML = ""; for (const f of o.faces) $("prepFace").append(el("option", {value: f, text: f}));
+    if (o.other) $("prepFace").append(el("option", {value: o.other, text: o.other}));   // Other…: Find this (SAM 3.1)
     $("prepMp").value = saved.mp || "1.0";
     $("prepFace").value = saved.face || "Largest Face";
+    if (!$("prepFace").value) $("prepFace").value = "Largest Face";
+    $("prepFind").value = saved.find || "";
+    $("prepCapCopy").checked = saved.capCopy !== false;             // on unless turned off
+    $("prepCapTrim").checked = !!saved.capTrim;
+    if (saved.keepScore) $("prepKeepScore").value = saved.keepScore;
     if (saved.padding) $("prepPadding").value = saved.padding;
     const mode = saved.mode || "Auto Prep (Face Crops)";
     document.querySelectorAll('input[name="prepMode"]').forEach((r) => { r.checked = r.value === mode; });
@@ -4496,6 +4504,7 @@ async function maskInfo() {
     }
   }
   S.prep.maskOpts = r;
+  if (S.prep.opts) prepFindShow();                    // Find this follows whether SAM 3.1 is downloaded
   maskShow(r);
 }
 // SAM 3.1 on the masks card: words instead of the person finder's choices; its file is downloaded from here
@@ -4901,12 +4910,73 @@ function meTool(t) {
   $("meTool").querySelectorAll("button").forEach((b) => b.classList.toggle("active", b.dataset.tool === t));
 }
 
+// the Face dropdown's Other…: a Find this box, found with SAM 3.1 (the Masks card's download). The note why Prepare
+// is blocked, or "" (an empty box, or SAM 3.1 not downloaded yet)
+const prepOther = () => ((S.prep.opts || {}).other || "Other…") === $("prepFace").value;
+function prepTrimBlocked() {
+  const p = prepSettings();
+  if (p.mode === "Resize Only" || !(p.capCopy && p.capTrim)) return "";
+  const t = (S.prep.maskOpts || {}).tagger, k = Number(p.keepScore);
+  if (!(k > 0 && k < 1)) return "Keep tags scored at least: a number between 0 and 1, like 0.35.";
+  if (t && !t.path) return "Trim tags needs the WD tagger: press Download under Trim first, or untick Trim.";
+  return "";
+}
+function prepFindBlocked() {
+  const p = prepSettings();
+  if (p.mode === "Resize Only" || !prepOther()) return "";
+  if (!p.find.split(/[,\n]/).some((w) => w.trim())) return "Type what to find in Find this (e.g. paw, tail, hand).";
+  const sam = (S.prep.maskOpts || {}).sam;
+  if (sam && !sam.path) return "Finding by words needs SAM 3.1: press Download on the Masks card below first.";
+  return "";
+}
+function prepBlocked() { return prepFindBlocked() || prepTrimBlocked(); }
+function prepFindShow() {
+  const p = prepSettings(), other = prepOther(), faceOn = p.mode !== "Resize Only";
+  $("prepFindRow").style.display = other ? "" : "none";
+  $("prepFindHint").style.display = other ? "" : "none";
+  $("prepFinderNow").style.display = other || !faceOn ? "none" : "";
+  const find = prepFindBlocked(), trim = prepTrimBlocked();
+  prepTaggerShow();
+  $("prepTrimNote").textContent = trim;
+  $("prepFindHint").textContent = find || "SAM 3.1 finds what you type. Separate things with commas; each gets its " +
+    "own close-up (the biggest one found). Pictures where nothing is found are left whole.";
+  $("prepFindHint").classList.toggle("problems", !!find);
+  if (!S.prep.running) $("prepRun").disabled = !!(find || trim);
+  $("prepTest").disabled = !faceOn || (other ? !!find : !S.prep.opts.face_tools);
+}
+
+// Trim tags that don't fit: the WD tagger's download (wd_tagger.py, through /api/masks/info's "tagger")
+function prepTaggerShow() {
+  const on = $("prepCapCopy").checked && $("prepCapTrim").checked, t = (S.prep.maskOpts || {}).tagger || {}, f = t.fetch || {};
+  $("prepTrimBox").style.display = on ? "" : "none";
+  const st = $("prepTaggerState");
+  if (!on || !S.prep.maskOpts) return;
+  if (f.state === "running") {
+    st.replaceChildren(`Downloading the WD tagger: ${f.gb} of ${f.of} GB …`);
+    clearTimeout(S.prep.tagTimer);
+    S.prep.tagTimer = setTimeout(maskInfo, 2000);
+  } else if (t.path) {
+    st.replaceChildren("The WD tagger is downloaded. It runs on the GPU when it can, and is freed when prep ends.");
+  } else {
+    st.replaceChildren(el("button", {class: "btn btn-primary",
+      text: f.state === "failed" ? "Try the download again" : `Download the WD tagger (${t.gb || 1.2} GB)`, onclick: async () => {
+        await api("/api/prep/tagger_fetch", {}).catch((e) => { st.textContent = e.message; });
+        maskInfo(); }}), el("span", {class: "field-hint", text: f.state === "failed" ? ` The download failed: ${f.error}` :
+        " Needed once, before the first trim."}));
+  }
+}
+
 async function prepSummary() {
   const p = prepSettings(), faceOn = p.mode !== "Resize Only";
-  document.querySelectorAll(".prep-face select, .prep-face input").forEach((i) => { i.disabled = !faceOn || !S.prep.opts.face_tools; });
+  document.querySelectorAll(".prep-face select, .prep-face input").forEach((i) => {
+    i.disabled = !faceOn || (!S.prep.opts.face_tools && !(i.id === "prepFind" || (i.id === "prepFace" && prepOther()))); });
   $("prepTest").disabled = !faceOn || !S.prep.opts.face_tools;
+  $("prepCapCopy").disabled = !faceOn;
+  $("prepCapTrim").disabled = !faceOn || !$("prepCapCopy").checked;
+  prepFindShow();
   if (!S.imageFolder) { $("prepSummary").textContent = ""; return; }
   const r = await api(`/api/prep/summary?folder=${encodeURIComponent(S.imageFolder)}&mode=${encodeURIComponent(p.mode)}` +
+    `&face=${encodeURIComponent(p.face)}&find=${encodeURIComponent(p.find)}` +
     `&mp=${p.mp}&replace=${p.replace ? 1 : 0}&train_mp=${encodeURIComponent(S.values.DATASET_MEGAPIXELS || "")}`).catch(() => null);
   if (!r) return;
   $("prepAudioOnly").style.display = r.audio_only ? "" : "none";
@@ -4927,7 +4997,7 @@ async function pollPrep() {
     S.prep.logSize = r.size;
     const was = S.prep.running;
     S.prep.running = r.state === "running";
-    $("prepRun").disabled = S.prep.running;
+    $("prepRun").disabled = S.prep.running || !!prepBlocked();
     if (S.prep.running) $("prepRun").textContent = "Preparing…";
     $("prepState").textContent = S.prep.running ? "Working on the Fizgig computer: you can leave this page." :
       r.state === "done" ? "Done." : r.state === "failed" ? "It stopped with an error: see the log." : "";
@@ -4943,9 +5013,11 @@ async function pollPrep() {
 
 async function prepRun() {
   if (!S.imageFolder) { $("prepState").textContent = "Choose the training folder on the Start tab first."; return; }
-  const p = prepSettings();
+  const p = prepSettings(), block = prepBlocked();
+  if (block) { $("prepState").textContent = block; return; }
   try {
-    await api("/api/prep/run", {folder: S.imageFolder, ...p});
+    await api("/api/prep/run", {folder: S.imageFolder, ...p, captions: {copy: p.capCopy, trim: p.capTrim, keep_score: p.keepScore,
+      ext: S.values.DATASET_CAPTION_EXT || ".txt", trigger: S.values.CAPTION_TRIGGER_WORD || ""}});
     $("prepLog").textContent = ""; S.prep.logSize = 0;
     pollPrep();
   } catch (e) { $("prepState").textContent = e.message; }
@@ -4976,6 +5048,9 @@ function faceSettingsShow(f, msg) {
   if (document.activeElement !== $("prepYolo")) $("prepYolo").value = f.yolo_model;
   $("prepYoloRow").style.display = f.detector === "insightface" ? "none" : "";
   $("prepDetectorHint").textContent = FACE_HINTS[f.detector] || "";
+  $("prepFinderNow").textContent = f.detector === "insightface" ?
+    "Face finder: People. For furry, anime or drawn faces, pick Anime/furry/drawn under Anime/furry/drawn characters below." :
+    `Face finder: ${(f.detectors.find((d) => d[0] === f.detector) || [, f.detector])[1]}.`;
   $("prepIdentityHint").textContent = f.identity === "auto" && f.detector !== "auto" ?
     `With this face finder that means ${f.detector === "yolo" ? "Anime/furry/drawn" : "People (the default)"}.` :
     LOOK_HINTS[f.identity] || "";
@@ -5016,9 +5091,19 @@ function faceSettingsWire() {
 function prepTest() {
   pick(S.imageFolder, false, async (path) => {
     const host = $("prepTestResult");
-    host.replaceChildren(el("div", {class: "field-hint", text: "Finding faces… (the first time loads the face model)"}));
+    const other = prepOther();
+    host.replaceChildren(el("div", {class: "field-hint", text: other ? "Finding… (the first time loads SAM 3.1)" :
+      "Finding faces… (the first time loads the face model)"}));
     try {
-      const r = await api("/api/prep/test", {path, face: $("prepFace").value});
+      const r = await api("/api/prep/test", {path, face: $("prepFace").value, find: $("prepFind").value});
+      if (other) {
+        if (!r.faces.length) { host.replaceChildren(el("div", {class: "field-hint", text: "Nothing found in that photo."})); return; }
+        host.replaceChildren(
+          el("div", {class: "field-hint", text: `${r.faces.length} found: ` + r.faces.map((f) => `${f.gender} (${f.score})` +
+            (f.selected ? ", cropped" : "")).join("; ") + ". Green = cropped, yellow = the others."}),
+          el("img", {class: "prep-test-img", src: r.image, alt: "what was found"}));
+        return;
+      }
       if (!r.faces.length) { host.replaceChildren(el("div", {class: "field-hint", text: "No faces found in that photo."})); return; }
       host.replaceChildren(
         el("div", {class: "field-hint", text: `${r.faces.length} face${r.faces.length === 1 ? "" : "s"} found (${r.finder}): ` +
@@ -5198,6 +5283,12 @@ function wirePrep() {
   document.querySelectorAll('input[name="prepMode"], input[name="prepReplace"]').forEach((r) =>
     r.addEventListener("change", () => { prepSummary(); savePrepSoon(); }));
   for (const id of ["prepMp", "prepFace", "prepPadding"]) $(id).addEventListener("change", () => { prepSummary(); savePrepSoon(); });
+  $("prepFace").addEventListener("change", () => { if (prepOther() && !$("prepFind").value.trim()) $("prepFind").focus(); });
+  $("prepFind").addEventListener("input", () => { prepFindShow(); savePrepSoon(); });
+  $("prepCapCopy").addEventListener("change", () => { $("prepCapTrim").disabled = !$("prepCapCopy").checked; prepFindShow(); savePrepSoon(); });
+  $("prepCapTrim").addEventListener("change", () => { prepFindShow(); savePrepSoon(); });
+  $("prepKeepScore").addEventListener("input", () => { prepFindShow(); savePrepSoon(); });
+  $("prepFind").addEventListener("change", () => prepSummary());
   $("prepRun").addEventListener("click", prepRun);
   $("maskRun").addEventListener("click", maskRun);
   meWire();

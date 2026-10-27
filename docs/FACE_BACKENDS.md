@@ -243,3 +243,29 @@ The InsightFace path keeps every detail of the old one: one detection pass (the 
 - Fizgig's NMS IoU is 0.5. ADetailer uses 0.7, so Fizgig drops more nested duplicate boxes. That suits *largest face*.
 - DINOv2 thresholds are provisional (small calibration set; see above).
 - The identity checks run on CPU only. A large dataset takes a few minutes the first time; after that, embeddings are cached for the session.
+
+## Cropping something other than a face (Other…)
+
+Image Prep's **Face** dropdown has an **Other…** choice. Pick it and type what to crop in **Find this**
+(for example `paw, tail, hand`). Each comma-separated thing is searched on its own with SAM 3.1 (the model the
+Masks card downloads, 1.75 GB, once), with the same score cutoff the masks use (0.5).
+
+- **Resize + close-ups** saves a close-up of the biggest hit of each thing, beside the picture, as
+  `Crop_paw_001.png`, `Crop_tail_001.png`... (face crops keep their `FaceCrop_` names).
+- **Close-ups only** replaces each picture with the biggest hit of any of the things.
+- Padding and square crops work as they do for faces. A picture where nothing is found is left whole.
+- SAM 3.1 is freed from memory when the prep run ends. Without its file, Prepare stays off and says to press
+  Download on the Masks card.
+
+## Captions on crops
+
+**Copy the picture's caption to its crops** (on by default) gives every crop its picture's caption, in the
+dataset's caption extension (`.txt` unless set otherwise). A caption already there for a crop is never replaced.
+
+**Trim tags that don't fit the crop** (off by default) runs SmilingWolf's
+[WD EVA02-Large tagger v3](https://huggingface.co/SmilingWolf/wd-eva02-large-tagger-v3) (Apache-2.0, a 1.2 GB
+download into the models folder, once, from a Download button under the tickbox) on each crop through onnxruntime,
+on the GPU when onnxruntime's CUDA provider is there. A general tag it scores under **Keep tags scored at least**
+(0.35 by default) is dropped. Nothing is ever added. The first tag, the trigger word, character, rating and meta
+tags, and tags it doesn't know (species, artists, your own) always stay. Sentence captions are copied as written.
+The tagger is freed when the prep run ends.
