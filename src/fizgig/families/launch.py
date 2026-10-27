@@ -554,8 +554,17 @@ def _media_count(folder):
         return 0
 
 
-# Folders Fizgig itself makes inside a training folder: never trained on as sub-folders
-OWN_SUBFOLDERS = {"excluded_by_look", "originals"}
+# Folders Fizgig itself makes inside a training folder: never trained on as sub-folders. Image Prep's Keep them safe
+# (originals, then originals_2, _3... on later runs; crop tag trimming backs captions up there too), Exclude by look,
+# and the desktop's Remove. Matched in any case.
+OWN_SUBFOLDERS = {"excluded_by_look", "originals", "removed"}
+_OWN_NUMBERED = re.compile(r"originals(_\d+)?", re.IGNORECASE)
+
+
+def is_own_subfolder(name):
+    """A folder Fizgig made inside a training folder (originals, originals_2, excluded_by_look, removed)."""
+    n = os.path.basename(str(name).rstrip("\\/")).lower()
+    return n in OWN_SUBFOLDERS or bool(_OWN_NUMBERED.fullmatch(n))
 
 
 def subfolders_on(desc, st):
@@ -565,29 +574,43 @@ def subfolders_on(desc, st):
                                                or edit_on(desc, st) or slider_on(desc, st))
 
 
-def subfolders(folder, skip=()):
+def subfolders(folder, skip=(), skipped=None):
     """[(relative path with "/", folder)] of every sub-folder at any depth holding training items (photos, clips,
-    songs), sorted: Fizgig's own (excluded_by_look, originals), hidden ones, and any folder in `skip` (the output,
-    cache or regularisation folder when it sits inside), with everything under them, are left out."""
+    songs), sorted: Fizgig's own (originals, originals_2..., excluded_by_look, removed), hidden ones, and any folder in
+    `skip` (the output, cache or regularisation folder when it sits inside), with everything under them, are left out.
+    skipped: a list that gets the relative paths of the Fizgig folders left out (for the run's log)."""
     if not folder or not os.path.isdir(folder):
         return []
     norm = lambda f: os.path.normcase(os.path.abspath(f)).rstrip("\\/")
     skip = {norm(f) for f in skip if f}
     out = []
     for root, dirs, _files in os.walk(folder):
-        dirs[:] = sorted(d for d in dirs if not d.startswith(".") and d.lower() not in OWN_SUBFOLDERS
+        if skipped is not None:
+            skipped += sorted(os.path.relpath(os.path.join(root, d), folder).replace("\\", "/")
+                              for d in dirs if not d.startswith(".") and is_own_subfolder(d))
+        dirs[:] = sorted(d for d in dirs if not d.startswith(".") and not is_own_subfolder(d)
                          and norm(os.path.join(root, d)) not in skip)
         if norm(root) != norm(folder) and _media_count(root):
             out.append((os.path.relpath(root, folder).replace("\\", "/"), root))
     return out
 
 
-def run_subfolders(desc, st):
+def run_subfolders(desc, st, skipped=None):
     """The run's sub-folders (subfolders), or [] when the tick is off or doesn't apply."""
     if not subfolders_on(desc, st):
         return []
     return subfolders(_s(st.get("image_folder")), (_s(st.get("LORA_OUTPUT_DIR")), _s(st.get("cache_root")),
-                                                   ft_reg_dir(desc, st)))
+                                                   ft_reg_dir(desc, st)), skipped)
+
+
+def own_skipped_line(desc, st):
+    """The run log's one line naming the Fizgig folders the sub-folder tick left out, or "" (none, or tick off)."""
+    skipped = []
+    run_subfolders(desc, st, skipped)
+    if not skipped:
+        return ""
+    return "[sub-folders] Not trained (Fizgig's own folders): " + ", ".join(skipped[:6]) + (
+        f" and {len(skipped) - 6} more" if len(skipped) > 6 else "")
 
 
 def _balance_repeats(folders):
@@ -1677,6 +1700,9 @@ def plan(desc, inputs):
     if p.problems:
         return p                        # nothing to write or run
     p.files.append((inputs["DATASET_CONFIG"], p.dataset_toml))
+    own = own_skipped_line(desc, inputs)
+    if own:
+        p.console.append(own)
     train = train_command(desc, inputs, p)
     people = [(f, s, w) for f, s, _why, w in multi_person_subjects(desc, inputs) if s and s["kind"] == "person"] \
         if multi_person_on(desc, inputs) else []
