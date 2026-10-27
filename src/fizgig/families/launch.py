@@ -295,7 +295,7 @@ def uncached_pictures(toml_text):
         # <stem>_<WxH>_<arch>.safetensors and <stem>_<arch>_te.safetensors: the stem is all but the last two parts
         te = {"_".join(f[:-len(".safetensors")].split("_")[:-2]) for f in names if f.endswith("_te.safetensors")}
         lat = {"_".join(f.split("_")[:-2]) for f in names
-               if f.endswith(".safetensors") and not f.endswith("_te.safetensors")}
+               if f.endswith(".safetensors") and not f.endswith(("_te.safetensors", "_tags.safetensors"))}
         n += sum(1 for f in os.listdir(img) if os.path.splitext(f)[1].lower() in exts and not is_mask_file(f)
                  and (os.path.splitext(f)[0] not in lat or os.path.splitext(f)[0] not in te))
     return n
@@ -1134,6 +1134,74 @@ def _sample_image(desc, sm):
     return ref if ref and os.path.isfile(ref) else ""
 
 
+# ---------------------------------------------------------------------------------------------------- tag shuffle
+TAG_KEYS = ("TAG_SHUFFLE", "TAG_KEEP_FIRST", "TAG_DROPOUT", "CAPTION_DROPOUT", "TAG_VARIANTS")
+TAG_VARIANT_CHOICES = ("2", "4", "8", "16")
+
+
+def _pct(raw):
+    """'10', '10%', '0.5' -> percent as a float; '' / 'Off' -> 0. ValueError for anything else or outside 0-100."""
+    t = _s(raw).rstrip("%").strip()
+    if not t or t.lower() == "off":
+        return 0.0
+    v = float(t)
+    if not 0 <= v <= 100:
+        raise ValueError(t)
+    return v
+
+
+def tags_apply(desc, inputs):
+    """Whether this run can use tag shuffle / caption dropout: a family on the shared text cache (not MiniMax H3's own
+    or ACE-Step's songs), a standard LoRA or a fine-tune (an edit pair's or slider's captions are encoded otherwise),
+    and not Fizgig LoRA Isolation (it reads triggers fused as captions load)."""
+    return (getattr(desc, "caption_variants", True) and not edit_on(desc, inputs) and not slider_on(desc, inputs)
+            and not multi_person_on(desc, inputs))
+
+
+def tag_settings(desc, inputs):
+    """The run's tag settings as the dataset TOML takes them - {tag_shuffle, keep_first_tags, tag_dropout,
+    caption_dropout (percent), caption_variants} - or None when none is on (or the run can't use them). ValueError
+    for a box that isn't a number."""
+    if not tags_apply(desc, inputs):
+        return None
+    shuffle = bool(inputs.get("TAG_SHUFFLE"))
+    td, cd = _pct(inputs.get("TAG_DROPOUT")), _pct(inputs.get("CAPTION_DROPOUT"))
+    if not (shuffle or td > 0 or cd > 0):
+        return None
+    keep = int(float(_s(inputs.get("TAG_KEEP_FIRST")) or 1))
+    k = int(float(_s(inputs.get("TAG_VARIANTS")).split(" ")[0] or 4))
+    if keep < 0 or not 1 <= k <= 32:
+        raise ValueError("range")
+    return {"tag_shuffle": shuffle, "keep_first_tags": keep, "tag_dropout": td, "caption_dropout": cd,
+            "caption_variants": k}
+
+
+def tag_problems(desc, inputs):
+    try:
+        tag_settings(desc, inputs)
+    except (TypeError, ValueError):
+        return ["Caption shuffle & dropout: Tag dropout and Caption dropout are percentages from 0 to 100, Keep first "
+                "N tags is a whole number (0 or more), and Variants per caption is 1 to 32."]
+    return []
+
+
+def _tag_lines(desc, inputs):
+    """[general] lines for the tag settings ([] when off)."""
+    t = tag_settings(desc, inputs)
+    if not t:
+        return []
+    return [f"tag_shuffle = {'true' if t['tag_shuffle'] else 'false'}", f"keep_first_tags = {t['keep_first_tags']}",
+            f"tag_dropout = {t['tag_dropout']:g}", f"caption_dropout = {t['caption_dropout']:g}",
+            f"caption_variants = {t['caption_variants']}"]
+
+
+def _keep_words_line(word):
+    """A dataset block's trigger word, kept first when tags are shuffled or dropped."""
+    import json as _json
+    w = _s(word).rstrip(",").strip()
+    return [f"keep_words = {_json.dumps([w])}"] if w and w.lower() != "trigger_word" else []
+
+
 # ---------------------------------------------------------------------------------------------------- dataset
 def cache_dir_for(cache_root, image_dir):
     """`<cache_root>/<folder name>-<hash of full path>`: one cache folder per image folder. The trainer builds its
@@ -1170,6 +1238,9 @@ def dataset_toml(desc, inputs):
         cmp_ = 0.0
     if cmp_ > 0 and "clip" in desc.media and any("clip" in dataset_media(f) for f in [folder] + extra):
         lines.append(f"clip_megapixels = {cmp_:g}")      # clips cache and train at their own size
+    tags = _tag_lines(desc, inputs)
+    lines += tags
+    trig = (lambda w: _keep_words_line(w)) if tags else (lambda w: [])
     reps = _balance_repeats([folder] + extra) if extra and inputs.get("concept_balance") else {}
     mp = {f: (s, w) for f, s, _why, w in multi_person_subjects(desc, inputs) if s} \
         if multi_person_on(desc, inputs) else {}
@@ -1187,6 +1258,7 @@ def dataset_toml(desc, inputs):
     if reps.get(folder, 1) > 1:
         lines.append(f"num_repeats = {reps[folder]}")
     _fuse(folder)
+    lines += trig(inputs.get("DOP_FOLDER_TRIGGER") or inputs.get("CAPTION_TRIGGER_WORD") or inputs.get("caption_trigger"))
     if edit_on(desc, inputs):
         lines.append(f'control_directory = "{_s(inputs.get("FAMILY_EDIT_DIR")).replace(chr(92), "/")}"')
         if edit_extras_on(desc, inputs):
@@ -1201,6 +1273,7 @@ def dataset_toml(desc, inputs):
     for rel, f in subs:                  # Also train on its sub-folders: each its own block and cache folder
         lines += ["", "[[datasets]]", f'image_directory = "{f.replace(chr(92), "/")}"',
                   f'item_prefix = "{_toml_str(rel + "/")}"']
+        lines += trig((inputs.get("recaption_triggers") or {}).get(rel + "/"))
         if root:
             lines.append(f'cache_directory = "{cache_dir_for(root, f).replace(chr(92), "/")}"')
     for n, f in enumerate(extra, start=2):   # Multi Concept: each subject its own block and cache folder
@@ -1208,6 +1281,7 @@ def dataset_toml(desc, inputs):
         if reps.get(f, 1) > 1:
             lines.append(f"num_repeats = {reps[f]}")
         _fuse(f)
+        lines += trig(inputs.get(f"DOP_FOLDER_TRIGGER{n}"))
         if root:
             lines.append(f'cache_directory = "{cache_dir_for(root, f).replace(chr(92), "/")}"')
     for f, (_s_, w) in mp.items():        # multi-person mode: each person's composites, already captioned fused
@@ -1425,6 +1499,7 @@ def start_problems(desc, inputs):
     out += multi_concept_problems(desc, v)
     out += dop_problems(desc, v)
     out += multi_person_problems(desc, v)
+    out += tag_problems(desc, v)
     if automagic(v) and not v.get("ADAPTIVE_LR") and not ft_on(desc, v):
         try:
             lr = float(v.get("LEARNING_RATE"))

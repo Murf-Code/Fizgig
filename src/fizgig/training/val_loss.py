@@ -77,7 +77,9 @@ class FixedValidation:
         """Keep a copy of this training batch when it is one of the picked images and not kept yet."""
         for k in (str(x) for x in (batch.get("item_keys") or [])):    # Batch Size > 1: the batch it trains in
             if k in self.wanted and k not in self.batches:
-                self.batches[k] = {n: _cpu(v) for n, v in batch.items()}
+                # always the image's own caption, as written: never a shuffled, tag-dropped or empty variant
+                from fizgig.dataset.image_dataset import original_text_batch
+                self.batches[k] = {n: _cpu(v) for n, v in original_text_batch(batch).items()}
                 if self.ready:
                     self.save()
                 return

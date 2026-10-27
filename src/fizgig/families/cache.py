@@ -128,6 +128,17 @@ def _encode_text_with_references(args, datasets, driver, te, desc):
     post_process(datasets, files, paths, args.keep_cache)
 
 
+def _encode_tag_variants(args, datasets, driver, te, desc):
+    """Tag shuffle / tag dropout / caption dropout (dataset/tag_variants.py): each caption's cached variants, with
+    the encoder still loaded. Only the variant texts not already cached are encoded."""
+    from fizgig.dataset.tag_variants import build_for_datasets, settings_of
+    if not any(settings_of(ds) for ds in datasets):
+        return
+    workers = args.num_workers if args.num_workers is not None else max(1, os.cpu_count() - 1)
+    build_for_datasets(datasets, lambda caps: driver.encode_text(te, caps), arch=desc.arch_id, num_workers=workers,
+                       batch=min(int(args.batch_size or 8), 64), clean=lambda v, k: _clean(v, k, "caption variant"))
+
+
 def main():
     p = argparse.ArgumentParser(description="Cache latents or text conditioning for a described model family")
     p.add_argument("--family", required=True, help="family key, e.g. qwen_image21")
@@ -205,8 +216,9 @@ def main():
             for it, c in zip(batch, driver.encode_text(te, [it.caption for it in batch])):
                 save_cond(desc, it, c)
         process_batches(args, datasets, files, paths, encode)
-        driver.unload_text_encoder(te)
         post_process(datasets, files, paths, args.keep_cache)
+        _encode_tag_variants(args, datasets, driver, te, desc)
+        driver.unload_text_encoder(te)
 
 
 if __name__ == "__main__":

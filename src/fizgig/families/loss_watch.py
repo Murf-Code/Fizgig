@@ -49,6 +49,19 @@ def _folders(group, fallback=None):
     return out
 
 
+def _tag_settings(group):
+    """item_key -> its dataset's active TagSettings (tag shuffle / caption dropout), for the items that have them."""
+    from fizgig.dataset.tag_variants import settings_of
+    out = {}
+    for ds in getattr(group, "datasets", None) or []:
+        ts, bm = settings_of(ds), getattr(ds, "batch_manager", None)
+        if ts is not None and bm is not None:
+            for bucket in bm.buckets.values():
+                for it in bucket:
+                    out[str(it.item_key)] = ts
+    return out
+
+
 def _items(group):
     """item_key -> ItemInfo over every training bucket."""
     out = {}
@@ -283,6 +296,20 @@ class Watch:
                         item.caption = cap
                         cache.save_cond(desc, item, cond)     # the loader reads this file every step
                 ok = True
+                # tag shuffle / caption dropout: the old caption's variants no longer apply (the loader already
+                # ignores them - their source caption differs); the new caption's are made now, with the encoder here
+                tag_sets = _tag_settings(self.group)
+                for k, item, cap, _ in todo:
+                    ts = tag_sets.get(k)
+                    if ts is None:
+                        continue
+                    try:
+                        from fizgig.dataset.tag_variants import write_variants
+                        write_variants(lambda caps: self.driver.encode_text(te, caps),
+                                       item.text_encoder_output_cache_path, cap, ts, arch=desc.arch_id)
+                    except Exception:
+                        logger.warning(f"[caption-fix] could not remake the tag variants of {k} - it trains on its "
+                                       "new caption as written", exc_info=True)
             finally:
                 self.driver.unload_text_encoder(te)
                 del te

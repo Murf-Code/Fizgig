@@ -67,6 +67,12 @@ class BaseDatasetParams:
     debug_dataset: bool = False
     architecture: str = "no_default"
     clip_megapixels: Optional[float] = None
+    # Tag shuffle / dropout (dataset/tag_variants.py): cached caption variants picked per image per step
+    tag_shuffle: bool = False
+    keep_first_tags: int = 1
+    tag_dropout: float = 0.0          # percent, 0-100
+    caption_dropout: float = 0.0      # percent, 0-100
+    caption_variants: int = 4
 
 
 @dataclass
@@ -90,6 +96,8 @@ class ImageDatasetParams(BaseDatasetParams):
     mask_directory: Optional[str] = None
     # The pictures' training-key prefix (ImageDataset.item_prefix): a sub-folder's path, or another folder's tag
     item_prefix: str = ""
+    # words always kept, first, when tags are shuffled or dropped (the folder's trigger word)
+    keep_words: Optional[list] = None
 
 
 @dataclass
@@ -143,6 +151,11 @@ class ConfigSanitizer:
         "bucket_no_upscale": bool,
         # MiniMax H3: clips are cached and trained at this size or smaller, photos at resolution
         "clip_megapixels": Any(int, float),
+        "tag_shuffle": bool,
+        "keep_first_tags": int,
+        "tag_dropout": Any(int, float),
+        "caption_dropout": Any(int, float),
+        "caption_variants": int,
     }
 
     # Fields specific to an image dataset entry
@@ -156,6 +169,7 @@ class ConfigSanitizer:
         "photos_only": bool,
         "mask_directory": str,
         "item_prefix": str,
+        "keep_words": [str],
     }
 
     # Options that come from argparse only (not from user config)

@@ -1208,8 +1208,14 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
                 raise RuntimeError(f"{desc.display_name} has no masked training - drop --masked_training")
             from fizgig.dataset.image_dataset import ImageDataset
             ImageDataset.loss_masks = True      # each still with a photo-masklabel.png gets its mask (dataset/masks.py)
+        from fizgig.dataset.image_dataset import ImageDataset as _ImageDataset
+        # tag shuffle / caption dropout (dataset/tag_variants.py): picks seeded by the run's seed (resumes repeat them)
+        _ImageDataset.variant_seed = int(seed)
         group = generate_dataset_group_by_blueprint(blueprint.dataset_group, training=True,
                                                     num_timestep_buckets=None, shared_epoch=shared_epoch)
+        from fizgig.dataset.tag_variants import summary as _tag_summary
+        for _line in _tag_summary(group.datasets):
+            logger.info(_line)
     if group.num_train_items == 0:
         raise RuntimeError("No training items - run the cache stages (families/cache.py) first.")
     masked_images = 0
