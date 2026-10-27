@@ -4166,10 +4166,10 @@ class Handler(BaseHTTPRequestHandler):
                     return self.json({"error": f"The finder couldn't run: {type(e).__name__}: {e}"}, 400)
                 from fizgig.dataset import sammask
                 pics = []
-                for name, pic, cover, found_by in shots:
+                for name, pic, cover, found_by, note in shots:
                     buf = io.BytesIO()
                     pic.save(buf, "JPEG", quality=88)
-                    pics.append({"name": name, "cover": round(cover, 3), "by": found_by,
+                    pics.append({"name": name, "cover": round(cover, 3), "by": found_by, "note": note,
                                  "src": "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()})
                 return self.json({"ok": True, "pictures": pics, "fresh": fresh, "of": len(sammask.pictures(folder))})
             if path == "/api/masks/edit/sam_click":  # the mask editor: the object SAM 3.1 finds where you clicked

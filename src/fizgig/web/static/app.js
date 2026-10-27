@@ -4638,7 +4638,8 @@ async function maskSamPreview() {
     const by = (p) => !sam && maskWho() === "auto" ? (p.by === "photo" ? " · photo" : " · character") : "";
     $("maskSamPreviews").replaceChildren(...r.pictures.map((p) => el("figure", {class: "mask-sam-shot"},
       el("img", {src: p.src, alt: p.name}),
-      el("figcaption", {text: (p.cover ? `${p.name} · ${Math.round(p.cover * 100)}% masked` : `${p.name} · nothing found`) + by(p)}))));
+      el("figcaption", {text: (p.cover ? `${p.name} · ${Math.round(p.cover * 100)}% masked` : `${p.name} · ${p.note || "nothing found"}`) +
+        by(p) + (p.cover && p.note ? ` · ${p.note}` : "")}))));
     $("maskSamPrevState").textContent = "Blue is what the LoRA learns; nothing is saved yet. Press again for two " +
       `more (${Math.min(S.prep.samShown.length, r.of)} of ${r.of} seen).`;
   } catch (e) { $("maskSamPrevState").textContent = e.message; }
