@@ -254,7 +254,8 @@ const fn = (name) => { const i = src.indexOf("function " + name + "("); const a 
 const code = src.match(/const \$ = \(id\)[^\n]*\n/)[0] + src.match(/const el = \(tag[\s\S]*?\n};\n/)[0] +
   src.match(/const prepSettings = [\s\S]*?\}\);\n/)[0] + src.match(/const prepOther = [^\n]*\n/)[0] +
   fn("prepTrimBlocked") + fn("prepFindBlocked") + "function prepBlocked() { return prepFindBlocked() || prepTrimBlocked(); }\n" +
-  fn("prepFindShow") + fn("prepTaggerShow");
+  fn("prepFindShow") + fn("prepTaggerShow") + fn("prepTaggerInfo") + src.match(/const prepTaggerName = [^\n]*\n/)[0] +
+  src.match(/const TAGGER_KEEP = [^\n]*\n/)[0] + src.match(/const TAGGER_HINTS = [\s\S]*?\n\};\n/)[0];
 const S = {prep: {opts: {other: "Other…", face_tools: true}, running: false,
                    maskOpts: {sam: {path: ""}, tagger: {path: "", gb: 1.2, fetch: {}}}}};
 const api = async () => ({}); const maskInfo = () => {};

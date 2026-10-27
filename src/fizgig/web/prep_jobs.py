@@ -153,11 +153,12 @@ def find_words(face_label, find):
     return words, path
 
 
-def keep_score(v):
-    """Trim's keep score from the page: a number from 0 to 1 (ValueError otherwise); blank is the default."""
+def keep_score(v, default=None):
+    """Trim's keep score from the page: a number from 0 to 1 (ValueError otherwise); blank is the tagger's default
+    (`default`, else the WD tagger's)."""
     from fizgig.dataset import wd_tagger
     if v is None or str(v).strip() == "":
-        return wd_tagger.KEEP_SCORE
+        return wd_tagger.KEEP_SCORE if default is None else default
     try:
         f = float(v)
     except (TypeError, ValueError):
@@ -168,20 +169,24 @@ def keep_score(v):
 
 
 def caption_settings(c):
-    """The page's caption settings for crops ({copy, trim, keep_score, ext, trigger}), checked: (settings or None,
-    the tagger's folder or ""). ValueError when Trim is on and the tagger isn't downloaded."""
+    """The page's caption settings for crops ({copy, trim, tagger, keep_score, ext, trigger}), checked: (settings or
+    None, the tagger's folder or ""). tagger is "wd-eva02" (the default) or "jtp3" (taggers.py). ValueError when Trim
+    is on and that tagger isn't downloaded."""
     if not isinstance(c, dict):
         return None, ""
-    from fizgig.dataset import wd_tagger
+    from fizgig.dataset import taggers
     from fizgig.user_data import MODELS_DIR
     from fizgig.web.captions import caption_ext
-    c = {"copy": c.get("copy", True) is not False, "trim": bool(c.get("trim")), "keep_score": keep_score(
-        c.get("keep_score")), "ext": caption_ext(c.get("ext")), "trigger": str(c.get("trigger") or "").strip()}
+    name = taggers.pick(c.get("tagger"))
+    mod = taggers.get(name)
+    c = {"copy": c.get("copy", True) is not False, "trim": bool(c.get("trim")), "tagger": name,
+         "keep_score": keep_score(c.get("keep_score"), mod.KEEP_SCORE), "ext": caption_ext(c.get("ext")),
+         "trigger": str(c.get("trigger") or "").strip()}
     folder = ""
     if c["copy"] and c["trim"]:
-        folder = wd_tagger.find_model(MODELS_DIR)
+        folder = mod.find_model(MODELS_DIR)
         if not folder:
-            raise ValueError(f"Trim tags that don't fit needs the {wd_tagger.LABEL}: press Download under it first, "
+            raise ValueError(f"Trim tags that don't fit needs the {mod.LABEL}: press Download under it first, "
                              "or untick Trim.")
     return c, folder
 
@@ -195,9 +200,9 @@ def crop_captions(c, tagger=None):
                         keep_score=c["keep_score"])
 
 
-def _tagger(folder):
-    from fizgig.dataset import wd_tagger
-    return wd_tagger.Tagger(folder, log=_log)
+def _tagger(folder, name=None):
+    from fizgig.dataset import taggers
+    return taggers.get(name).Tagger(folder, log=_log)
 
 
 def start(folder, mode, mp, face_label, padding, replace, find="", captions=None):
@@ -218,7 +223,7 @@ def start(folder, mode, mp, face_label, padding, replace, find="", captions=None
 
     def work():
         try:
-            tagger = _tagger(tagger_dir) if tagger_dir else None
+            tagger = _tagger(tagger_dir, cap_settings["tagger"]) if tagger_dir else None
             try:
                 caps = crop_captions(cap_settings, tagger)
                 if words:

@@ -275,12 +275,18 @@
                   <div><label class="checkbox-label"><input type="checkbox" id="prepCapTrim">
                     Trim tags that don't fit the crop</label></div>
                   <div id="prepTrimBox" style="display:none">
+                    <div class="field-row"><span class="field-label">Tagger:</span>
+                      <select id="prepTagger">
+                        <option value="wd-eva02">WD EVA02 Large v3 (general anime)</option>
+                        <option value="jtp3">JTP-3 Hydra (furry / e621)</option>
+                      </select></div>
+                    <div class="field-hint" id="prepTaggerHint"></div>
                     <div class="field-row"><span class="field-label">Keep tags scored at least:</span>
                       <input type="text" id="prepKeepScore" class="w-num" value="0.35">
                       <span class="field-hint">lower keeps more</span></div>
-                    <div class="field-hint">The WD EVA02 tagger looks at each crop, and a tag it no longer sees is
+                    <div class="field-hint">The tagger looks at each crop, and a tag it no longer sees is
                       dropped. It only removes tags, never adds any. Your trigger word, the first tag, character,
-                      rating and meta tags, and tags it doesn't know (species, artists, your own) always stay.
+                      rating and meta tags, and tags the tagger doesn't know (artists, your own) always stay.
                       Sentence captions are copied as written.</div>
                     <div class="field-hint" id="prepTaggerState"></div>
                   </div>

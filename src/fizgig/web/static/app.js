@@ -4434,8 +4434,16 @@ const prepSettings = () => ({
   mode: (document.querySelector('input[name="prepMode"]:checked') || {}).value || "Auto Prep (Face Crops)",
   mp: $("prepMp").value || "1.0", face: $("prepFace").value || "Largest Face", padding: $("prepPadding").value || "20",
   find: $("prepFind").value || "", capCopy: $("prepCapCopy").checked, capTrim: $("prepCapTrim").checked,
-  keepScore: $("prepKeepScore").value || "0.35",
+  tagger: $("prepTagger").value || "wd-eva02", keepScore: $("prepKeepScore").value || TAGGER_KEEP[$("prepTagger").value] || "0.35",
   replace: (document.querySelector('input[name="prepReplace"]:checked') || {}).value === "1"});
+// Trim tags' taggers (fizgig/dataset/taggers.py): what each is for, and the keep score a fresh pick starts at
+const TAGGER_KEEP = {"wd-eva02": "0.35", "jtp3": "0.20"};
+const TAGGER_HINTS = {
+  "wd-eva02": "Best for anime and general art with Danbooru-style tags. Scores are how sure it is, from 0 to 1.",
+  "jtp3": "Best for furry art with e621 tags. It knows e621's species, character, artist and copyright tags and keeps " +
+    "them all, matches older e621 names, and keeps a tag while it sees one that implies it (breasts with big breasts). " +
+    "Scores are JTP-3's confidence, from 0 to 1 (its own demo lists tags from 0.30 up). Uses about 2.5 GB of memory while prep runs.",
+};
 const savePrepSoon = debounce(() => { S.prepSaved = prepSettings(); api("/api/state", {prep: S.prepSaved}).catch(() => {}); }, 600);
 
 async function loadPrep() {
@@ -4451,7 +4459,8 @@ async function loadPrep() {
     $("prepFind").value = saved.find || "";
     $("prepCapCopy").checked = saved.capCopy !== false;             // on unless turned off
     $("prepCapTrim").checked = !!saved.capTrim;
-    if (saved.keepScore) $("prepKeepScore").value = saved.keepScore;
+    $("prepTagger").value = saved.tagger in TAGGER_KEEP ? saved.tagger : "wd-eva02";
+    $("prepKeepScore").value = saved.keepScore || TAGGER_KEEP[$("prepTagger").value];
     if (saved.padding) $("prepPadding").value = saved.padding;
     const mode = saved.mode || "Auto Prep (Face Crops)";
     document.querySelectorAll('input[name="prepMode"]').forEach((r) => { r.checked = r.value === mode; });
@@ -4916,9 +4925,9 @@ const prepOther = () => ((S.prep.opts || {}).other || "Other…") === $("prepFac
 function prepTrimBlocked() {
   const p = prepSettings();
   if (p.mode === "Resize Only" || !(p.capCopy && p.capTrim)) return "";
-  const t = (S.prep.maskOpts || {}).tagger, k = Number(p.keepScore);
-  if (!(k > 0 && k < 1)) return "Keep tags scored at least: a number between 0 and 1, like 0.35.";
-  if (t && !t.path) return "Trim tags needs the WD tagger: press Download under Trim first, or untick Trim.";
+  const t = prepTaggerInfo(), k = Number(p.keepScore);
+  if (!(k > 0 && k < 1)) return `Keep tags scored at least: a number between 0 and 1, like ${TAGGER_KEEP[p.tagger] || "0.35"}.`;
+  if (t && !t.path) return `Trim tags needs the ${prepTaggerName()}: press Download under Trim first, or untick Trim.`;
   return "";
 }
 function prepFindBlocked() {
@@ -4945,22 +4954,35 @@ function prepFindShow() {
   $("prepTest").disabled = !faceOn || (other ? !!find : !S.prep.opts.face_tools);
 }
 
-// Trim tags that don't fit: the WD tagger's download (wd_tagger.py, through /api/masks/info's "tagger")
+// Trim tags that don't fit: the chosen tagger's download (taggers.py, through /api/masks/info's "taggers"; an older
+// server only sends "tagger", the WD one)
+function prepTaggerInfo() {
+  const m = S.prep.maskOpts || {}, id = $("prepTagger").value || "wd-eva02";
+  return m.taggers ? m.taggers[id] : (id === "wd-eva02" ? m.tagger : undefined);
+}
+// a keep score left at a tagger's starting value follows the new tagger's (their scales differ); a typed one stays
+function prepTaggerPicked() {
+  const k = $("prepKeepScore").value.trim();
+  if (!k || Object.values(TAGGER_KEEP).includes(k)) $("prepKeepScore").value = TAGGER_KEEP[$("prepTagger").value] || "0.35";
+}
+const prepTaggerName = () => ($("prepTagger").value === "jtp3" ? "JTP-3 Hydra tagger" : "WD tagger");
 function prepTaggerShow() {
-  const on = $("prepCapCopy").checked && $("prepCapTrim").checked, t = (S.prep.maskOpts || {}).tagger || {}, f = t.fetch || {};
+  const on = $("prepCapCopy").checked && $("prepCapTrim").checked, t = prepTaggerInfo() || {}, f = t.fetch || {};
+  const id = $("prepTagger").value || "wd-eva02", name = prepTaggerName();
   $("prepTrimBox").style.display = on ? "" : "none";
+  $("prepTaggerHint").textContent = TAGGER_HINTS[id] || "";
   const st = $("prepTaggerState");
   if (!on || !S.prep.maskOpts) return;
   if (f.state === "running") {
-    st.replaceChildren(`Downloading the WD tagger: ${f.gb} of ${f.of} GB …`);
+    st.replaceChildren(`Downloading the ${name}: ${f.gb} of ${f.of} GB …`);
     clearTimeout(S.prep.tagTimer);
     S.prep.tagTimer = setTimeout(maskInfo, 2000);
   } else if (t.path) {
-    st.replaceChildren("The WD tagger is downloaded. It runs on the GPU when it can, and is freed when prep ends.");
+    st.replaceChildren(`The ${name} is downloaded. It runs on the GPU when it can, and is freed when prep ends.`);
   } else {
     st.replaceChildren(el("button", {class: "btn btn-primary",
-      text: f.state === "failed" ? "Try the download again" : `Download the WD tagger (${t.gb || 1.2} GB)`, onclick: async () => {
-        await api("/api/prep/tagger_fetch", {}).catch((e) => { st.textContent = e.message; });
+      text: f.state === "failed" ? "Try the download again" : `Download the ${name} (${t.gb || (id === "jtp3" ? 1.0 : 1.2)} GB)`, onclick: async () => {
+        await api("/api/prep/tagger_fetch", {tagger: id}).catch((e) => { st.textContent = e.message; });
         maskInfo(); }}), el("span", {class: "field-hint", text: f.state === "failed" ? ` The download failed: ${f.error}` :
         " Needed once, before the first trim."}));
   }
@@ -5016,7 +5038,7 @@ async function prepRun() {
   const p = prepSettings(), block = prepBlocked();
   if (block) { $("prepState").textContent = block; return; }
   try {
-    await api("/api/prep/run", {folder: S.imageFolder, ...p, captions: {copy: p.capCopy, trim: p.capTrim, keep_score: p.keepScore,
+    await api("/api/prep/run", {folder: S.imageFolder, ...p, captions: {copy: p.capCopy, trim: p.capTrim, tagger: p.tagger, keep_score: p.keepScore,
       ext: S.values.DATASET_CAPTION_EXT || ".txt", trigger: S.values.CAPTION_TRIGGER_WORD || ""}});
     $("prepLog").textContent = ""; S.prep.logSize = 0;
     pollPrep();
@@ -5288,6 +5310,7 @@ function wirePrep() {
   $("prepCapCopy").addEventListener("change", () => { $("prepCapTrim").disabled = !$("prepCapCopy").checked; prepFindShow(); savePrepSoon(); });
   $("prepCapTrim").addEventListener("change", () => { prepFindShow(); savePrepSoon(); });
   $("prepKeepScore").addEventListener("input", () => { prepFindShow(); savePrepSoon(); });
+  $("prepTagger").addEventListener("change", () => { prepTaggerPicked(); prepFindShow(); savePrepSoon(); });
   $("prepFind").addEventListener("change", () => prepSummary());
   $("prepRun").addEventListener("click", prepRun);
   $("maskRun").addEventListener("click", maskRun);

@@ -1,7 +1,7 @@
 """Image Prep's crops keep their picture's caption: a close-up cut from photo.png gets photo.txt's caption as its own
 (FaceCrop_001.txt, Crop_paw_001.txt), and a crop that replaces its picture keeps it. Optionally ("Trim tags that
-don't fit"), a tag caption loses the general tags the WD tagger no longer sees on the crop (wd_tagger.py): tags are
-only ever removed, never added; the trigger word, the first tag, character / rating / meta tags and tags the tagger
+don't fit"), a tag caption loses the general tags the chosen tagger no longer sees on the crop (taggers.py: the WD
+tagger, wd_tagger.py, or JTP-3 Hydra for furry / e621 captions, jtp3_tagger.py): tags are only ever removed, never added; the trigger word, the first tag, character / rating / meta tags and tags the tagger
 doesn't know (species, artists, your own) always stay. Sentence captions are copied as written (tag_variants.split_tags
 decides which is which)."""
 import os
@@ -34,7 +34,7 @@ def write(path, text):
 
 
 class CropCaptions:
-    """Image Prep's caption settings: copy (a crop gets its picture's caption), trim with a wd_tagger.Tagger (None:
+    """Image Prep's caption settings: copy (a crop gets its picture's caption), trim with a taggers.py Tagger (None:
     no trimming), keep_score (a general tag stays at or above it), ext (the dataset's caption extension), keep (the
     trigger word)."""
 
