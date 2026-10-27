@@ -1643,13 +1643,13 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
             _oargs = (_oargs + f" weight_decay={desc.optimizer_weight_decay:g}").strip()
         optimizer, opt_label = create_optimizer(optimizer_type, opt_params, learning_rate, _oargs,
                                                 eps_floor_8bit=desc.optimizer_eps_floor_8bit)
-    if owns_its_rate(optimizer):        # Automagic v3 sets its own rate: the watcher and schedulers stand down
+    if owns_its_rate(optimizer):        # Automagic v3 / Prodigy sets its own rate: the watcher and schedulers stand down
         if adaptive_lr:
             logger.info("[adaptive_lr] ignored - the optimizer sets its own learning rate")
         if per_image_lr or warmup_look_outliers:
             logger.info("[per-image LR] per-image LR and the look warm-up are off - the optimizer sets its own rate")
         adaptive_lr = per_image_lr = warmup_look_outliers = False
-        logger.info(f"[optimizer] {opt_label} owns the learning rate from here ({learning_rate:.2e} is its start); "
+        logger.info(f"[optimizer] {opt_label} owns the learning rate from here ({optimizer_lr(optimizer):.2e} is its start); "
                     f"the LR scheduler stands down")
     box_learning_rate = learning_rate   # the Learning Rate box, before adaptive LR's midpoint (saved for a resume)
     if adaptive_lr:                     # the watcher owns the rate: start at the geometric midpoint of Min/Max
@@ -2258,8 +2258,8 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
                 adaptive.record_clip(pre, max_grad_norm)
         m = sum(lr_acc) / len(lr_acc) if lr_acc else 1.0
         lr_acc.clear()
-        if optimizer.__class__.__name__ == "Automagic3":
-            m = 1.0                        # Automagic v3 owns the rate (as on the old H3 trainer)
+        if owns_its_rate(optimizer):
+            m = 1.0                        # Automagic v3 / Prodigy owns the rate
         if m != 1.0:                       # the window's mean, composed into the LR for this step only (never the loss:
             held = [g["lr"] for g in optimizer.param_groups]        # Adam is invariant to a constant on the gradient)
             for g in optimizer.param_groups:
@@ -2581,7 +2581,6 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
             global_step += 1
             recorder.add(epoch=epoch, step=i, loss=loss.item())
             steplog.add(step_off + global_step, epoch + 1 + (ftr.epochs_done if ftr is not None else 0), loss.item(),
-                        None if global_step % 20 else      # the rate now and then (Automagic's averages it)
                         learning_rate if optimizer is None else optimizer_lr(optimizer))
             if pending == 0 and ftr is None:   # the web UI's Sample now / Save now, between optimizer steps
                 if take_request(output_dir, "save"):

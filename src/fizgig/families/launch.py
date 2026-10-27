@@ -1186,6 +1186,14 @@ def automagic(inputs):
     return _s(inputs.get("OPTIMIZER_TYPE")).lower() == "automagic3"
 
 
+def prodigy(inputs):
+    return _s(inputs.get("OPTIMIZER_TYPE")).lower() == "prodigy"
+
+
+def muon(inputs):
+    return _s(inputs.get("OPTIMIZER_TYPE")).lower() == "muon"
+
+
 def _dop_folders(st):
     """DOP's per-folder (name, words to remove, replacements): the training folder's, then subject 2's (Multi
     Concept). A folder's box left empty takes that folder's own trigger word (the Captions tab's, which the web
@@ -1444,9 +1452,28 @@ def plan(desc, inputs):
     if folder and not os.path.isabs(folder):
         inputs["image_folder"] = os.path.abspath(folder)     # the subprocesses run from the Fizgig folder
     inputs["LORA_NAME"] = tidy_name(_s(inputs.get("LORA_NAME")))[0]
-    if automagic(inputs):            # it owns the rate: Adaptive LR, per-image LR and the look warm-up are off
+    if automagic(inputs) or prodigy(inputs):   # it owns the rate: Adaptive LR, per-image LR and the look warm-up are off
         inputs["ADAPTIVE_LR"] = False
         inputs["loss_watch"] = {**(inputs.get("loss_watch") or {}), "per_image_lr": False, "warmup": False}
+    from fizgig.training.optimizers import (
+        MUON_DEFAULT_ARGS, PRODIGY_DEFAULT_ARGS, strip_muon_args, strip_prodigy_args,
+    )
+    raw_oargs = _s(inputs.get("OPTIMIZER_ARGS"))
+    if not prodigy(inputs) and raw_oargs:
+        raw_oargs = strip_prodigy_args(raw_oargs)
+    if not muon(inputs) and raw_oargs:
+        raw_oargs = strip_muon_args(raw_oargs)
+    if prodigy(inputs):
+        try:
+            if float(inputs.get("LEARNING_RATE") or 0) < 0.1:
+                inputs["LEARNING_RATE"] = 1.0
+        except (TypeError, ValueError):
+            inputs["LEARNING_RATE"] = 1.0
+        inputs["OPTIMIZER_ARGS"] = raw_oargs or PRODIGY_DEFAULT_ARGS
+    elif muon(inputs):
+        inputs["OPTIMIZER_ARGS"] = raw_oargs or MUON_DEFAULT_ARGS
+    else:
+        inputs["OPTIMIZER_ARGS"] = raw_oargs
     p = LaunchPlan(problems=start_problems(desc, inputs))
     if not p.problems:
         try:
