@@ -1052,6 +1052,27 @@ class _FineTune:
         logger.info(f"[save] {path} ({replaced}{'/' + str(total) if total else ''} tensors trained)")
 
 
+def _check_timestep_spread(desc, driver):
+    """--timestep_spread (the timestep_spread family option): a preset this family offers, else stop before any model
+    loads; a non-Default one says so in one line (fizgig.training.timestep_spread)."""
+    raw = driver.options.get("timestep_spread")
+    if not raw:
+        return
+    from fizgig.training import timestep_spread as TS
+    try:
+        k = TS.key(raw)
+    except ValueError as e:
+        raise RuntimeError(f"Timestep focus: {e}") from None
+    offered = tuple(desc.timestep_spread or ()) or ("default",)
+    if k not in offered:
+        raise RuntimeError(f"{desc.display_name} has no Timestep focus '{TS.LABELS[k]}'"
+                           + (f" (it offers {', '.join(TS.LABELS[x] for x in offered)})" if len(offered) > 1 else
+                              " - drop --timestep_spread") + ".")
+    driver.options["timestep_spread"] = k
+    if k != "default":
+        logger.info(f"Timestep focus: {TS.LABELS[k]} ({TS.HINTS[k][0].lower()}{TS.HINTS[k][1:].rstrip('.')})")
+
+
 def train_family(family, dit_path, dataset_config, output_dir, output_name, *, network_dim=32, network_alpha=32,
                  learning_rate=1e-4, max_train_epochs=16, save_every_n_epochs=1, save_until_epoch=0,
                  save_every_n_epochs_after=0, save_state=False,
@@ -1095,6 +1116,7 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
                            "itself, so the two don't combine. Drop --context_lora_path.")
     driver = desc.load_driver()
     driver.set_options(dict(family_options or {}))      # before the data: an option may shape the dataset
+    _check_timestep_spread(desc, driver)
     if train_blocks:
         train_blocks = driver.expand_train_blocks(train_blocks)
     arch = desc.arch_id
@@ -2956,6 +2978,11 @@ def setup_parser():
                    help="The family's preview speed LoRA (description.preview_speed_lora): previews only")
     p.add_argument("--min_timestep", type=float, default=0.0, help="Noise band floor (0-1)")
     p.add_argument("--max_timestep", type=float, default=1.0, help="Noise band ceiling (0-1)")
+    p.add_argument("--timestep_spread", default="default", type=str.lower,
+                   choices=("default", "detail", "balanced", "composition"),
+                   help="Timestep focus: which noise levels the steps go to (detail = more at the clean end, "
+                        "composition = more at the noisy end, balanced = more even). Not MOSS-Image (its Clean-end "
+                        "share), MiniMax H3 or ACE-Step; SDXL has no balanced")
     p.add_argument("--vae", default=None)
     p.add_argument("--text_encoder", default=None)
     p.add_argument("--sample_prompts", default=None, help="One prompt per line")
@@ -3130,7 +3157,8 @@ def main():
         ft_fused_backward=a.ft_fused_backward, reg_lr_multiplier=a.reg_lr_multiplier,
         preview_checkpoint=a.preview_checkpoint, preview_checkpoint_cache=a.preview_checkpoint_cache,
         preview_int8=a.preview_int8,
-        family_options=dict(o.split("=", 1) for o in a.family_option if "=" in o),
+        family_options={**dict(o.split("=", 1) for o in a.family_option if "=" in o),
+                        **({"timestep_spread": a.timestep_spread} if a.timestep_spread != "default" else {})},
         dop=a.dop, dop_trigger=a.dop_trigger, dop_class=a.dop_class, dop_weight=a.dop_weight, dop_every=a.dop_every,
         dop_ft_samples=a.dop_ft_samples,
         lr_boost=[(x.split("=", 1)[0], float(x.split("=", 1)[1])) for x in a.lr_boost if "=" in x] or None,

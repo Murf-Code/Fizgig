@@ -20,6 +20,7 @@ import torch.nn.functional as F
 from einops import rearrange
 
 from fizgig.families.driver import Block, BlockGroup, FamilyDriver, prior_base, weighted_loss, with_prior
+from fizgig.training import timestep_spread as TS
 
 DTYPE = torch.bfloat16
 _DOUBLE_MODULES = ("img_attn.qkv", "img_attn.proj", "img_mlp.0", "img_mlp.2",
@@ -158,10 +159,11 @@ class KleinDriver(FamilyDriver):
 
     # ---- training -------------------------------------------------------------------------------
     @staticmethod
-    def _sample_t(n_tokens, generator, min_t=0.0, max_t=1.0):
-        """flux2_shift (sigmoid scale 1), then t * (max - min) + min - the old trainer's order."""
+    def _sample_t(n_tokens, generator, min_t=0.0, max_t=1.0, spread="default"):
+        """flux2_shift (sigmoid scale 1), then t * (max - min) + min - the old trainer's order. spread: the Timestep
+        focus preset (fizgig.training.timestep_spread; "default" = exactly the above)."""
         shift = float(np.exp(_mu(n_tokens)))
-        t = torch.randn(1, generator=generator).sigmoid()
+        t = TS.logit_normal(torch.randn(1, generator=generator), spread, min_t, max_t)
         t = (t * shift) / (1 + (shift - 1) * t)
         return t * (float(max_t) - float(min_t)) + float(min_t)
 
@@ -229,7 +231,7 @@ class KleinDriver(FamilyDriver):
                       diff_weight=0.0, loss_mask=None, prior=None):
         h, w = latents.shape[-2:]
         noise = torch.randn(latents.shape, generator=generator)
-        t = self._sample_t(h * w, generator, min_t, max_t)
+        t = self._sample_t(h * w, generator, min_t, max_t, self.timestep_spread)
         loss = self.loss_at(dit, latents, noise, t, cond, refs=refs, diff_ref=diff_ref, diff_weight=diff_weight,
                             loss_mask=loss_mask, prior=prior)
         return loss, {"t": float(t.mean())}
@@ -237,7 +239,7 @@ class KleinDriver(FamilyDriver):
     def noise_latents(self, latents, generator, *, min_t=0.0, max_t=1.0):
         h, w = latents.shape[-2:]
         noise = torch.randn(latents.shape, generator=generator).to(latents.device, latents.dtype)
-        t = self._sample_t(h * w, generator, min_t, max_t).to(latents.device)
+        t = self._sample_t(h * w, generator, min_t, max_t, self.timestep_spread).to(latents.device)
         t_ = t.view(-1, 1, 1, 1)
         return {"xt": (1 - t_) * latents + t_ * noise, "t": t}
 

@@ -21,6 +21,7 @@ import torch
 import torch.nn.functional as F
 
 from fizgig.families.driver import FamilyDriver, prior_base, weighted_loss, with_prior
+from fizgig.training import timestep_spread as TS
 
 DTYPE = torch.bfloat16
 HELPER = "circlestone-labs/Anima-Base-v1.0-Diffusers"   # tokenizers + the Qwen3 config (helper_files)
@@ -188,13 +189,13 @@ class AnimaDriver(FamilyDriver):
         if rows not in (1, n):
             raise RuntimeError(f"Anima: {n} images but {rows} captions in the batch")
         if n == 1:
-            t = torch.sigmoid(torch.randn(n, generator=generator))
+            t = TS.logit_normal(torch.randn(n, generator=generator), self.timestep_spread, min_t, max_t)
             t = (min_t + (max_t - min_t) * t).to(x0.device)
             noise = torch.randn(x0.shape, generator=generator).to(x0.device)
         else:       # Batch Size > 1: per image, in the order B batch-1 steps draw them (t, then noise)
             ts, ns = [], []
             for i in range(n):
-                ts.append(torch.sigmoid(torch.randn(1, generator=generator)))
+                ts.append(TS.logit_normal(torch.randn(1, generator=generator), self.timestep_spread, min_t, max_t))
                 ns.append(torch.randn(x0[i:i + 1].shape, generator=generator))
             t = (min_t + (max_t - min_t) * torch.cat(ts)).to(x0.device)
             noise = torch.cat(ns).to(x0.device)
@@ -235,7 +236,7 @@ class AnimaDriver(FamilyDriver):
         x0 = latents.float()
         if x0.dim() == 4:
             x0 = x0.unsqueeze(2)
-        t = torch.sigmoid(torch.randn(1, generator=generator))
+        t = TS.logit_normal(torch.randn(1, generator=generator), self.timestep_spread, min_t, max_t)
         t = (min_t + (max_t - min_t) * t).to(x0.device)
         noise = torch.randn(x0.shape, generator=generator).to(x0.device)
         tb = t.view(-1, 1, 1, 1, 1)

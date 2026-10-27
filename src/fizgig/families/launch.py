@@ -276,6 +276,32 @@ def timestep_flags(inputs):
     return out
 
 
+def spread_flags(desc, inputs):
+    """Timestep focus (TIMESTEP_SPREAD) as --timestep_spread: only a preset other than Default, and only for a family
+    that offers it, so a Default run's command is the one it always was. A value that isn't offered is a Start
+    problem (spread_problems), never sent."""
+    from fizgig.training import timestep_spread as TS
+    if not desc.timestep_spread:
+        return []
+    try:
+        k = TS.key(inputs.get("TIMESTEP_SPREAD"))
+    except ValueError:
+        return []
+    return ["--timestep_spread", k] if k != "default" and k in desc.timestep_spread else []
+
+
+def spread_problems(desc, inputs):
+    from fizgig.training import timestep_spread as TS
+    if not desc.timestep_spread:
+        return []
+    try:
+        if TS.key(inputs.get("TIMESTEP_SPREAD")) in desc.timestep_spread:
+            return []
+    except ValueError:
+        pass
+    return [f"Timestep focus: pick one of {', '.join(TS.LABELS[k] for k in desc.timestep_spread)}."]
+
+
 def uncached_pictures(toml_text):
     """How many pictures in the dataset TOML's folders have no latent or no text cache in their cache folder (a
     resume skips caching, so a cache deleted by hand would leave it nothing to train on)."""
@@ -947,6 +973,7 @@ def train_command(desc, inputs, plan):
             cmd += ["--train_blocks", ",".join(blocks)]
     if desc.train_areas and not ft_on(desc, st):
         cmd += timestep_flags(st)
+    cmd += spread_flags(desc, st)
     if slider_on(desc, st):
         if desc.slider_ultra_blocks and st.get("FAMILY_SLIDER_ULTRA"):
             cmd += ["--train_blocks", ",".join(desc.slider_ultra_blocks)]
@@ -1434,6 +1461,7 @@ def start_problems(desc, inputs):
             out.append(f"Automagic v3 starts at the Learning Rate you give and finds its own rate: {lr:g} is an AdamW "
                        f"number. Use 1e-6 (its default) or at most 0.001.")
     out += checks.context_lora(v)
+    out += spread_problems(desc, v)
     raw_swap = str(v.get("blocks_swap") or "").strip()
     m = re.match(r"\d+", raw_swap)
     swap = 0 if raw_swap.lower().startswith("auto") or not m else int(m.group())   # Auto always fits

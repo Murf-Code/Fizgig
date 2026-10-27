@@ -18,6 +18,7 @@ import torch
 import torch.nn.functional as F
 
 from fizgig.families.driver import Block, BlockGroup, FamilyDriver, prior_base, weighted_loss, with_prior
+from fizgig.training import timestep_spread as TS
 
 CONFIG_REPO = "stabilityai/stable-diffusion-xl-base-1.0"
 DTYPE = torch.bfloat16
@@ -190,12 +191,18 @@ class SDXLDriver(FamilyDriver):
 
     # ---- training -------------------------------------------------------------------------------
     def noise_latents(self, latents, generator, *, min_t=0.0, max_t=1.0):
-        """A noised training input: a uniform DDPM timestep in [min_t, max_t] and the noise it was made with."""
+        """A noised training input: a uniform DDPM timestep in [min_t, max_t] and the noise it was made with. A
+        Timestep focus preset (fizgig.training.timestep_spread) moves the even draw first; Default is the draw above."""
         device = latents.device
         x0 = latents.float()
         lo = int(round(min_t * 999))
         hi = max(lo + 1, int(round(max_t * 999)) + 1)
-        t = int(torch.randint(lo, min(hi, 1000), (1,), generator=generator).item())
+        if TS.active(self.timestep_spread, min_t, max_t):
+            top = min(hi, 1000)
+            u = TS.even(float(torch.rand(1, generator=generator)), self.timestep_spread)
+            t = min(lo + int(u * (top - lo)), top - 1)
+        else:
+            t = int(torch.randint(lo, min(hi, 1000), (1,), generator=generator).item())
         noise = torch.randn(x0.shape, generator=generator)
         off = float(self.options.get("noise_offset") or 0.0)
         if off:

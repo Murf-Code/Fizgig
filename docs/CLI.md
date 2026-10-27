@@ -131,9 +131,12 @@ Every family trains through the same two scripts — `src/fizgig/families/cache.
 | Per-image loss watch, per-image LR, auto-recaption, look-outlier warm-up | ✅ | ✅ | ❌ | ✅ | ✅ |
 | Model Area / block targeting (`--train_blocks`) | ✅ (identity, style, details areas) | ❌ | ✅ (Blocks to Train, Training mode) | ❌ | ❌ |
 | Timestep range (`--min/max_timestep`, 0-1000) | ✅ | ✅ | ❌ | ✅ | ✅ |
+| Timestep focus (`--timestep_spread`) | ✅ | ✅ | ❌ (Clean-end share) | ✅ | ✅ |
 | torch.compile (`--compile_blocks auto`) | ✅ | ✅ | ❌ | ✅ | ✅ |
 | Edit LoRAs (original + edited pairs) | ✅ | ✅ | ❌ | ❌ | ✅ |
 | Photos, video clips with sound, voice | photos | photos | all three | photos | photos |
+
+**Timestep focus** (`--timestep_spread default|detail|balanced|composition`, the Training tab's dropdown) moves which noise levels the steps go to, on Klein, Flux 3, Krea 2, Qwen Image, Z-Image, Anima and SDXL. `detail` puts more steps at the clean end (faces, skin, texture: the model's own timestep shift × 0.4), `composition` more at the noisy end (layout, pose: shift × 2.5) and `balanced` spreads them more evenly (a wider logit-normal around the usual centre; not SDXL, whose even draw already is). SDXL's even DDPM draw goes through the same shift. `default` is the model's own sampling, unchanged. MOSS-Image keeps its Clean-end share and MiniMax H3 its own; the validation loss always checks the same fixed noise levels.
 
 Auto-recaption captions with Krea 2's Qwen3-VL-4B, the same model the GUI's Captions tab uses, whichever model you're training (`--captioner`). MiniMax H3's own settings (training structure, Training mode, TREAD, clip stills, distillation, retirement of a finished category) reach the trainer as `--family_option name=value` pairs; see [MiniMax H3 training](#minimax-h3-training).
 

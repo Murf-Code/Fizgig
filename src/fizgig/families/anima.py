@@ -5,6 +5,7 @@ Facts from the model card, ComfyUI's implementation and the trainers that suppor
 AI-Toolkit, OneTrainer), and community reports (Hugging Face discussions, note.com, the Japanese wikis), Oct 2026.
 """
 from fizgig.families.description import FamilyDescription, LoRAFormat, ModelFile, SamplingSettings, SpeedLoRA
+from fizgig.training import timestep_spread
 
 _REPO = "circlestone-labs/Anima"
 _LORAS = "circlestone-labs/Anima-Official-LoRAs"
@@ -27,6 +28,7 @@ def _preset(rank, lr, epochs=30, mp="1.0", slider=False):
 ANIMA = FamilyDescription(
     key="anima",
     masked_training=True,
+    timestep_spread=timestep_spread.FLOW,     # Timestep focus presets (the shift's multiple / the curve's width)
     arch_id="anima",
     supports_batch=True,              # Batch Size > 1: per-image t / noise (families/batching.py)
     display_name="Anima",

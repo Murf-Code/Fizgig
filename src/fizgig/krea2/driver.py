@@ -19,6 +19,7 @@ import torch
 import torch.nn.functional as F
 
 from fizgig.families.driver import Block, BlockGroup, FamilyDriver, prior_base, weighted_loss, with_prior
+from fizgig.training import timestep_spread as TS
 
 DTYPE = torch.bfloat16
 _BLOCK_MODULES = ("attn.wq", "attn.wk", "attn.wv", "attn.gate", "attn.wo", "mlp.gate", "mlp.up", "mlp.down")
@@ -152,10 +153,11 @@ class Krea2Driver(FamilyDriver):
 
     # ---- training -------------------------------------------------------------------------------
     @staticmethod
-    def _sample_t(num_img_tokens, generator, min_t=0.0, max_t=1.0):
-        """sample_krea2_timesteps: logit-normal base, shift exp(mu), rescaled INTO the window (never clamped)."""
+    def _sample_t(num_img_tokens, generator, min_t=0.0, max_t=1.0, spread="default"):
+        """sample_krea2_timesteps: logit-normal base, shift exp(mu), rescaled INTO the window (never clamped). spread:
+        the Timestep focus preset (fizgig.training.timestep_spread; "default" = exactly the above)."""
         shift = float(np.exp(_mu(num_img_tokens)))
-        t = torch.randn(1, generator=generator).sigmoid()
+        t = TS.logit_normal(torch.randn(1, generator=generator), spread, min_t, max_t)
         t = (t * shift) / (1.0 + (shift - 1.0) * t)
         if min_t > 0.0 or max_t < 1.0:
             lo, hi = max(0.0, float(min_t)), min(1.0, float(max_t))
@@ -218,7 +220,7 @@ class Krea2Driver(FamilyDriver):
         patch = dit.config.patch
         n_tokens = (latents.shape[-2] // patch) * (latents.shape[-1] // patch)
         noise = torch.randn(latents.shape, generator=generator)
-        t = self._sample_t(n_tokens, generator, min_t, max_t)
+        t = self._sample_t(n_tokens, generator, min_t, max_t, self.timestep_spread)
         loss = self.loss_at(dit, latents, noise, t, cond, diff_ref=diff_ref, diff_weight=diff_weight,
                             loss_mask=loss_mask, prior=prior)
         return loss, {"t": float(t.mean())}
@@ -227,7 +229,7 @@ class Krea2Driver(FamilyDriver):
         patch = 2
         n_tokens = (latents.shape[-2] // patch) * (latents.shape[-1] // patch)
         noise = torch.randn(latents.shape, generator=generator).to(latents.device, DTYPE)
-        t = self._sample_t(n_tokens, generator, min_t, max_t).to(latents.device)
+        t = self._sample_t(n_tokens, generator, min_t, max_t, self.timestep_spread).to(latents.device)
         t_ = t.view(-1, 1, 1, 1).to(DTYPE)
         return {"xt": (1.0 - t_) * latents.to(DTYPE) + t_ * noise, "t": t}
 

@@ -3,6 +3,7 @@ Pony, RealVis and the rest load the same way). The checkpoint carries the UNet, 
 the VAE and text-encoder rows are optional overrides (ModelFile.inside). Driver: sdxl/driver.py.
 """
 from fizgig.families.description import FamilyDescription, FamilyOption, LoRAFormat, ModelFile, SamplingSettings
+from fizgig.training import timestep_spread
 
 _JUGG = "RunDiffusion/Juggernaut-XL-v9"
 _SDXL = "stabilityai/stable-diffusion-xl-base-1.0"
@@ -30,6 +31,7 @@ def _preset(rank, lr=1e-4, adaptive=None, epochs=20, mp="1.0", alpha=None, slide
 SDXL = FamilyDescription(
     key="sdxl",
     masked_training=True,
+    timestep_spread=timestep_spread.DDPM,     # Timestep focus presets (no Balanced: its even draw already is)
     arch_id="sdxl",
     supports_batch=True,              # Batch Size > 1: per-image t / noise (families/batching.py)
     display_name="SDXL",

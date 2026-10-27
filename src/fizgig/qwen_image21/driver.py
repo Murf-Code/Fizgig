@@ -18,6 +18,7 @@ import torch
 import torch.nn.functional as F
 
 from fizgig.families.driver import FamilyDriver, prior_base, weighted_loss, with_prior
+from fizgig.training import timestep_spread as TS
 from fizgig.qwen_image21 import sampling as S
 
 logger = logging.getLogger(__name__)
@@ -185,8 +186,10 @@ class QwenImage21Driver(FamilyDriver):
 
     # ---- training -------------------------------------------------------------------------------
     @staticmethod
-    def _sample_t(n_tokens, generator, min_t, max_t):
-        t = torch.sigmoid(torch.randn(1, generator=generator)).item()
+    def _sample_t(n_tokens, generator, min_t, max_t, spread="default"):
+        """Logit-normal, the checkpoint's shift exp(mu) for this size, into the window. spread: the Timestep focus
+        preset (fizgig.training.timestep_spread; "default" = exactly that)."""
+        t = TS.logit_normal(torch.randn(1, generator=generator), spread, min_t, max_t).item()
         mu = S.calculate_mu(n_tokens)
         t = math.exp(mu) / (math.exp(mu) + (1.0 / t - 1.0))
         return min_t + (max_t - min_t) * t
@@ -198,7 +201,7 @@ class QwenImage21Driver(FamilyDriver):
         n = h * w
         x0 = S.pack(latents.float())
         noise = torch.randn(x0.shape, generator=generator).to(device)
-        t = self._sample_t(n, generator, min_t, max_t)
+        t = self._sample_t(n, generator, min_t, max_t, self.timestep_spread)
         xt = (1 - t) * x0 + t * noise
         ref_mask = cond["ref_mask"][0] if "ref_mask" in cond else None
         enc, img_mask, enc_mask = S.model_inputs(cond["hidden_states"][0], n, device, ref_mask=ref_mask)
@@ -233,7 +236,7 @@ class QwenImage21Driver(FamilyDriver):
         h, w = latents.shape[-2:]
         x0 = S.pack(latents.float())
         noise = torch.randn(x0.shape, generator=generator).to(latents.device)
-        t = self._sample_t(h * w, generator, min_t, max_t)
+        t = self._sample_t(h * w, generator, min_t, max_t, self.timestep_spread)
         return {"xt": (1 - t) * x0 + t * noise, "t": t, "hw": (h, w)}
 
     def predict(self, dit, state, cond):
