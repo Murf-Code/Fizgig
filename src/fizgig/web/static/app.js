@@ -268,9 +268,9 @@ function renderRow(r) {
   // its kind sets its layout (style.css): boxes in the grid, switches as tiles, a choice of pills, files and notes
   // across the card - from the schema's row kind, so every model's form lays out the same way
   const kind = {check: "check", radio: "radio", note: "note", text: "wide", path: "wide", folder: "wide", shown: "wide",
-    cadence: "cadence", split: "cadence"}[r.kind] || "field";
+    cadence: "cadence", split: "cadence", valpick: "wide", heading: "heading", valevery: "cadence"}[r.kind] || "field";
   const wrap = el("div", {class: "form-row kind-" + kind + (r.featured ? " row-featured" : "") +
-    (r.boxed ? " row-boxed" : ""), "data-key": r.key});
+    (r.boxed ? " row-boxed" : "") + (r.full ? " row-full" : ""), "data-key": r.key});
   if (r.kind === "shown") {                       // a value from elsewhere (the Start tab's folder), read-only here
     const shownRow = el("div", {class: "field-row"}, el("span", {class: "field-label", text: r.label + ":"}),
       el("input", {type: "text", class: "w-path", id: "note_" + r.key, readonly: true, tabindex: -1}));
@@ -281,6 +281,11 @@ function renderRow(r) {
           $("imageFolder").value = p; $("imageFolder").dispatchEvent(new Event("change")); })}));
     }
     wrap.append(shownRow);
+    if (r.hint) wrap.append(el("div", {class: "field-hint", text: r.hint}));
+    return wrap;
+  }
+  if (r.kind === "heading") {                     // a small sub-heading grouping the rows after it
+    wrap.append(el("div", {class: "form-subhead", text: r.label}));
     if (r.hint) wrap.append(el("div", {class: "field-hint", text: r.hint}));
     return wrap;
   }
@@ -297,6 +302,8 @@ function renderRow(r) {
   if (r.lines) return promptLines(r, wrap);
   if (r.kind === "cadence") return cadenceRow(r, wrap);
   if (r.kind === "split") return splitRow(r, wrap);
+  if (r.kind === "valpick") return valPickRow(r, wrap);
+  if (r.kind === "valevery") return valEveryRow(r, wrap);
   if (r.kind === "check") {
     input = el("input", {type: "checkbox", id: "f_" + r.key, onchange: (e) => set(e.target.checked)});
     input.checked = !!v;
@@ -2356,25 +2363,104 @@ function pairCaptionBadge(host, ctl, i, prompt, image) {
   if (S.pairCapsFor === (S.imageFolder || "") && S.pairCaps) put(S.pairCaps); else pairCaptions().then(put);
 }
 
+// Image Validation > How often to check: Every epoch or Every N steps, laid out as How often to preview. It stays the
+// one value it always was (0 = each epoch, N = every N steps), so old runs load as they ran; the steps box keeps its
+// number while Every epoch is chosen and only counts (and only enables) with Every N steps
+function valEveryRow(r, wrap) {
+  const cur = () => { const v = String(S.values[r.key] ?? r.default ?? "0").trim(); return /^\d+$/.test(v) && Number(v) > 0 ? v : ""; };
+  S._valN = cur() || S._valN || String(r.n_default || "500");
+  const name = "f_" + r.key + "_how";
+  const epoch = el("input", {type: "radio", name, value: "epoch", onchange: () => { onValue(r, "0"); paint(); }});
+  const steps = el("input", {type: "radio", name, value: "steps", onchange: () => { onValue(r, S._valN); paint(); }});
+  const num = el("input", {type: "text", inputmode: "numeric", class: "cad-num", id: "f_" + r.key, "data-field": "VALIDATION_EVERY_N",
+    oninput: (e) => {
+      const v = e.target.value.trim();
+      if (/^\d+$/.test(v) && Number(v) > 0) { S._valN = String(Number(v)); onValue(r, S._valN); bad.textContent = ""; }
+      else bad.textContent = "Enter a whole number above 0.";
+    }});
+  const bad = el("div", {class: "field-hint row-note"});
+  const paint = () => {
+    const n = cur();
+    if (n) S._valN = n;
+    epoch.checked = !n; steps.checked = !!n;
+    if (document.activeElement !== num) num.value = S._valN;
+    num.disabled = !n;
+  };
+  num._sync = paint;                              // a preset or a loaded run sets the value: the choice follows
+  wrap.append(el("div", {class: "cad-title", text: r.label}),
+    el("div", {class: "cad-line"}, el("label", {class: "cad-tick"}, epoch, el("span", {text: "Every epoch"}))),
+    el("div", {class: "cad-line"}, el("label", {class: "cad-tick"}, steps, el("span", {text: "Every"})), num,
+      el("span", {text: "steps"})),
+    bad, el("div", {class: "field-hint row-note", id: "note_" + r.key}),
+    el("div", {class: "field-hint", text: r.hint}));
+  paint();
+  return wrap;
+}
+
+// Image Validation > your images: the Likeness picker (one image a click), each shown with its thumbnail and an ✕
+function valPicked(r) {
+  const v = S.values[r.key];
+  return (Array.isArray(v) ? v : String(v || "").split(/[\n;]/)).map((x) => String(x).trim()).filter(Boolean);
+}
+function valPickRow(r, wrap) {
+  const list = el("div", {class: "val-picks"});
+  const clear = el("button", {class: "btn btn-sm", text: "Clear all", onclick: () => save([])});
+  const add = el("button", {class: "btn", text: "Pick images…", title: "Choose the training images to check (the Likeness picker: click to select or unselect, ✕ to close)",
+    onclick: () => likenessPicker({mode: "multi-toggle", title: "Validation loss: pick the training images to check",
+      picked: valPicked(r), onToggle: (names) => save(names)})});
+  const draw = () => {
+    const names = valPicked(r);
+    list.replaceChildren(...names.map((n) => el("span", {class: "val-pick", title: n},
+      el("img", {class: "pair-thumb", alt: "", loading: "lazy",
+        src: `/api/thumb?path=${encodeURIComponent((S.imageFolder || "") + "/" + n)}&t=${encodeURIComponent(TOKEN)}`}),
+      el("span", {class: "pair-name", text: n}),
+      el("button", {class: "btn btn-sm pair-x", text: "✕", title: "Don't check this image",
+        onclick: () => save(valPicked(r).filter((x) => x !== n))}))));
+    if (!names.length) list.append(el("span", {class: "field-hint", text: "None picked - Fizgig picks evenly (Images to check)."}));
+    clear.style.display = names.length ? "" : "none";
+  };
+  function save(names) { onValue(r, names); draw(); }
+  wrap.append(el("div", {class: "field-row"}, el("span", {class: "field-label", text: r.label + ":"}), add, clear), list);
+  wrap.append(el("div", {class: "field-hint row-note", id: "note_" + r.key}));
+  if (r.hint) wrap.append(el("div", {class: "field-hint", text: r.hint}));
+  draw();
+  return wrap;
+}
+
 async function likenessPicker(single) {
-  // single = {current, onPick(item)}: the same picker, one image for one sample prompt (paired likeness)
-  S.lik.single = single && single.onPick ? single : null;
-  const one = !!S.lik.single;
-  $("likTitle").textContent = one ? "Paired likeness: pick the training image this prompt describes" : "Likeness: pick 3 photos of your subject";
-  $("likHint3").style.display = one ? "none" : "";
+  // single = {current, onPick(item)}: the same picker, one image for one sample prompt (paired likeness) - it closes
+  // on the click. single = {mode: "multi-toggle", picked: [names], onToggle(names, item), title}: it stays open, each
+  // click puts a picture in or out of the pick (Validation loss), and only the ✕ closes it.
+  S.lik.single = single && (single.onPick || single.onToggle) ? single : null;
+  const one = !!S.lik.single, multi = !!(S.lik.single && S.lik.single.mode === "multi-toggle");
+  S.lik.multi = multi;
+  $("likTitle").textContent = one ? (single.title || "Paired likeness: pick the training image this prompt describes") : "Likeness: pick 3 photos of your subject";
+  $("likHint3").textContent = multi ? " Click pictures to select or unselect them; close with ✕ when you're done." :
+    " Pick clear, typical shots of the face: each preview is scored against all three and the mean shown, so one odd photo can't skew it.";
+  $("likHint3").style.display = one && !multi ? "none" : "";
   $("likStart").style.display = $("likClear").style.display = one ? "none" : "";
+  if ($("likCount")) $("likCount").style.display = multi ? "" : "none";
+  $("likModal").classList.toggle("lik-multi", multi);
   const folder = S.imageFolder || "";
   $("likFolder").textContent = folder || "no training image folder set on the Start tab";
-  S.lik.picked = one ? (single.current ? [single.current] : []) : [...((S.lik.data && S.lik.data.baselines) || [])];
+  S.lik.picked = multi ? [...(single.picked || [])] : one ? (single.current ? [single.current] : []) :
+    [...((S.lik.data && S.lik.data.baselines) || [])];
   const grid = $("likGrid");
   grid.innerHTML = "";
   $("likModal").classList.add("active");
+  likenessMarks();
   if (!folder) return;
   const r = await api(`/api/captions?folder=${encodeURIComponent(folder)}&ext=${encodeURIComponent(capExt())}&family=${encodeURIComponent(S.family || "")}`).catch(() => ({items: []}));
   for (const it of r.items.filter((x) => LIK_PICS.test(x.name))) {
     const fig = el("figure", {title: it.name, onclick: () => {
-      if (S.lik.single) { $("likModal").classList.remove("active"); S.lik.single.onPick(it); return; }
+      if (S.lik.single && !S.lik.multi) { $("likModal").classList.remove("active"); S.lik.single.onPick(it); return; }
       const i = S.lik.picked.indexOf(it.name);
+      if (S.lik.multi) {                 // in or out, the window stays open; the form's list follows each click
+        if (i >= 0) S.lik.picked.splice(i, 1); else S.lik.picked.push(it.name);
+        likenessMarks();
+        S.lik.single.onToggle([...S.lik.picked], it);
+        return;
+      }
       if (i >= 0) S.lik.picked.splice(i, 1);
       else { if (S.lik.picked.length >= 3) S.lik.picked.shift(); S.lik.picked.push(it.name); }
       likenessMarks();
@@ -2386,14 +2472,18 @@ async function likenessPicker(single) {
   likenessMarks();
 }
 function likenessMarks() {
+  const multi = !!S.lik.multi;
   for (const f of $("likGrid").querySelectorAll("figure")) {
     const i = S.lik.picked.indexOf(f.dataset.name);
-    f.classList.toggle("on", i >= 0);
+    f.classList.toggle("on", i >= 0 && !multi);
+    f.classList.toggle("lik-sel", i >= 0 && multi);
     f.querySelector(".lik-num")?.remove();
-    if (i >= 0) f.append(el("span", {class: "lik-num", text: String(i + 1)}));
+    f.querySelector(".lik-check")?.remove();
+    if (i >= 0) f.append(multi ? el("span", {class: "lik-check", text: "✓"}) : el("span", {class: "lik-num", text: String(i + 1)}));
   }
   $("likStart").disabled = S.lik.picked.length !== 3;
-  $("likPickStatus").textContent = S.lik.single ? "Click one picture" : `${S.lik.picked.length}/3 selected`;
+  if (multi && $("likCount")) $("likCount").textContent = `${S.lik.picked.length} selected`;
+  $("likPickStatus").textContent = multi ? `${S.lik.picked.length} selected` : S.lik.single ? "Click one picture" : `${S.lik.picked.length}/3 selected`;
 }
 async function likenessSet(names) {
   $("likPickStatus").textContent = "Starting…";
@@ -3784,9 +3874,50 @@ function lossChart(curve) {
 // ---- the loss graph: a run's loss at every step (the trainer's .fizgig_loss_<name>.jsonl), with smoothing, a log
 // scale and outliers clipped - its settings kept in this browser
 const LG_KEY = "fizgig_lossgraph";
-const lgSet = () => { try { return {smooth: 0.9, log: false, clip: true, lr: true, ...JSON.parse(localStorage.getItem(LG_KEY) || "{}")}; } catch (e) { return {smooth: 0.9, log: false, clip: true, lr: true}; } };
+const LG_DEF = {smooth: 0.9, log: false, clip: true, lr: true, emean: false, ravg: false, val: false};
+const lgSet = () => { try { return {...LG_DEF, ...JSON.parse(localStorage.getItem(LG_KEY) || "{}")}; } catch (e) { return {...LG_DEF}; } };
 const lgSave = (s) => { try { localStorage.setItem(LG_KEY, JSON.stringify(s)); } catch (e) { /* private window */ } };
 
+// the loss graph's LR scale: 0 at the bottom, the run's start/peak rate at the top (the largest rate logged - a
+// cosine or constant run's first, after any warmup). A rate that grows past its start (Prodigy) gets 10% headroom.
+function lrAxis(lv) {
+  const v = lv.map(Number).filter((x) => isFinite(x) && x >= 0);
+  const peak = v.length ? Math.max(...v) : 0, first = v.length ? v[0] : 0;
+  const climbs = first > 0 && peak > first * 1.05 && v[v.length - 1] > first * 1.05;
+  const top = peak > 0 ? peak * (climbs ? 1.1 : 1) : 1;
+  const pct = (x) => { const p = 100 * x / peak; return p >= 99.95 && p < 100 ? "99.9" : p.toFixed(p >= 10 ? 1 : 2); };
+  return {top, peak, climbs, pct};
+}
+// the loss graph's right-hand scale, top label: the learning rate now, as 6.55e-5
+function lrNowLabel(x) {
+  return Number(x).toExponential(2);
+}
+
+// the loss graph's left scale in the Epoch average / Running avg views: fitted to the averages and validation points
+// drawn (in the scale's own units, log10 on a log scale), 10% padding each side; a near-constant series is shown
+// at least 5% of its value tall (0.02 decades on a log scale) so its last-digit noise doesn't fill the plot
+function trendRange(vals, log) {
+  const v = vals.map(Number).filter((x) => isFinite(x) && (!log || x > 0)).map((x) => (log ? Math.log10(x) : x));
+  if (!v.length) return null;
+  let lo = Math.min(...v), hi = Math.max(...v);
+  const mid = (lo + hi) / 2, minSpan = log ? 0.02 : Math.max(Math.abs(mid) * 0.05, 1e-6);
+  if (hi - lo < minSpan) { lo = mid - minSpan / 2; hi = mid + minSpan / 2; }
+  const pad = (hi - lo) * 0.1;
+  return [lo - pad, hi + pad];
+}
+
+// the validation checks as the line's sections ([[step, epoch, loss, per-t, seg?], ...] -> one array a section)
+function valSections(val) {
+  const parts = [];
+  for (const p of val) {
+    const seg = p[4] || 0;
+    if (!parts.length || (parts[parts.length - 1][0][4] || 0) !== seg) parts.push([]);
+    parts[parts.length - 1].push(p);
+  }
+  return parts;
+}
+
+let lgClipN = 0;
 function lossGraph(data) {
   const box = el("div", {class: "loss-graph"});
   const pts = (data && data.points || []).filter((p) => isFinite(p[2]));
@@ -3803,26 +3934,48 @@ function lossGraph(data) {
   const clip = el("input", {type: "checkbox"}); clip.checked = set.clip;
   const lrOn = el("input", {type: "checkbox"}); lrOn.checked = set.lr;
   const hasLr = pts.some((p) => p[3] != null);
+  // the trend views (each its own switch, kept with the others): worked out by the server from every step
+  const tog = (k) => { const i = el("input", {type: "checkbox"}); i.checked = !!set[k]; return i; };
+  const emOn = tog("emean"), raOn = tog("ravg"), valOn = tog("val");
+  const em = (data.epoch_mean || []).filter((p) => isFinite(p[2]));
+  const ra = (data.running_avg || []).filter((p) => isFinite(p[1]));
+  const val = (data.val || []).filter((p) => isFinite(p[2]));
+  const hasVal = val.length > 0;
   const redraw = () => {
-    Object.assign(set, {smooth: Number(smooth.value), log: log.checked, clip: clip.checked, lr: lrOn.checked});
+    Object.assign(set, {smooth: Number(smooth.value), log: log.checked, clip: clip.checked, lr: lrOn.checked,
+      emean: emOn.checked, ravg: raOn.checked, val: valOn.checked});
     lgSave(set);
+    legendFill();
     draw();
   };
-  for (const i of [smooth, log, clip, lrOn]) i.addEventListener("input", redraw);
+  for (const i of [smooth, log, clip, lrOn, emOn, raOn, valOn]) i.addEventListener("input", redraw);
   // what each line and mark is
   const key = (cls, text) => el("span", {class: "lg-key"}, el("i", {class: "lg-sw " + cls}), text);
-  const legend = el("div", {class: "lg-legend"},
+  const legend = el("div", {class: "lg-legend"});
+  const legendFill = () => legend.replaceChildren(...[
     key("lg-sw-raw", "loss at each step"), key("lg-sw-smooth", "smoothed loss"),
-    hasLr ? key("lg-sw-lr", "learning rate (right-hand scale)") : null,
-    key("lg-sw-best", "lowest smoothed loss"), key("lg-sw-epoch", "start of an epoch (e1, e2…)"));
+    hasLr && set.lr ? key("lg-sw-lr", "learning rate (right-hand scale)") : null,
+    set.emean && em.length ? key("lg-sw-emean", "average loss of each epoch") : null,
+    set.ravg && ra.length ? key("lg-sw-ravg", "running avg (kohya-style: drifts down by itself)") : null,
+    set.val && hasVal ? key("lg-sw-val", "fixed validation loss (same images, noise and seed)") : null,
+    key("lg-sw-best", "lowest smoothed loss"), key("lg-sw-epoch", "start of an epoch (e1, e2…)")].filter(Boolean));
+  legendFill();
+  const tip = (node, text) => { node.title = text; return node; };
   box.append(el("div", {class: "field-row loss-graph-ctl"},
     el("span", {class: "field-label", text: "Smoothing:"}), smooth, ctl("Log scale", log), ctl("Clip outliers", clip),
-    hasLr ? ctl("Learning rate", lrOn) : null), svgHost, legend, read);
+    hasLr ? ctl("Learning rate", lrOn) : null),
+  el("div", {class: "field-row loss-graph-ctl"}, el("span", {class: "field-label", text: "Trends:"}),
+    tip(ctl("Epoch average", emOn), "One point an epoch: the mean loss of all its steps."),
+    tip(ctl("Running avg (kohya-style)", raOn), "What kohya-based trainers (and Anima Standalone) show as avr_loss: " +
+      "a mean from the start, then a window of one epoch. It drifts down even when nothing improves, so it's mostly for show."),
+    hasVal ? tip(ctl("Validation loss", valOn), "The fixed validation check (Samples > Image Validation): the same " +
+      "images at the same noise levels and noise each time. Down = learning; turning up = overcooking.") : null),
+  svgHost, legend, read);
 
   function draw() {
     // drawn at the width it has, so the text stays its own size on a phone
     const W = Math.max(300, Math.round(svgHost.clientWidth || 800)), H = W < 600 ? 220 : 240;
-    const L = 54, R = hasLr && set.lr ? 54 : 12, T = 10, B = 26;
+    const L = 54, R = hasLr && set.lr ? 64 : 12, T = 10, B = 26;   // room for the live rate (6.55e-5) beside "LR"
     const xs = pts.map((p) => p[0]);
     const x0 = xs[0], x1 = xs[xs.length - 1];
     const tf = (v) => (set.log ? Math.log10(Math.max(v, 1e-8)) : v);
@@ -3835,10 +3988,24 @@ function lossGraph(data) {
       const s = pts.map((p) => p[2]).sort((u, v) => u - v);
       ys = [s[Math.floor(s.length * 0.01)], s[Math.ceil(s.length * 0.99) - 1]].concat(sm);
     }
-    let y0 = Math.min(...ys.map(tf)), y1 = Math.max(...ys.map(tf));
-    if (y1 - y0 < 1e-9) { y0 -= 0.5; y1 += 0.5; }
+    // the trend lines that are on stay inside the scale
+    if (set.emean) ys = ys.concat(em.map((p) => p[2]));
+    if (set.ravg) ys = ys.concat(ra.map((p) => p[1]));
+    if (set.val && hasVal) ys = ys.concat(val.map((p) => p[2]));
+    // Epoch average / Running avg on: the scale fits those and the validation points, so their trend shows; the
+    // step loss and its smoothed line run past it, cut at the plot's edges
+    const fit = (set.emean && em.length) || (set.ravg && ra.length) ? trendRange([
+      ...(set.emean ? em.map((p) => p[2]) : []), ...(set.ravg ? ra.map((p) => p[1]) : []),
+      ...(set.val && hasVal ? val.map((p) => p[2]) : [])], set.log) : null;
+    let y0, y1;
+    if (fit) [y0, y1] = fit;
+    else {
+      y0 = Math.min(...ys.map(tf)); y1 = Math.max(...ys.map(tf));
+      if (y1 - y0 < 1e-9) { y0 -= 0.5; y1 += 0.5; }
+    }
     const X = (x) => L + (W - L - R) * (x1 === x0 ? 0.5 : (x - x0) / (x1 - x0));
     const Y = (v) => T + (H - T - B) * (1 - (Math.min(Math.max(tf(v), y0), y1) - y0) / (y1 - y0));
+    const YS = fit ? (v) => T + (H - T - B) * (1 - (tf(v) - y0) / (y1 - y0)) : Y;   // unclamped: cut, not flattened
     const ns = "http://www.w3.org/2000/svg";
     const mk = (tag, attrs) => { const n = document.createElementNS(ns, tag); for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v); return n; };
     const svg = mk("svg", {viewBox: `0 0 ${W} ${H}`, class: "loss-graph-svg"});
@@ -3857,25 +4024,52 @@ function lossGraph(data) {
       t.textContent = (set.log ? 10 ** v : v).toPrecision(3);
       svg.append(t);
     }
-    svg.append(mk("polyline", {class: "lg-raw", points: pts.map((p) => `${X(p[0]).toFixed(1)},${Y(p[2]).toFixed(1)}`).join(" ")}));
-    svg.append(mk("polyline", {class: "lg-smooth", points: pts.map((p, i) => `${X(p[0]).toFixed(1)},${Y(sm[i]).toFixed(1)}`).join(" ")}));
+    let steps = svg;
+    if (fit) {
+      const id = `lg-clip-${++lgClipN}`, cp = mk("clipPath", {id});
+      cp.append(mk("rect", {x: L, y: T, width: W - L - R, height: H - T - B}));
+      svg.append(cp);
+      steps = mk("g", {"clip-path": `url(#${id})`, class: "lg-steps-fit"});   // faded: the trends lead
+      svg.append(steps);
+    }
+    steps.append(mk("polyline", {class: "lg-raw", points: pts.map((p) => `${X(p[0]).toFixed(1)},${YS(p[2]).toFixed(1)}`).join(" ")}));
+    steps.append(mk("polyline", {class: "lg-smooth", points: pts.map((p, i) => `${X(p[0]).toFixed(1)},${YS(sm[i]).toFixed(1)}`).join(" ")}));
+    const line = (cls, sp, yi) => { if (sp.length > 1) svg.append(mk("polyline", {class: cls,
+      points: sp.map((p) => `${X(p[0]).toFixed(1)},${Y(p[yi]).toFixed(1)}`).join(" ")})); };
+    const dots = (cls, sp, yi, label) => sp.forEach((p) => {
+      const c = mk("circle", {cx: X(p[0]), cy: Y(p[yi]), r: 3.5, class: cls});
+      const tt = mk("title", {}); tt.textContent = label(p); c.append(tt); svg.append(c);
+    });
+    if (set.ravg) line("lg-ravg", ra, 1);
+    if (set.emean) { line("lg-emean", em, 2); dots("lg-emean-dot", em, 2, (p) => `Epoch ${p[1]} average: ${p[2].toFixed(4)}`); }
+    if (set.val && hasVal) {
+      // one line per section: a resume that changed what's checked starts a new one (p[4]), never joined across
+      for (const part of valSections(val)) line("lg-val", part, 2);
+      dots("lg-val-dot", val, 2, (p) => `Validation at step ${p[0]} (epoch ${p[1]}): ${p[2].toFixed(4)}`);
+    }
     // the learning rate, on its own scale at the right (adaptive LR moves it)
     const lrPts = pts.filter((p) => p[3] != null);
     if (hasLr && set.lr && lrPts.length > 1) {
-      const lv = lrPts.map((p) => p[3]), l0 = Math.min(...lv), l1 = Math.max(...lv);
-      const LY = (v) => T + (H - T - B) * (l1 === l0 ? 0.5 : 1 - (v - l0) / (l1 - l0));
+      // a linear scale from 0 up to the run's peak rate: a cosine run starts at the top and slides down, and a
+      // 0.01% change looks like 0.01%. A rate that climbs (Prodigy's d*lr, adaptive LR going up) gets headroom.
+      const ax = lrAxis(lrPts.map((p) => p[3]));
+      const LY = (v) => T + (H - T - B) * (1 - Math.min(Math.max(v, 0), ax.top) / ax.top);
       svg.append(mk("polyline", {class: "lg-lr", points: lrPts.map((p) => `${X(p[0]).toFixed(1)},${LY(p[3]).toFixed(1)}`).join(" ")}));
-      for (const [v, yy] of [[l1, T + 4], [l0, H - B]]) {
-        const t = mk("text", {x: W - R + 4, y: yy, class: "lg-axis lg-lr-axis"}); t.textContent = v.toExponential(1); svg.append(t);
+      // the scale's top label is live: the rate now (the last point drawn, Prodigy's d*lr when that's plotted); the
+      // line is still drawn on 0..peak, and the bottom stays 0. A dot marks where the line is now.
+      const lp = lrPts[lrPts.length - 1], lx = X(lp[0]), ly = LY(lp[3]);
+      for (const [text, yy, cls] of [[lrNowLabel(lp[3]), T + 14, " lg-lr-live"], ["0", H - B, ""]]) {
+        const t = mk("text", {x: W - R + 4, y: yy, class: "lg-axis lg-lr-axis" + cls}); t.textContent = text; svg.append(t);
       }
+      svg.append(mk("circle", {cx: lx, cy: ly, r: 3, class: "lg-lr-now"}));
     }
     // the lowest smoothed point
     let bi = 0;
     sm.forEach((v, i) => { if (v < sm[bi]) bi = i; });
-    const best = mk("circle", {cx: X(pts[bi][0]), cy: Y(sm[bi]), r: 4, class: "lg-best"});
+    const best = mk("circle", {cx: X(pts[bi][0]), cy: YS(sm[bi]), r: 4, class: "lg-best"});
     const bt = mk("title", {}); bt.textContent = `Lowest smoothed loss: ${sm[bi].toFixed(4)} at step ${pts[bi][0]}`;
     best.append(bt);
-    svg.append(best);
+    steps.append(best);
     const axisT = (x, text, cls, anchor) => { const t = mk("text", {x, y: T + 2, class: "lg-axis " + cls, "text-anchor": anchor,
       "dominant-baseline": "hanging"}); t.textContent = text; svg.append(t); };
     axisT(4, "loss", "lg-axis-title", "start");
@@ -3885,7 +4079,8 @@ function lossGraph(data) {
     const say = (i) => read.textContent = `Step ${pts[i][0]} · epoch ${pts[i][1]} · loss ${pts[i][2].toFixed(4)} ` +
       `(smoothed ${sm[i].toFixed(4)})` + (pts[i][3] != null ? ` · LR ${Number(pts[i][3]).toExponential(2)}` : "");
     const base = () => read.textContent = `${data.steps} steps · lowest smoothed loss ${sm[bi].toFixed(4)} at step ` +
-      `${pts[bi][0]} (epoch ${pts[bi][1]})` + (data.stride > 1 ? ` · every ${data.stride}th step drawn` : "");
+      `${pts[bi][0]} (epoch ${pts[bi][1]})` + (data.stride > 1 ? ` · every ${data.stride}th step drawn` : "") +
+      (set.val && hasVal ? ` · validation ${val[val.length - 1][2].toFixed(4)} (best ${Math.min(...val.map((p) => p[2])).toFixed(4)})` : "");
     svg.addEventListener("pointermove", (ev) => {
       const r = svg.getBoundingClientRect(), x = x0 + (x1 - x0) * Math.min(1, Math.max(0, ((ev.clientX - r.left) / r.width * W - L) / (W - L - R)));
       let i = 0;

@@ -2245,7 +2245,10 @@ a.pick-pill-vast:hover { border-color: var(--success); }
 .loss-graph-svg .lg-epoch { opacity: 0.5; }
 .loss-graph-svg .lg-axis { fill: var(--text-muted); font-size: 11px; }
 .loss-graph-svg .lg-lr-axis { fill: #8E7CC3; }
+.loss-graph-svg .lg-lr-now { fill: #8E7CC3; stroke: var(--bg-deep); stroke-width: 1.5; }
 .loss-graph-svg .lg-best { fill: var(--success, #10B981); }
+.loss-graph-svg .lg-steps-fit .lg-raw { opacity: 0.18; }
+.loss-graph-svg .lg-steps-fit .lg-smooth { opacity: 0.35; }
 .loss-graph-svg .lg-cursor { stroke: var(--text-secondary); stroke-width: 1; vector-effect: non-scaling-stroke; }
 .loss-graph-read { min-height: 1.4em; }
 .lg-legend { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 6px 2px 0; font-size: 12px; color: var(--text-secondary); }
@@ -2254,6 +2257,14 @@ a.pick-pill-vast:hover { border-color: var(--success); }
 .lg-sw-raw { border-color: var(--text-muted); opacity: 0.6; border-top-width: 1px; }
 .lg-sw-smooth { border-color: var(--accent); }
 .lg-sw-lr { border-color: #8E7CC3; border-top-style: dashed; }
+.lg-sw-emean { border-color: #FF6F61; border-top-width: 3px; }
+.lg-sw-ravg { border-color: #FFC233; border-top-width: 3px; }
+.lg-sw-val { border-color: #12C2B0; border-top-width: 3px; }
+.lg-emean { fill: none; stroke: #FF6F61; stroke-width: 2.5; }
+.lg-emean-dot { fill: #FF6F61; stroke: #fff; stroke-width: 1; }
+.lg-ravg { fill: none; stroke: #FFC233; stroke-width: 2.5; }
+.lg-val { fill: none; stroke: #12C2B0; stroke-width: 2.5; stroke-dasharray: 6 3; }
+.lg-val-dot { fill: #12C2B0; stroke: #fff; stroke-width: 1.2; }
 .lg-sw-best { width: 9px; height: 9px; border: 0; border-radius: 50%; background: var(--success, #10B981); }
 .lg-sw-epoch { width: 0; height: 12px; border-top: 0; border-left: 1px solid var(--border); }
 .loss-graph-svg .lg-axis-title { font-weight: 600; }
@@ -2401,3 +2412,18 @@ a.pick-pill-vast:hover { border-color: var(--success); }
 .pair-cap { font-size: 8.5pt; padding: 1px 7px; border-radius: 9px; cursor: help; }
 .pair-cap.good { background: rgba(39, 174, 96, .25); color: #2ECC71; }
 .pair-cap.mid { background: rgba(230, 126, 34, .22); color: #F0A04B; }
+.val-picks { display: flex; flex-wrap: wrap; gap: 6px 10px; margin: 4px 0 2px; }
+.val-pick { display: inline-flex; align-items: center; gap: 6px; padding: 2px 4px 2px 2px; border: 1px solid var(--border); border-radius: 6px; }
+.val-pick .pair-thumb { width: 28px; height: 28px; object-fit: cover; border-radius: 3px; }
+.val-pick .pair-name { opacity: .8; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.section-card[id^="sec-"] .form-row.kind-heading { grid-column: 1 / -1; margin-top: 10px; padding-top: 12px; border-top: 1px solid var(--border); }
+.form-subhead { font-weight: 600; font-size: 0.95em; letter-spacing: 0.02em; color: var(--accent); }
+/* the Likeness picker in multi-toggle mode (Validation loss): bright turquoise picks with a check badge */
+.lik-grid figure.lik-sel { border: 3px solid #19E3CF; border-radius: 6px; box-shadow: 0 0 0 2px rgba(25, 227, 207, .35), 0 0 14px 3px rgba(25, 227, 207, .65); }
+.lik-grid figure.lik-sel img { border-radius: 3px; }
+.lik-grid .lik-check { position: absolute; top: 5px; right: 5px; width: 24px; height: 24px; border-radius: 50%; background: #19E3CF;
+  color: #06302C; font-weight: 800; font-size: 14px; line-height: 24px; text-align: center; box-shadow: 0 1px 4px rgba(0, 0, 0, .45); }
+.lik-count { margin-left: auto; margin-right: 10px; padding: 2px 10px; border-radius: 999px; background: #19E3CF; color: #06302C;
+  font-weight: 700; font-size: 10pt; }
+/* a switch that needs the card's whole width (Image Validation's Fixed validation loss): one wide, short tile */
+.section-card[id^="sec-"] .form-row.row-full { grid-column: 1 / -1; }

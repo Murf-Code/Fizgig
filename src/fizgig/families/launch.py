@@ -751,6 +751,17 @@ def train_command(desc, inputs, plan):
         cmd += ["--dop", "--dop_weight", f"{weight * every:g}", "--dop_every", str(every)]
         if trig:
             cmd += ["--dop_trigger", ", ".join(trig), "--dop_class", ", ".join(cls)]
+    if st.get("VALIDATION_LOSS") and str(st.get("VALIDATION_LOSS")).lower() not in ("false", "0", "off"):
+        from fizgig.training.val_pick import picked_list, validation_every_steps
+        def _vi(key, dflt):
+            m = re.match(r"\d+", str(st.get(key, dflt) or dflt).strip())
+            return m.group() if m else dflt
+        cmd += ["--validation_loss", "--validation_images", _vi("VALIDATION_IMAGES", "4"),
+                "--validation_timesteps", _vi("VALIDATION_TIMESTEPS", "4"),
+                "--validation_seed", _vi("VALIDATION_SEED", "42"),
+                "--validation_every_steps", str(validation_every_steps(st.get("VALIDATION_EVERY_STEPS")))]
+        for name in picked_list(st.get("VALIDATION_PICKED")):     # your own images: the count is not used
+            cmd += ["--validation_pick", name]
     if st.get("ADAPTIVE_LR") and desc.adaptive_lr and not ft_on(desc, st):   # a fine-tune trains at its own rate
         cmd += ["--adaptive_lr",
                 "--adaptive_lr_min", str(st.get("ADAPTIVE_LR_MIN", "1e-4")).split(" ")[0],
