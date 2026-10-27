@@ -63,7 +63,7 @@ DEFAULTS = {
     "FAMILY_TRAINING_ADAPTER": True, "FAMILY_KIND": "standard", "FAMILY_FAST_ID": False,
     "FAMILY_MULTICONCEPT": False, "FAMILY_CONCEPT_DIR": "", "FAMILY_CONCEPT_COUNT": "2 subjects",
     "FAMILY_CONCEPT_DIR3": "", "FAMILY_CONCEPT_DIR4": "", "FAMILY_CONCEPT_BALANCE": False,
-    "TIMESTEP_SPREAD": "Default",
+    "TIMESTEP_SPREAD": "Model default",
     "FAMILY_EDIT_DIR": "", "FAMILY_EDIT_REF": "", "FAMILY_EDIT_CAPTION": "",
     "FAMILY_EDIT_PICTURES": launch.EDIT_PHOTO_ONLY, "FAMILY_EDIT_EXTRAS_DIR": "",
     "FAMILY_SLIDER_SOURCE": "pairs", "FAMILY_SLIDER_DIR": "", "FAMILY_SLIDER_CAPTION": "",
@@ -295,8 +295,8 @@ def form(desc):
     if desc.timestep_spread:
         # Timestep focus (fizgig.training.timestep_spread): which noise levels the steps go to, as named presets; the
         # chosen one's line shows under it (state). MOSS-Image keeps its own Clean-end share instead
-        params.append(_row("TIMESTEP_SPREAD", "Timestep focus", "choice", "Which noise levels training spends its "
-                           "steps on. Default is the model's usual mix.",
+        params.append(_row("TIMESTEP_SPREAD", "Timestep focus", "choice", "Which noise levels training practises "
+                           "most. Model default is the model's own usual mix.",
                            [TS.LABELS[k] for k in desc.timestep_spread], TS.LABELS["default"]))
     params += [
         _row("NETWORK_DIM", "Network Dim (Rank)"),

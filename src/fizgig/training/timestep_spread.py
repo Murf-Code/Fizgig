@@ -18,11 +18,13 @@ Written for Fizgig from the general idea (timestep shift / logit-normal sampling
 import math
 
 PRESETS = ("default", "detail", "balanced", "composition")
-LABELS = {"default": "Default", "detail": "Detail", "balanced": "Balanced", "composition": "Composition"}
-HINTS = {"default": "The model's usual mix of noise levels.",
-         "detail": "More steps at the clean end: faces, skin, texture and fine detail.",
-         "balanced": "Steps spread more evenly over every noise level.",
-         "composition": "More steps at the noisy end: layout, pose and overall shapes."}
+LABELS = {"default": "Model default", "detail": "Detail (clean end)", "balanced": "Balanced (wider spread)",
+          "composition": "Composition (noisy end)"}
+HINTS = {"default": "The model's own usual mix of noise levels, same as before this setting existed.",
+         "detail": "More steps at low noise: linework, shading, texture and faces. Good for style LoRAs.",
+         "balanced": "Same centre as the model default, but more steps at both the very noisy and very clean ends, "
+                     "so neither gets under-practised. Good for character plus style.",
+         "composition": "More steps at high noise: pose, layout and body shape."}
 FLOW = PRESETS                                  # the flow-matching families offer all four
 DDPM = ("default", "detail", "composition")     # SDXL: its even draw is already balanced
 
@@ -31,11 +33,14 @@ WIDTH = {"default": 1.0, "detail": 1.0, "balanced": 1.6, "composition": 1.0}    
 
 
 def key(value) -> str:
-    """'Detail', 'detail', ' DETAIL ' -> 'detail'; '' / None -> 'default'. ValueError for anything else."""
+    """'Detail', 'detail', ' DETAIL ', 'Detail (clean end)' -> 'detail'; 'Model default' / 'Default' / '' / None ->
+    'default' (older saves wrote the bare names). ValueError for anything else."""
     v = str(value or "").strip().lower()
     if not v:
         return "default"
     v = v.split(" ")[0]
+    if v == "model":
+        v = "default"
     if v not in PRESETS:
         raise ValueError(f"unknown timestep focus {value!r} (one of {', '.join(LABELS.values())})")
     return v

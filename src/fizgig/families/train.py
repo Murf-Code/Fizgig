@@ -1101,7 +1101,7 @@ def _check_timestep_spread(desc, driver):
                               " - drop --timestep_spread") + ".")
     driver.options["timestep_spread"] = k
     if k != "default":
-        logger.info(f"Timestep focus: {TS.LABELS[k]} ({TS.HINTS[k][0].lower()}{TS.HINTS[k][1:].rstrip('.')})")
+        logger.info(f"Timestep focus: {TS.LABELS[k]}")
 
 
 def train_family(family, dit_path, dataset_config, output_dir, output_name, *, network_dim=32, network_alpha=32,

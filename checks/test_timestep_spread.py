@@ -262,9 +262,9 @@ def test_training_tab_row():
             assert "TIMESTEP_SPREAD" not in rows, k
             continue
         r = rows["TIMESTEP_SPREAD"]
-        assert r["kind"] == "choice" and r["default"] == "Default" and r["label"] == "Timestep focus"
+        assert r["kind"] == "choice" and r["default"] == "Model default" and r["label"] == "Timestep focus"
         assert r["choices"] == [TS.LABELS[p] for p in d.timestep_spread]
-    assert form.DEFAULTS["TIMESTEP_SPREAD"] == "Default"
+    assert form.DEFAULTS["TIMESTEP_SPREAD"] == "Model default"
     krea = get("krea2")
     for p in TS.PRESETS:
         assert form.state(krea, {**form.DEFAULTS, "TIMESTEP_SPREAD": TS.LABELS[p]})["notes"]["TIMESTEP_SPREAD"] == \
@@ -277,11 +277,11 @@ def test_training_tab_row():
 def test_presets_keep_it():
     krea, sdxl = get("krea2"), get("sdxl")
     got = form.apply_preset(krea, dict(form.DEFAULTS), {"TIMESTEP_SPREAD": "Detail"})
-    assert got["TIMESTEP_SPREAD"] == "Detail"
+    assert got["TIMESTEP_SPREAD"] == "Detail (clean end)"
     got = form.apply_preset(krea, dict(form.DEFAULTS), {"TIMESTEP_SPREAD": "composition"})      # any case
-    assert got["TIMESTEP_SPREAD"] == "Composition"
-    got = form.apply_preset(sdxl, {**form.DEFAULTS, "TIMESTEP_SPREAD": "Detail"}, {"TIMESTEP_SPREAD": "Balanced"})
-    assert got["TIMESTEP_SPREAD"] == "Detail"               # a preset from another model: not offered here, kept
+    assert got["TIMESTEP_SPREAD"] == "Composition (noisy end)"
+    got = form.apply_preset(sdxl, {**form.DEFAULTS, "TIMESTEP_SPREAD": "Detail (clean end)"}, {"TIMESTEP_SPREAD": "Balanced"})
+    assert got["TIMESTEP_SPREAD"] == "Detail (clean end)"               # a preset from another model: not offered here, kept
 
 
 def test_command_flag_and_start_checks():
@@ -346,3 +346,9 @@ def test_trainer_flag_and_checks():
         else:
             with pytest.raises(RuntimeError):
                 train._check_timestep_spread(d, drv)
+
+
+def test_labels_old_and_new_names_map_to_same_values():
+    for k in TS.PRESETS:
+        assert TS.key(TS.LABELS[k]) == k and TS.key(k.capitalize()) == k
+    assert TS.key("Model default") == "default" and TS.LABELS["detail"] == "Detail (clean end)"
