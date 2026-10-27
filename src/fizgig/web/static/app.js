@@ -7216,16 +7216,27 @@ function wireStudio() {
 // ---- Captions tab ----------------------------------------------------------------------------------------
 // The desktop Captions tab's tools, run on the Fizgig machine (fizgig/web/captions.py). Settings are remembered.
 let CAP_PAGE = 12;                         // Per page (the desktop's sizes), remembered with the tab's settings
-S.cap = {page: 0, items: [], opts: null, lastState: ""};
+S.cap = {page: 0, items: [], opts: null, lastState: "", tagMin: {}, tagChar: {}};
 
 function capSettings() {
   return {trigger: $("capTrigger").value, model: $("capModel").value, task: $("capTask").value,
     tokens: $("capTokens").value, overwrite: $("capOverwrite").checked, songWords: $("capSongWords").value,
-    skipCjk: $("capSkipCjk").checked, perPage: $("capPerPage").value};
+    skipCjk: $("capSkipCjk").checked, perPage: $("capPerPage").value,
+    tagMin: S.cap.tagMin, tagChar: S.cap.tagChar, tagMax: $("capTagMax").value, tagStyle: $("capTagStyle").value,
+    tagRatings: $("capTagRatings").checked};
 }
 const saveCapSoon = debounce(() => { S.capSaved = capSettings(); api("/api/state", {captions: S.capSaved}).catch(() => {}); }, 600);
 const qwenOn = () => !!S.cap.opts && S.cap.opts.qwen_available && $("capModel").value === S.cap.opts.qwen_model;
 const qwenTask = () => (S.cap.opts.qwen_tasks || []).find((t) => t.label === $("capTask").value);
+// the taggers (fizgig/dataset/tag_captions.py): the model picked, when it is one ({id, path, fetch, gb, min_score})
+const capTagger = () => (S.cap.opts && S.cap.opts.taggers && S.cap.opts.taggers[$("capModel").value]) || null;
+const CAP_MODEL_HINT = {
+  "wd-eva02": "Writes tag captions (Danbooru-style tags, the surest first), best for anime and general art. The same " +
+    "tagger as Image Prep's Trim tags: one 1.2 GB download for both.",
+  "jtp3": "Writes tag captions with e621 tags (species, characters, the surest first), best for furry art. Implied " +
+    "tags come along (canine with fox). Scores are JTP-3's confidence, its demo lists tags from 0.30 up. The same " +
+    "tagger as Image Prep's Trim tags: one 1.0 GB download for both.",
+};
 
 async function loadCaptionOptions() {
   const o = S.cap.opts = await api("/api/captions/options?family=" + encodeURIComponent(S.family));
@@ -7234,7 +7245,7 @@ async function loadCaptionOptions() {
   model.innerHTML = "";
   for (const m of o.models) model.append(el("option", {value: m, text: m}));
   model.value = o.models.includes(saved.model) ? saved.model : o.default_model;
-  $("capModelHint").textContent = o.qwen_available ?
+  S.cap.modelHint = o.qwen_available ?
     "Qwen3-VL (the Krea 2 text encoder from Preferences) follows an instruction you can edit and writes the best " +
     "training captions. Florence-2 downloads itself the first time." :
     "Set the Krea 2 text encoder in Preferences to caption with Qwen3-VL, which writes better training captions. " +
@@ -7245,15 +7256,65 @@ async function loadCaptionOptions() {
   if (saved.perPage) { $("capPerPage").value = saved.perPage; CAP_PAGE = Number(saved.perPage) || 12; }
   fillTasks(saved.task);
   if (saved.tokens) $("capTokens").value = saved.tokens;
+  S.cap.tagMin = {...(saved.tagMin || {})}; S.cap.tagChar = {...(saved.tagChar || {})};
+  $("capTagMax").value = saved.tagMax || o.tag_max || 255;
+  $("capTagStyle").value = saved.tagStyle === "underscores" ? "underscores" : "spaces";
+  $("capTagRatings").checked = !!saved.tagRatings;
   $("capSongCard").style.display = o.song_words ? "" : "none";
   // a model that trains on no pictures or clips (ACE-Step): the AI card has nothing to caption, the song card does
   const media = (S.fam && S.fam.media) || ["photo"];
   const pictures = media.includes("photo") || media.includes("clip");
   document.querySelector("#capAll").closest(".section-card").style.display = pictures ? "" : "none";
-  for (const id of ["capModel", "capTask", "capTokens"]) $(id).closest(".field-row").style.display = pictures ? "" : "none";
+  S.cap.pictures = pictures;
+  $("capModel").closest(".field-row").style.display = pictures ? "" : "none";
   $("capModelHint").style.display = pictures ? "" : "none";
-  if (!pictures) $("capInstrBox").style.display = "none";
+  capShowModel();
   if (o.song_words) { $("capSongWords").placeholder = "e.g. " + o.song_words; $("capSongWords").value = saved.songWords || ""; }
+}
+
+// a tagger has no task, instructions or length: its own settings show instead (each tagger keeps its scores)
+function capShowModel() {
+  const t = capTagger(), pictures = S.cap.pictures !== false;
+  for (const id of ["capTask", "capTokens"]) $(id).closest(".field-row").style.display = pictures && !t ? "" : "none";
+  if (t || !pictures) $("capInstrBox").style.display = "none";
+  $("capTagBox").style.display = pictures && t ? "" : "none";
+  $("capModelHint").textContent = t ? CAP_MODEL_HINT[t.id] || "" : S.cap.modelHint || "";
+  if (!t) return;
+  $("capTagMin").value = S.cap.tagMin[t.id] || t.min_score.toFixed(2);
+  $("capTagChar").value = S.cap.tagChar[t.id] || "";
+  capTagState();
+}
+
+// the picked tagger's download: the same files and Download as Image Prep's Trim tags (/api/prep/tagger_fetch)
+function capTagState() {
+  const t = capTagger(), st = $("capTagState");
+  if (!t) return;
+  const f = t.fetch || {}, name = t.label || "tagger";
+  if (f.state === "running") {
+    st.replaceChildren(`Downloading the ${name}: ${f.gb} of ${f.of} GB …`);
+    clearTimeout(S.cap.tagTimer);
+    S.cap.tagTimer = setTimeout(capTagRefresh, 2000);
+  } else if (t.path) {
+    st.replaceChildren(`The ${name} is downloaded. It runs on the GPU when it can, and is freed when captioning ends.`);
+  } else {
+    st.replaceChildren(el("button", {class: "btn btn-primary",
+      text: f.state === "failed" ? "Try the download again" : `Download the ${name} (${t.gb} GB)`, onclick: async () => {
+        await api("/api/prep/tagger_fetch", {tagger: t.id}).catch((e) => { st.textContent = e.message; });
+        capTagRefresh(); }}), el("span", {class: "field-hint", text: f.state === "failed" ?
+        ` The download failed: ${f.error}` : " Needed once, before the first caption."}));
+  }
+}
+
+async function capTagRefresh() {
+  const o = await api("/api/captions/options?family=" + encodeURIComponent(S.family)).catch(() => null);
+  if (o && o.taggers && S.cap.opts) S.cap.opts.taggers = o.taggers;
+  capTagState();
+}
+
+function capTagBody() {
+  const t = capTagger();
+  return t ? {tags: {min_score: $("capTagMin").value, max_tags: $("capTagMax").value, style: $("capTagStyle").value,
+    ratings: $("capTagRatings").checked, char_score: $("capTagChar").value}} : {};
 }
 
 function fillTasks(want) {
@@ -7304,7 +7365,7 @@ function capJobBody(extra = {}) {
   const t = qwenOn() && qwenTask();
   return {family: S.family, folder: S.imageFolder, model: $("capModel").value, task: $("capTask").value, ext: capExt(),
     instruction: t ? t.instruction : "", max_tokens: Number($("capTokens").value) || 120,
-    trigger: $("capTrigger").value, overwrite: $("capOverwrite").checked, ...extra};
+    trigger: $("capTrigger").value, overwrite: $("capOverwrite").checked, ...capTagBody(), ...extra};
 }
 
 async function capRun(path, body) {
@@ -7348,7 +7409,8 @@ async function pollCaptions() {
   $("capBar").style.width = (busy ? pct : 0).toFixed(1) + "%";
   $("capStatus").textContent = {
     idle: "No model loaded.", loaded: `${st.model} is loaded, ready.`,
-    loading: `Loading ${st.model}… (the first time it downloads)`,
+    loading: `Loading ${st.model}…` + (S.cap.opts && S.cap.opts.taggers && S.cap.opts.taggers[st.model] ? "" :
+      " (the first time it downloads)"),
     running: `Captioning ${st.done} of ${st.total}` + (st.fail ? ` · ${st.fail} failed` : ""),
     translating: st.total ? `Translating ${st.done} of ${st.total}` : "Loading the translator…",
   }[st.state] || st.state;
@@ -7516,11 +7578,14 @@ function wireCaptions() {
     S.values.DATASET_CAPTION_EXT = $("captionExt").value.trim() || ".txt";
     syncInputs(["DATASET_CAPTION_EXT"]); saveStateSoon(); loadCaptions();
   });
-  $("capModel").addEventListener("change", () => { fillTasks(); onCapTask(); });
+  $("capModel").addEventListener("change", () => { fillTasks(); capShowModel(); onCapTask(); });
+  for (const [id, keep] of [["capTagMin", "tagMin"], ["capTagChar", "tagChar"]])
+    $(id).addEventListener("input", () => { const t = capTagger(); if (t) S.cap[keep][t.id] = $(id).value.trim(); saveCapSoon(); });
   $("capPerPage").addEventListener("change", () => {
     CAP_PAGE = Number($("capPerPage").value) || 12; S.cap.page = 0; renderCaptions(); saveCapSoon(); });
   $("capTask").addEventListener("change", onCapTask);
-  for (const id of ["capTrigger", "capTokens", "capOverwrite", "capSongWords", "capSkipCjk"])
+  for (const id of ["capTrigger", "capTokens", "capOverwrite", "capSongWords", "capSkipCjk", "capTagMax", "capTagStyle",
+    "capTagRatings"])
     $(id).addEventListener("change", saveCapSoon);
   // a trigger word typed here fills auto-recaption's on the Training tab (an empty one leaves it alone)
   $("capTrigger").addEventListener("input", () => {
