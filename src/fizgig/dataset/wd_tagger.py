@@ -10,6 +10,8 @@ import os
 import threading
 import time
 
+from fizgig.utils import hf_public
+
 REPO = "SmilingWolf/wd-eva02-large-tagger-v3"
 FILES = ("model.onnx", "selected_tags.csv")
 FOLDER = "wd-eva02-large-tagger-v3"
@@ -50,14 +52,13 @@ def download(models_dir):
 
     def work():
         try:
-            from huggingface_hub import hf_hub_download
             for f in FILES[::-1]:                     # the small tag list first
-                hf_hub_download(repo_id=REPO, filename=f, local_dir=model_dir(models_dir))
+                hf_public.download(repo_id=REPO, filename=f, local_dir=model_dir(models_dir))
             with _lock:
                 _fetch.update(state="done", at=time.time())
         except Exception as e:
             with _lock:
-                _fetch.update(state="failed", error=f"{type(e).__name__}: {e}", at=time.time())
+                _fetch.update(state="failed", error=hf_public.friendly_error(e), at=time.time())
     threading.Thread(target=work, daemon=True).start()
 
 

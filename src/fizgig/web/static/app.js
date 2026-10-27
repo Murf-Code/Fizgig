@@ -4517,6 +4517,11 @@ const MASK_WHO_HINTS = {
     "clothes choices are off.",
   auto: "Runs both finders on every picture: a photo of a real person gets the person finder's mask, anything else " +
     "the character finder's. The log says which each picture got."};
+// A model download's failure, for the hint beside its button: an expired Hugging Face login reads as itself.
+function downloadFailedText(err) {
+  return /^Your Hugging Face login/.test(err || "") ? ` ${err}` : ` The download failed: ${err}`;
+}
+
 async function maskInfo() {
   if (!S.imageFolder) { $("maskInfo").textContent = ""; return; }
   // the editor follows the folder, and the masks a run just made
@@ -4601,7 +4606,7 @@ function maskSamShow(r) {
     st.replaceChildren(el("button", {class: "btn btn-primary",
       text: f.state === "failed" ? "Try the download again" : `Download SAM 3.1 (${sam.gb || 1.75} GB)`, onclick: async () => {
         await api("/api/masks/sam_fetch", {}).catch((e) => { st.textContent = e.message; });
-        maskInfo(); }}), el("span", {class: "field-hint", text: f.state === "failed" ? ` The download failed: ${f.error}` :
+        maskInfo(); }}), el("span", {class: "field-hint", text: f.state === "failed" ? downloadFailedText(f.error) :
         " Needed once, before the first masks."}));
   }
   maskCharShow(r);
@@ -4624,7 +4629,7 @@ function maskCharShow(r) {
       text: f.state === "failed" ? "Try the download again" : `Download the character finder (${ch.mb || 176} MB)`,
       onclick: async () => {
         await api("/api/masks/char_fetch", {}).catch((e) => { st.textContent = e.message; });
-        maskInfo(); }}), el("span", {class: "field-hint", text: f.state === "failed" ? ` The download failed: ${f.error}` :
+        maskInfo(); }}), el("span", {class: "field-hint", text: f.state === "failed" ? downloadFailedText(f.error) :
         " Needed once, before the first masks."}));
   }
 }
@@ -5105,7 +5110,7 @@ function prepTaggerShow() {
     st.replaceChildren(el("button", {class: "btn btn-primary",
       text: f.state === "failed" ? "Try the download again" : `Download the ${name} (${t.gb || (id === "jtp3" ? 1.0 : 1.2)} GB)`, onclick: async () => {
         await api("/api/prep/tagger_fetch", {tagger: id}).catch((e) => { st.textContent = e.message; });
-        maskInfo(); }}), el("span", {class: "field-hint", text: f.state === "failed" ? ` The download failed: ${f.error}` :
+        maskInfo(); }}), el("span", {class: "field-hint", text: f.state === "failed" ? downloadFailedText(f.error) :
         " Needed once, before the first trim."}));
   }
 }

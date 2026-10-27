@@ -79,8 +79,8 @@ def download(models_dir):
 
     def work():
         try:
-            from huggingface_hub import hf_hub_download
-            got = hf_hub_download(repo_id=REPO, filename=FILE, revision=REVISION, local_dir=model_dir(models_dir))
+            from fizgig.utils import hf_public
+            got = hf_public.download(repo_id=REPO, filename=FILE, revision=REVISION, local_dir=model_dir(models_dir))
             if _sha256(got) != SHA256:
                 os.remove(got)
                 raise RuntimeError("the downloaded file isn't the expected one - try again later")
@@ -88,7 +88,7 @@ def download(models_dir):
                 _fetch.update(state="done", at=time.time())
         except Exception as e:
             with _lock:
-                _fetch.update(state="failed", error=f"{type(e).__name__}: {e}", at=time.time())
+                _fetch.update(state="failed", error=hf_public.friendly_error(e), at=time.time())
     threading.Thread(target=work, daemon=True).start()
 
 

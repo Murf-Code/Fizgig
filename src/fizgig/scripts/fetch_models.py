@@ -286,16 +286,16 @@ def _download_with_progress(w, models_dir, token, log):
     scraping keeps the parsing in one place and survives huggingface_hub changing its display.
     """
     import threading
-    from huggingface_hub import hf_hub_download
+    from fizgig.utils import hf_public
 
     total = _remote_size(w, token) or int(w.gb * 1024 ** 3)
     held = {}
 
     def run():
         try:
-            held["path"] = hf_hub_download(
+            held["path"] = hf_public.download(
                 repo_id=w.repo, filename=w.path_in_repo, local_dir=models_dir,
-                token=token or os.environ.get("HF_TOKEN") or None)
+                token=token or os.environ.get("HF_TOKEN") or None, log=log)
         except BaseException as e:      # re-raised on the calling thread below
             held["err"] = e
 
@@ -360,12 +360,15 @@ def fetch_weight(w, models_dir, prefs, token=None, log=print, dry_run=False):
         if EMIT_PROGRESS:
             got = _download_with_progress(w, models_dir, token, log)
         else:
-            from huggingface_hub import hf_hub_download
-            got = hf_hub_download(repo_id=w.repo, filename=w.path_in_repo, local_dir=models_dir,
-                                  token=token or os.environ.get("HF_TOKEN") or None)
+            from fizgig.utils import hf_public
+            got = hf_public.download(repo_id=w.repo, filename=w.path_in_repo, local_dir=models_dir,
+                                     token=token or os.environ.get("HF_TOKEN") or None, log=log)
     except Exception as e:
         name = type(e).__name__
-        if "Gated" in name or "401" in str(e) or "403" in str(e):
+        from fizgig.utils import hf_public
+        if isinstance(e, hf_public.LoginExpired):
+            log(f"  [login] {w.filename}: {e}")
+        elif "Gated" in name or "401" in str(e) or "403" in str(e):
             log(f"  [gated] {w.repo} needs you to accept its licence first:")
             log(f"          https://huggingface.co/{w.repo}")
             log(f"          Then re-run with --token hf_... (or set HF_TOKEN).")
@@ -435,24 +438,24 @@ def fetch_tool(spec, log=print, dry_run=False):
             # Tokenizer vocab + processor/config json only — NEVER the weights. The weights
             # repos here are multi-GB and the user already has them as local safetensors;
             # a bare snapshot_download would pull the whole thing.
-            from huggingface_hub import snapshot_download
-            snapshot_download(repo_id=model_id.split(":", 1)[1],
-                              allow_patterns=["*.json", "*.txt", "*.model"])
+            from fizgig.utils import hf_public
+            hf_public.snapshot(log=log, repo_id=model_id.split(":", 1)[1],
+                               allow_patterns=["*.json", "*.txt", "*.model"])
         elif model_id.startswith("hf-files:"):
             # A repo's small named files only (e.g. a processor/ folder), never its weights.
-            from huggingface_hub import snapshot_download
+            from fizgig.utils import hf_public
             repo, _, pats = model_id[len("hf-files:"):].partition("|")
-            snapshot_download(repo_id=repo, allow_patterns=pats.split(","))
+            hf_public.snapshot(log=log, repo_id=repo, allow_patterns=pats.split(","))
         elif model_id.startswith("hf-model:"):
             # Configs + tokenizer + the safetensors weights — skipping the .bin/.msgpack/.h5
             # duplicates these repos also carry. Keep in lockstep with the runtime's
             # local-cache check (gizmo.py _WHISPER_PATTERNS).
-            from huggingface_hub import snapshot_download
-            snapshot_download(repo_id=model_id.split(":", 1)[1],
-                              allow_patterns=["*.json", "*.txt", "*.model", "*.safetensors"])
+            from fizgig.utils import hf_public
+            hf_public.snapshot(log=log, repo_id=model_id.split(":", 1)[1],
+                               allow_patterns=["*.json", "*.txt", "*.model", "*.safetensors"])
         else:
-            from huggingface_hub import snapshot_download
-            snapshot_download(repo_id=model_id)
+            from fizgig.utils import hf_public
+            hf_public.snapshot(log=log, repo_id=model_id)
         log(f"  [done] {model_id}")
         return True
     except Exception as e:

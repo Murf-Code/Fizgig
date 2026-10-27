@@ -2524,8 +2524,8 @@ def _fetch_on_use(f):
 
     def work():
         try:
-            from huggingface_hub import hf_hub_download
-            got = hf_hub_download(repo_id=f.repo, filename=f.path, local_dir=user_data.MODELS_DIR)
+            from fizgig.utils import hf_public
+            got = hf_public.download(repo_id=f.repo, filename=f.path, local_dir=user_data.MODELS_DIR)
             dest = os.path.join(user_data.MODELS_DIR, f.local_name or os.path.basename(f.path))
             if os.path.normcase(os.path.abspath(got)) != os.path.normcase(os.path.abspath(dest)):
                 os.replace(got, dest)             # a file in a repo subfolder: to the models folder itself

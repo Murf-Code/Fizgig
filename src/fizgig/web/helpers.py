@@ -1419,11 +1419,11 @@ def _light_text_encoder(family):
         label = f.alt_label or "full"
         gb = (f.alt_size_gb or f.size_gb) if f.alt_path else f.size_gb
     from fizgig import user_data
-    from huggingface_hub import hf_hub_download
     _remote.update(name=f"{f.label} ({label} build) for trying prompts here", done=0, total=int(gb * 1e9),
                    te_dir=os.path.join(user_data.MODELS_DIR, ".cache", "huggingface", "download", os.path.dirname(path)))
     try:
-        got = hf_hub_download(repo_id=repo, filename=path, local_dir=user_data.MODELS_DIR)
+        from fizgig.utils import hf_public
+        got = hf_public.download(repo_id=repo, filename=path, local_dir=user_data.MODELS_DIR)
     finally:
         _remote["te_dir"] = ""
     dest = os.path.join(user_data.MODELS_DIR, os.path.basename(path))
@@ -2224,9 +2224,9 @@ def _get_build(spec):
 
         def work():
             try:
-                from huggingface_hub import hf_hub_download
+                from fizgig.utils import hf_public
                 stage = os.path.join(user_data.MODELS_DIR, ".share_builds")      # never over a file of yours
-                got = hf_hub_download(repo_id=spec["repo"], filename=spec["file"], local_dir=stage)
+                got = hf_public.download(repo_id=spec["repo"], filename=spec["file"], local_dir=stage)
                 if _sha(got) != spec["sha"]:
                     os.remove(got)
                     g.update(state="failed", error="the download isn't the file the run used")
@@ -2236,7 +2236,7 @@ def _get_build(spec):
                     got = local
                 g.update(state="done", error="", path=got)
             except Exception as e:
-                g.update(state="failed", error=str(e))
+                g.update(state="failed", error=str(e))   # a LoginExpired already reads as one short line
         threading.Thread(target=work, daemon=True).start()
     if g["state"] == "done":
         _gets.pop(spec["file"], None)
