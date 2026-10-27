@@ -2,7 +2,7 @@
 
 Fizgig uses faces in two ways:
 
-- the **face finder** (detector) decides where the face is. Image Prep's face close-ups (Resize + face close-ups, Face close-ups only), *Test face detection on one photo* and the clip-still picker use it, and so does the look match when it scores a crop.
+- the **face finder** (detector) decides where the face is. Image Prep's face crops (*Resize + close-up crops* and *Close-up crops only*, with a face choice under **Crop to**), *Test face detection on one photo* and the clip-still picker use it, and so does the look match when it scores a crop.
 - the **look match** (identity embedder) turns a face into a vector, so two faces can be compared. The **Look Consistency Filter**, the **sample gallery's live likeness badges**, **LoRA Royale's likeness score**, **Repair Studio's likeness chips** and the **Block Profiler's likeness/bleed numbers** all use it.
 
 The defaults are **InsightFace** and **ArcFace**, the same as before this feature: a set of people needs nothing changed, and gets exactly the face crops, Look Filter scores and likeness scores it got before ([checked](#people-sets-are-unchanged)). InsightFace and ArcFace are built for human photographs, though. On a drawn or fursuit character they usually find no face at all (0 of 19 on our test set). For anime, furry and drawn datasets, switch both settings.
@@ -222,7 +222,7 @@ With the defaults (InsightFace + ArcFace), everything a set of people gets is wh
 | What | Compared | Differences |
 |---|---|---|
 | Face finder: `detect_all` and `detect_from_pil` (boxes, gender, gender score, area, centre) | 506 values | 0 |
-| Image Prep runs (*Resize + face close-ups* and *Face close-ups only*, × Largest / Male / Female): every file written, by SHA-256, and the Output Log | 258 | 0 (byte-identical) |
+| Image Prep runs (*Resize + close-up crops* and *Close-up crops only*, × Largest / Male / Female): every file written, by SHA-256, and the Output Log | 258 | 0 (byte-identical) |
 | *Test face detection on one photo* (faces, gender, chosen face, and the preview JPEG's bytes) | 309 | 0 |
 | Look Consistency Filter (scores, verdicts, median, cutoff, Auto-Suggest) and `fizgig_look_scores.json` | 144 | 0, except two added keys, `embedder` and `embedder_label` |
 | Samples gallery likeness (`likeness.json` scores, the real worker thread) | 19 | 0 |
@@ -246,7 +246,7 @@ The InsightFace path keeps every detail of the old one: one detection pass (the 
 
 ## Cropping something other than a face (Other…)
 
-Image Prep's **Face** dropdown has an **Other…** choice. Pick it and type what to crop in **Find this**
+Image Prep's **Crop to** dropdown has an **Other…** choice. Pick it and type what to crop in **Find this**
 (for example `paw, tail, hand`). Each comma-separated thing is searched on its own with SAM 3.1 (the model the
 Masks card downloads, 1.75 GB, once), with the same score cutoff the masks use (0.5).
 
