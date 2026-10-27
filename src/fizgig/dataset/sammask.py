@@ -19,6 +19,10 @@ REPO, FILE = "Comfy-Org/sam3.1", "checkpoints/sam3.1_multiplex_fp16.safetensors"
 NAME = os.path.basename(FILE)
 SIZE_GB = 1.75
 IDLE_UNLOAD = 120                         # seconds the loaded model waits for the next preview or run
+THRESHOLD = 0.5                           # how sure SAM must be of a find (photos, as always)
+DRAWN_THRESHOLD = 0.4                     # "My pictures are drawn or furry characters": a little looser
+PERSON_WORDS = ["person"]                 # Only my subject: what outlines each figure in a photo
+DRAWN_WORDS = ["anthro character", "furry character", "animal character"]   # ...and a drawn / furry character
 
 _lock = threading.Lock()
 _use = threading.Lock()                  # one preview or mask run on the model at a time
@@ -116,11 +120,13 @@ def unload():
             torch.cuda.empty_cache()
 
 
-def picture_mask(seg, img, include, exclude, subject=None, detector=None):
+def picture_mask(seg, img, include, exclude, subject=None, detector=None, drawn=False):
     """One picture's mask (H, W) float in [0, 1], and a note. subject / detector: as automask.make_folder - with
-    several people, only the person whose face matches the baselines is kept (SAM's own "person" outline of them)."""
+    several people, only the person whose face matches the baselines is kept (SAM's own outline of them: "person",
+    or DRAWN_WORDS for drawn / furry characters). drawn: DRAWN_THRESHOLD instead of THRESHOLD."""
     arr = np.asarray(img)
-    found = seg.masks(arr, list(dict.fromkeys(include + exclude)))
+    kw = {"threshold": DRAWN_THRESHOLD} if drawn else {}
+    found = seg.masks(arr, list(dict.fromkeys(include + exclude)), **kw)
     h, w = arr.shape[:2]
     m = np.zeros((h, w), bool)
     for f in found:
@@ -144,8 +150,10 @@ def picture_mask(seg, img, include, exclude, subject=None, detector=None):
                     [np.dot(v, b) / (np.linalg.norm(v) * np.linalg.norm(b) + 1e-8) for b in bases])))
             best = int(np.argmax(scores))
             x1, y1, x2, y2 = (int(v) for v in faces[best])
-            people = [f["mask"] for f in (seg.masks(arr, ["person"]) if "person" not in include + exclude else
-                                          [f for f in found if f["prompt"] == "person"])]
+            words = DRAWN_WORDS if drawn else PERSON_WORDS
+            missing = [w for w in words if w not in include + exclude]
+            people = [f["mask"] for f in ((seg.masks(arr, missing, **kw) if missing else []) +
+                                          [f for f in found if f["prompt"] in words])]
             # the person most over the matching face: their outline bounds the mask
             cover = [p[max(0, y1):max(0, y2), max(0, x1):max(0, x2)].mean() if p.size else 0 for p in people]
             if people and max(cover) > 0:
@@ -156,13 +164,14 @@ def picture_mask(seg, img, include, exclude, subject=None, detector=None):
     return m.astype(np.float32), note
 
 
-def make_folder(folder, include, exclude, path, *, overwrite=False, subject=None, detector=None, log=print):
+def make_folder(folder, include, exclude, path, *, overwrite=False, subject=None, detector=None, log=print,
+                drawn=False):
     """Write a mask for every picture in a folder, as automask.make_folder does. Returns its counts."""
     with _use:
-        return _make_folder(segmenter(path, log), folder, include, exclude, overwrite, subject, detector, log)
+        return _make_folder(segmenter(path, log), folder, include, exclude, overwrite, subject, detector, log, drawn)
 
 
-def _make_folder(seg, folder, include, exclude, overwrite, subject, detector, log):
+def _make_folder(seg, folder, include, exclude, overwrite, subject, detector, log, drawn=False):
     counts = {"made": 0, "kept": 0, "skipped": 0, "no_person": 0}
     pics = pictures(folder)
     for i, p in enumerate(pics, 1):
@@ -181,7 +190,7 @@ def _make_folder(seg, folder, include, exclude, overwrite, subject, detector, lo
             continue
         with _lock:
             _loaded["used"] = time.time()
-        m, note = picture_mask(seg, img, include, exclude, subject, detector)
+        m, note = picture_mask(seg, img, include, exclude, subject, detector, drawn)
         if float(m.mean()) < MIN_COVER:
             log(f"  {name}: none of {', '.join(include)} found{note} - no mask written (it trains as normal)\n")
             counts["no_person"] += 1
@@ -220,28 +229,33 @@ def preview_pictures(folder, shown=(), n=2):
     return left + fill, [os.path.basename(p) for p in fill]
 
 
-def preview(folder, include, exclude, path, shown=(), n=2, side=320):
+def preview(folder, include, exclude, path, shown=(), n=2, side=320, drawn=False):
     """n random pictures not previewed yet (preview_pictures), with their masks over them: ([(name, PIL picture,
     share masked), ...], the next round's names or None), nothing written."""
     if not _use.acquire(blocking=False):
         raise ValueError("Masks are being made now. Wait for them to finish.")
     try:
         pics, fresh = preview_pictures(folder, shown, n)
-        return _preview(segmenter(path), pics, include, exclude, side), fresh
+        return _preview(segmenter(path), pics, include, exclude, side, drawn), fresh
     finally:
         _use.release()
 
 
-def _preview(seg, pics, include, exclude, side):
+def _preview(seg, pics, include, exclude, side, drawn=False):
     out = []
     for p in pics:
         with Image.open(p) as im:
             img = upright(im).convert("RGB")
-        m, _ = picture_mask(seg, img, include, exclude)
-        a = np.asarray(img).astype(np.float32)
-        tint = np.array([90, 170, 255], np.float32)
-        shown = np.where(m[..., None] > 0.5, a * 0.45 + tint * 0.55, a * 0.3)
-        pic = Image.fromarray(shown.clip(0, 255).astype(np.uint8))
-        pic.thumbnail((side, side))
-        out.append((os.path.basename(p), pic, float(m.mean())))
+        m, _ = picture_mask(seg, img, include, exclude, drawn=drawn)
+        out.append(overlay(os.path.basename(p), img, m, side))
     return out
+
+
+def overlay(name, img, m, side=320):
+    """(name, the picture with its mask shown over it, share masked): blue is what the LoRA learns."""
+    a = np.asarray(img).astype(np.float32)
+    tint = np.array([90, 170, 255], np.float32)
+    shown = np.where(m[..., None] > 0.5, a * 0.45 + tint * 0.55, a * 0.3)
+    pic = Image.fromarray(shown.clip(0, 255).astype(np.uint8))
+    pic.thumbnail((side, side))
+    return name, pic, float(m.mean())

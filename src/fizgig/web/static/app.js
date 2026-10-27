@@ -4477,6 +4477,21 @@ const MASK_HINTS = {
   clothes: "For an outfit LoRA: the person wearing it and the background count far less.",
   not_faces: "For an outfit, a body or a style LoRA that shouldn't learn anyone's face.",
   background: "For a place or scene LoRA: the people in the pictures count far less."};
+// the character finder's kinds, for drawn and furry pictures (charmask.DRAWN_KINDS): the rest need a real person
+const MASK_HINTS_DRAWN = {
+  person: "For a character LoRA: the background counts far less.",
+  head: "For likeness only: the body and the background count far less. The head is found by the YOLO head model in the face settings.",
+  body_clothes: "For a body or outfit LoRA that shouldn't learn the head: the head and the background count far less.",
+  not_faces: "For an outfit, a body or a style LoRA that shouldn't learn anyone's head.",
+  background: "For a place or scene LoRA: the characters in the pictures count far less."};
+const MASK_WHO_HINTS = {
+  photo: "Google's person finder (16 MB): made for photos of real people, and it can tell hair, skin and clothes " +
+    "apart. It misses most drawn and furry characters.",
+  drawn: "A character finder made for drawings, anime and furry art (SkyTNT anime-seg, 176 MB); it also does well on " +
+    "most fursuit photos. It cuts out the whole character, fur, tail and all. It can't tell clothes from fur, so the " +
+    "clothes choices are off.",
+  auto: "Runs both finders on every picture: a photo of a real person gets the person finder's mask, anything else " +
+    "the character finder's. The log says which each picture got."};
 async function maskInfo() {
   if (!S.imageFolder) { $("maskInfo").textContent = ""; return; }
   // the editor follows the folder, and the masks a run just made
@@ -4488,37 +4503,67 @@ async function maskInfo() {
   if (!$("maskKinds").childElementCount) {
     const sv = S.prepSaved || {};
     $("maskSam").checked = !!sv.maskSam;
+    $("maskSamDrawn").checked = !!sv.maskSamDrawn;
     if (sv.maskSamInclude != null) $("maskSamInclude").value = sv.maskSamInclude;
     if (sv.maskSamExclude != null) $("maskSamExclude").value = sv.maskSamExclude;
     $("maskMethod").querySelectorAll("button").forEach((b) => b.addEventListener("click", () => {
       $("maskSam").checked = b.dataset.sam === "1"; maskSamSave(); maskShow(S.prep.maskOpts || r); }));
+    const who = (r.who || {})[sv.maskWho] ? sv.maskWho : "photo";
+    for (const [k, label] of Object.entries(r.who || {photo: "Real people (photos)"}))
+      $("maskWho").append(el("button", {class: "btn" + (k === who ? " active" : ""), "data-who": k, text: label,
+        onclick: (e) => { $("maskWho").querySelectorAll("button").forEach((x) => x.classList.toggle("active", x === e.currentTarget));
+          maskSamSave(); maskShow(S.prep.maskOpts || r); }}));
     $("maskSamInclude").addEventListener("change", maskSamSave);
     $("maskSamExclude").addEventListener("change", maskSamSave);
+    $("maskSamDrawn").addEventListener("change", () => { maskSamDrawnWords(S.prep.maskOpts || r); maskSamSave();
+      maskShow(S.prep.maskOpts || r); });
     $("maskSamPreview").addEventListener("click", maskSamPreview);
     const saved = (S.prepSaved || {}).maskKind || "person";
     for (const [k, label] of Object.entries(r.kinds)) {
       $("maskKinds").append(el("label", {class: "radio-label"}, el("input", {type: "radio", name: "maskKind", value: k,
         checked: k === saved, onchange: () => { S.prepSaved = {...(S.prepSaved || {}), maskKind: k};
-          api("/api/state", {prep: S.prepSaved}).catch(() => {}); maskShow(r); }}), " " + label),
-        el("div", {class: "field-hint radio-hint", text: MASK_HINTS[k] || ""}));
+          api("/api/state", {prep: S.prepSaved}).catch(() => {}); maskShow(r); }}), " ",
+        el("span", {class: "mask-kind-label", "data-kind": k, text: label})),
+        el("div", {class: "field-hint radio-hint", "data-kind-hint": k, text: MASK_HINTS[k] || ""}));
     }
   }
   S.prep.maskOpts = r;
   if (S.prep.opts) prepFindShow();                    // Find this follows whether SAM 3.1 is downloaded
   maskShow(r);
 }
-// SAM 3.1 on the masks card: words instead of the person finder's choices; its file is downloaded from here
+// Who's in your pictures (the quick finder): photo, drawn or auto (charmask.WHO)
+function maskWho() {
+  const b = $("maskWho").querySelector("button.active");
+  return b ? b.dataset.who : "photo";
+}
+// SAM's "drawn or furry" tick swaps the default "person" for words that find characters, and back
+function maskSamDrawnWords(r) {
+  const words = ((r.sam || {}).drawn_words || []).join(", "), box = $("maskSamInclude"), now = box.value.trim();
+  if ($("maskSamDrawn").checked && now.toLowerCase() === "person" && words) box.value = words;
+  else if (!$("maskSamDrawn").checked && words && now === words) box.value = "person";
+}
+// SAM 3.1 on the masks card: words instead of the quick finder's choices; its file is downloaded from here
 function maskSamShow(r) {
   const on = $("maskSam").checked, sam = r.sam || {}, f = sam.fetch || {};
   $("maskSamBox").style.display = on ? "" : "none";
   $("maskKinds").style.display = on ? "none" : "";
+  $("maskWhoBox").style.display = on ? "none" : "";
   $("maskMethod").querySelectorAll("button").forEach((b) => b.classList.toggle("active", (b.dataset.sam === "1") === on));
+  const who = maskWho();
   $("maskMethodHint").textContent = on ? "Meta's Segment Anything: type what to mask (\"person\", \"hair\", " +
     "\"the dog\") and it finds it, with sharper edges. A 1.75 GB download, once; it runs on the GPU." :
-    "Google's person finder: pick a part of the person below. Small and quick, on the CPU.";
+    "Finds the person or character for you, no typing: pick who's in your pictures, then what the masks show. " +
+    "Small and quick, on the CPU.";
+  $("maskWhoHint").textContent = MASK_WHO_HINTS[who] || "";
   $("maskRunHint").textContent = on ? "It runs on the GPU, a fraction of a second a picture once loaded (several " +
     "seconds a picture without a GPU). Make masks when nothing is training." :
+    who === "drawn" ? "It runs on the CPU, about half a second a picture." :
+    who === "auto" ? "It runs both finders on the CPU, under a second a picture. The first time, it downloads " +
+      "Google's person finder (16 MB)." :
     "It runs on the CPU, a fraction of a second a picture. The first time, it downloads Google's person finder (16 MB).";
+  $("maskSamDrawnHint").textContent = "SAM then keeps finds it's 40% sure of instead of 50%, and Only my subject " +
+    "outlines each figure as a character instead of a person. Ticked while Mask these says \"person\", it fills in \"" +
+    (sam.drawn_words || []).join(", ") + "\".";
   const st = $("maskSamState");
   st.style.display = on ? "" : "none";
   if (f.state === "running") {
@@ -4534,20 +4579,57 @@ function maskSamShow(r) {
         maskInfo(); }}), el("span", {class: "field-hint", text: f.state === "failed" ? ` The download failed: ${f.error}` :
         " Needed once, before the first masks."}));
   }
-  $("maskSamPreview").disabled = !on || !sam.path || !r.pictures || S.prep.running;
+  maskCharShow(r);
+  $("maskSamPreview").disabled = !!maskBlocked(r) || S.prep.running;
+}
+// the character finder's file (drawn and furry pictures): downloaded from here, like SAM 3.1
+function maskCharShow(r) {
+  const ch = r.chars || {}, f = ch.fetch || {}, st = $("maskCharState");
+  const want = !$("maskSam").checked && maskWho() !== "photo";
+  st.style.display = want ? "" : "none";
+  if (!want) return;
+  if (f.state === "running") {
+    st.replaceChildren(`Downloading the character finder: ${f.mb} of ${f.of} MB …`);
+    clearTimeout(S.prep.charTimer);
+    S.prep.charTimer = setTimeout(maskInfo, 2000);
+  } else if (ch.path) {
+    st.replaceChildren("The character finder is downloaded.");
+  } else {
+    st.replaceChildren(el("button", {class: "btn btn-primary",
+      text: f.state === "failed" ? "Try the download again" : `Download the character finder (${ch.mb || 176} MB)`,
+      onclick: async () => {
+        await api("/api/masks/char_fetch", {}).catch((e) => { st.textContent = e.message; });
+        maskInfo(); }}), el("span", {class: "field-hint", text: f.state === "failed" ? ` The download failed: ${f.error}` :
+        " Needed once, before the first masks."}));
+  }
+}
+// why Make masks / Preview can't go yet ("" when they can)
+function maskBlocked(r) {
+  if (!r.pictures) return "No pictures in the training folder.";
+  if ($("maskSam").checked) return (r.sam || {}).path ? "" : "Download SAM 3.1 first.";
+  const who = maskWho(), kind = (document.querySelector('input[name="maskKind"]:checked') || {}).value || "person";
+  if (who !== "drawn" && !r.available) return "Needs the ai-edge-litert package (run update_fizgig).";
+  if (who !== "photo" && !(r.chars || {}).path) return "Download the character finder first.";
+  if (who === "drawn" && !(r.drawn_kinds || {})[kind]) return "Pick one of the choices a character finder can make.";
+  return "";
 }
 async function maskSamPreview() {
-  $("maskSamPrevState").textContent = "Finding them (the first time loads SAM 3.1, a few seconds) …";
+  const sam = $("maskSam").checked;
+  $("maskSamPrevState").textContent = sam ? "Finding them (the first time loads SAM 3.1, a few seconds) …" :
+    "Finding them …";
   $("maskSamPreview").disabled = true;
   try {
     // two pictures not shown yet in this folder, until every one has been: then a fresh round
     if (S.prep.samShownFor !== S.imageFolder) { S.prep.samShown = []; S.prep.samShownFor = S.imageFolder; }
-    const r = await api("/api/masks/sam_preview", {folder: S.imageFolder, include: $("maskSamInclude").value,
-      exclude: $("maskSamExclude").value, shown: S.prep.samShown});
+    const kind = (document.querySelector('input[name="maskKind"]:checked') || {}).value || "person";
+    const r = sam ? await api("/api/masks/sam_preview", {folder: S.imageFolder, include: $("maskSamInclude").value,
+      exclude: $("maskSamExclude").value, drawn: $("maskSamDrawn").checked, shown: S.prep.samShown}) :
+      await api("/api/masks/quick_preview", {folder: S.imageFolder, kind, who: maskWho(), shown: S.prep.samShown});
     S.prep.samShown = r.fresh ? r.fresh : [...S.prep.samShown, ...r.pictures.map((p) => p.name)];
+    const by = (p) => !sam && maskWho() === "auto" ? (p.by === "photo" ? " · photo" : " · character") : "";
     $("maskSamPreviews").replaceChildren(...r.pictures.map((p) => el("figure", {class: "mask-sam-shot"},
       el("img", {src: p.src, alt: p.name}),
-      el("figcaption", {text: p.cover ? `${p.name} · ${Math.round(p.cover * 100)}% masked` : `${p.name} · nothing found`}))));
+      el("figcaption", {text: (p.cover ? `${p.name} · ${Math.round(p.cover * 100)}% masked` : `${p.name} · nothing found`) + by(p)}))));
     $("maskSamPrevState").textContent = "Blue is what the LoRA learns; nothing is saved yet. Press again for two " +
       `more (${Math.min(S.prep.samShown.length, r.of)} of ${r.of} seen).`;
   } catch (e) { $("maskSamPrevState").textContent = e.message; }
@@ -4555,27 +4637,50 @@ async function maskSamPreview() {
 }
 function maskSamSave() {
   S.prepSaved = {...(S.prepSaved || {}), maskSam: $("maskSam").checked, maskSamInclude: $("maskSamInclude").value,
-    maskSamExclude: $("maskSamExclude").value};
+    maskSamExclude: $("maskSamExclude").value, maskSamDrawn: $("maskSamDrawn").checked, maskWho: maskWho()};
   api("/api/state", {prep: S.prepSaved}).catch(() => {});
 }
+// the kinds follow Who's in your pictures: a character's names and hints, the clothes ones off for drawn pictures
+function maskKindsShow(r) {
+  const who = maskWho(), drawn = r.drawn_kinds || {};
+  document.querySelectorAll('input[name="maskKind"]').forEach((i) => {
+    const k = i.value, ok = who !== "drawn" || !!drawn[k];
+    i.disabled = !ok;
+    const lab = document.querySelector(`.mask-kind-label[data-kind="${k}"]`);
+    const hint = document.querySelector(`[data-kind-hint="${k}"]`);
+    if (lab) lab.textContent = who === "drawn" && drawn[k] ? drawn[k] : r.kinds[k];
+    if (hint) hint.textContent = who === "drawn" ? (drawn[k] ? MASK_HINTS_DRAWN[k] : "Photos of real people only: " +
+      "the character finder can't tell clothes from fur. SAM 3.1 from words can (e.g. \"shirt, jacket\").") :
+      (MASK_HINTS[k] || "") + (who === "auto" && !drawn[k] ? " Drawn and furry pictures get no mask with this one." : "");
+  });
+  const cur = document.querySelector('input[name="maskKind"]:checked');
+  if (cur && cur.disabled) {
+    const p = document.querySelector('input[name="maskKind"][value="person"]');
+    if (p) { p.checked = true; S.prepSaved = {...(S.prepSaved || {}), maskKind: "person"}; }
+  }
+}
 function maskShow(r) {
+  if (!$("maskSam").checked) maskKindsShow(r);
   const kind = (document.querySelector('input[name="maskKind"]:checked') || {}).value || "person";
   maskSamShow(r);
-  const sam = $("maskSam").checked;
-  $("maskInfo").textContent = !r.available && !sam ? "Making masks needs an update: run update_fizgig to add its one new " +
+  const sam = $("maskSam").checked, who = maskWho();
+  $("maskInfo").textContent = !r.available && !sam && who !== "drawn" ? "Making masks needs an update: run update_fizgig to add its one new " +
     "package (ai-edge-litert)." : r.pictures ? `${r.with_mask} of ${r.pictures} pictures have a mask.` : "";
   const subj = $("maskSubject");
   subj.disabled = !r.baselines || !r.faces || (!sam && (kind === "not_faces" || kind === "background"));
   if (subj.disabled) subj.checked = false;
-  $("maskSubjectHint").textContent = sam ? (!r.faces ? "Needs face detection, which isn't installed here (run install_fizgig.py)." :
+  const chars = (sam ? $("maskSamDrawn").checked : who !== "photo") ? " For characters, also set the face finder and " +
+    "look match to Anime/furry/drawn (under 1 · What to do, Anime/furry/drawn characters)." : "";
+  $("maskSubjectHint").textContent = (sam ? (!r.faces ? "Needs face detection, which isn't installed here (run install_fizgig.py)." :
     r.baselines ? "Finds your subject by their face, with the Look Filter's 3 baselines, and keeps only what's on them." :
     "Needs the Look Filter's 3 baselines: choose them and scan the folder (the last card on this tab), then come back.") :
     kind === "not_faces" ? "Not for Everything but the faces: every face is left out." :
     kind === "background" ? "Not for Just the background: every person is left out." :
     !r.faces ? "Needs face detection, which isn't installed here (run install_fizgig.py)." :
     r.baselines ? "Finds your subject by their face, with the Look Filter's 3 baselines; everyone else counts as background." :
-    "Needs the Look Filter's 3 baselines: choose them and scan the folder (the last card on this tab), then come back.";
-  $("maskRun").disabled = (sam ? !(r.sam || {}).path : !r.available) || !r.pictures || S.prep.running;
+    "Needs the Look Filter's 3 baselines: choose them and scan the folder (the last card on this tab), then come back.") +
+    (r.faces && r.baselines && !subj.disabled ? chars : "");
+  $("maskRun").disabled = !!maskBlocked(r) || S.prep.running;
 }
 async function maskRun() {
   if (!S.imageFolder) { $("maskState").textContent = "Choose the training folder on the Start tab first."; return; }
@@ -4583,7 +4688,7 @@ async function maskRun() {
   try {
     await api("/api/masks/make", {folder: S.imageFolder, kind, subject_only: $("maskSubject").checked,
       sam: $("maskSam").checked, include: $("maskSamInclude").value, exclude: $("maskSamExclude").value,
-      overwrite: $("maskReplace").checked});
+      drawn: $("maskSamDrawn").checked, who: maskWho(), overwrite: $("maskReplace").checked});
     S.prep.masking = true;
     $("maskLog").textContent = ""; $("maskLog").style.display = "";
     $("prepLog").textContent = ""; S.prep.logSize = 0;

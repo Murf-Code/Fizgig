@@ -448,10 +448,40 @@ def look_baselines(folder):
     return paths if len(paths) == 3 and all(os.path.isfile(p) for p in paths) else []
 
 
-def start_masks(folder, kind, subject_only=False, overwrite=False, sam=None):
+def quick_check(kind, who):
+    """Why the quick finder can't make these masks here (a message), or "" when it can (who: charmask.WHO)."""
+    from fizgig.dataset import automask, charmask
+    from fizgig.user_data import MODELS_DIR
+    if who not in charmask.WHO:
+        return "Pick who's in your pictures."
+    if kind not in automask.KINDS:
+        return "Pick what the masks should show."
+    if who == "drawn" and kind not in charmask.DRAWN_KINDS:
+        return "That one needs photos of real people: the character finder can't tell clothes from fur."
+    if who != "drawn" and not automask.available():
+        return "Making masks needs the ai-edge-litert package: run the updater (update_fizgig) to add it."
+    if who != "photo" and not charmask.available():
+        return "The character finder needs onnxruntime: run the updater (update_fizgig) to add it."
+    if who != "photo" and not charmask.find_model(MODELS_DIR):
+        return "The character finder isn't here yet: press Download on the masks card."
+    return ""
+
+
+def _head_finder():
+    """The head finder for a drawn character's head kinds: the face settings' YOLO model (Fdetailer when it's there,
+    else deepghs' anime head model, downloaded on first use)."""
+    from fizgig.face_utils import FaceDetector
+    det = FaceDetector(backend="yolo")
+    if not det.available:
+        raise ValueError("The head finder (a YOLO model) can't run here: see the face settings on this tab.")
+    return det
+
+
+def start_masks(folder, kind, subject_only=False, overwrite=False, sam=None, who="photo"):
     """Masks for every picture in the training folder (dataset/automask.py), as a prep run: the same log and state.
-    sam: {"path", "include", "exclude"} to make them with SAM 3.1 from words instead (dataset/sammask.py)."""
-    from fizgig.dataset import automask
+    sam: {"path", "include", "exclude", "drawn"} to make them with SAM 3.1 from words instead (dataset/sammask.py).
+    who: the quick finder's "Who's in your pictures" (dataset/charmask.py WHO)."""
+    from fizgig.dataset import automask, charmask
     from fizgig.user_data import MODELS_DIR
     if not folder or not os.path.isdir(folder):
         raise ValueError("Choose the training folder on the Start tab first.")
@@ -460,10 +490,10 @@ def start_masks(folder, kind, subject_only=False, overwrite=False, sam=None):
             raise ValueError("SAM 3.1 isn't here yet: press Download on the masks card.")
         if not sam.get("include"):
             raise ValueError("Type what the masks should show in Mask these (e.g. person).")
-    elif kind not in automask.KINDS:
-        raise ValueError("Pick what the masks should show.")
-    elif not automask.available():
-        raise ValueError("Making masks needs the ai-edge-litert package: run the updater (update_fizgig) to add it.")
+    else:
+        why = quick_check(kind, who)
+        if why:
+            raise ValueError(why)
     bases = look_baselines(folder) if subject_only else []
     if subject_only and not bases:
         raise ValueError("Keeping only your subject needs the Look Filter's 3 baselines: choose them and scan the "
@@ -480,7 +510,11 @@ def start_masks(folder, kind, subject_only=False, overwrite=False, sam=None):
     def work():
         try:
             what = (f"with SAM 3.1, {', '.join(sam['include'])}"
-                    + (f" without {', '.join(sam['exclude'])}" if sam["exclude"] else "")) if sam is not None                 else automask.KINDS[kind].lower()
+                    + (f" without {', '.join(sam['exclude'])}" if sam["exclude"] else "")
+                    + (" (drawn or furry characters)" if sam.get("drawn") else "")) if sam is not None \
+                else (charmask.KIND_LABELS_DRAWN[kind] if who == "drawn" else automask.KINDS[kind]).lower() \
+                + {"photo": "", "drawn": ", with the character finder",
+                   "auto": ", photo or drawn decided for each picture"}[who]
             _log(f"Making masks: {what}"
                  + (" - only your subject where there are several people" if subject_only else "")
                  + (" (replacing masks already there)" if overwrite else " (masks already there are kept)") + "\n\n")
@@ -494,10 +528,18 @@ def start_masks(folder, kind, subject_only=False, overwrite=False, sam=None):
             if sam is not None:
                 from fizgig.dataset import sammask
                 c = sammask.make_folder(folder, sam["include"], sam["exclude"], sam["path"], overwrite=overwrite,
-                                        subject=subject, detector=det, log=_log)
-            else:
+                                        subject=subject, detector=det, log=_log, drawn=bool(sam.get("drawn")))
+            elif who == "photo":
                 c = automask.make_folder(folder, kind, MODELS_DIR, overwrite=overwrite, subject=subject, detector=det,
                                          log=_log)
+            else:
+                chars = charmask.CharacterFinder(charmask.find_model(MODELS_DIR))
+                heads = _head_finder() if kind in ("head", "body_clothes", "not_faces") else None
+                try:
+                    c = automask.make_folder(folder, kind, MODELS_DIR, overwrite=overwrite, subject=subject,
+                                             detector=det, log=_log, who=who, characters=chars, heads=heads)
+                finally:
+                    chars.close()
             _log(f"\nDone: {c['made']} mask(s) written"
                  + (f", {c['kept']} already there kept" if c["kept"] else "")
                  + (f", {c['no_person']} picture(s) with nothing to mask" if c["no_person"] else "")
@@ -513,6 +555,40 @@ def start_masks(folder, kind, subject_only=False, overwrite=False, sam=None):
             _job["state"] = end
     threading.Thread(target=work, daemon=True).start()
     return {"ok": True}
+
+
+def quick_preview(folder, kind, who, shown=()):
+    """The quick finder's preview: 2 random pictures not shown yet with their masks over them, nothing written
+    (sammask.preview_pictures picks them). Returns ([(name, PIL picture, share masked, "photo" / "character")],
+    the next round's names or None)."""
+    from fizgig.dataset import automask, charmask, sammask
+    from fizgig.user_data import MODELS_DIR
+    import numpy as np
+    from PIL import Image
+    why = quick_check(kind, who)
+    if why:
+        raise ValueError(why)
+    pics, fresh = sammask.preview_pictures(folder, shown)
+    seg = automask.Segmenter(automask.ensure_model(MODELS_DIR, lambda m: None)) if who != "drawn" else None
+    chars = charmask.CharacterFinder(charmask.find_model(MODELS_DIR)) if who != "photo" else None
+    heads = _head_finder() if who != "photo" and kind in ("head", "body_clothes", "not_faces") else None
+    out = []
+    for p in pics:
+        with Image.open(p) as im:
+            img = upright(im).convert("RGB")
+        cls = seg.classes(img) if seg is not None else None
+        char = chars.mask(img) if chars is not None else None
+        drawn = who == "drawn" or (who == "auto" and not charmask.looks_like_photo(cls, char))
+        if not drawn:
+            m = automask.mask_from(cls, kind)
+        elif kind not in charmask.DRAWN_KINDS:
+            m = np.zeros(char.shape, np.float32)
+        else:
+            hr = (charmask.head_region(char.shape, [f.bbox for f in (heads.detect_from_pil(img) or [])])
+                  if heads is not None else None)
+            m = charmask.mask_from(char, kind, hr)
+        out.append((*sammask.overlay(os.path.basename(p), img, m), "character" if drawn else "photo"))
+    return out, fresh
 
 
 def _open_rgb(path):

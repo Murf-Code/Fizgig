@@ -37,6 +37,20 @@ Masks already in the folder are kept unless you tick **Replace masks already the
 
 Make masks after resizing and face crops. A crop made later carries its mask with it, but this way the masks you check are the final ones.
 
+### …make masks of drawn, anime or furry characters?
+
+Choose **Quick finder**, then **Who's in your pictures**:
+
+- **Real people (photos)**: Google's person finder, the default and the same as always. It can tell hair, skin and clothes apart, but it misses most drawn and furry characters.
+- **Drawn or furry characters**: a character finder made for drawings, anime and furry art (SkyTNT anime-seg, Apache-2.0). It also does well on most fursuit photos. It cuts out the whole character, fur, tail and all. Press **Download the character finder (176 MB)** once first.
+- **A mix: decide for each picture**: runs both on every picture. A photo of a real person gets the person finder's mask, anything else the character finder's; the log says which each picture got.
+
+For a character, the choices are **The whole character**, **Just the head**, **The character without the head**, **Everything but the heads** and **Just the background**. The head comes from the YOLO head model in the face settings (Image Prep → 1 · What to do → Anime/furry/drawn characters: Fdetailer when it's there, otherwise deepghs' anime head model, downloaded the first time); head masks follow a box, so their bottom edge is a straight line. The clothes choices are off for drawn pictures: the finder can't tell clothes from fur. Use SAM 3.1 from words for those (`shirt, jacket`).
+
+**Preview on 2 random pictures** works with the quick finder too. For **Only my subject**, also set the face finder and look match to Anime/furry/drawn.
+
+With **SAM 3.1: from words**, tick **My pictures are drawn or furry characters**: SAM then keeps finds it's 40% sure of instead of 50%, and Only my subject outlines each figure with `anthro character, furry character, animal character` instead of `person`. Ticked while Mask these says `person`, it fills those words in.
+
 ### …make masks of anything, by naming it (SAM 3.1)?
 
 Tick **Use SAM 3.1: masks from words** on the same card. Instead of the list above you type what the masks show:

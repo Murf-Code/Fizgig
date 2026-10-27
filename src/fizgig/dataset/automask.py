@@ -16,7 +16,11 @@ baselines (ArcFace, as the filter scores them): the person outline is split into
 nearest it inside its own connected shape - and the figure around the best-matching face is kept.
 
 Masks are written beside their pictures as photo-masklabel.png (dataset/masks.py), never over an existing one unless
-asked: a mask someone painted by hand stays."""
+asked: a mask someone painted by hand stays.
+
+The segmenter only knows real people. For drawn, anime and furry pictures, make_folder's who="drawn" uses
+charmask.py's character finder instead, and who="auto" picks one of the two per picture; who="photo" (the default)
+runs exactly as before."""
 import hashlib
 import os
 import urllib.request
@@ -162,11 +166,15 @@ def pictures(folder):
                   if os.path.splitext(low)[1] in _IMAGE_EXTS and not is_mask_file(low))
 
 
-def make_folder(folder, kind, models_dir, *, overwrite=False, subject=None, detector=None, log=print):
+def make_folder(folder, kind, models_dir, *, overwrite=False, subject=None, detector=None, log=print,
+                who="photo", characters=None, heads=None):
     """Write a mask for every picture in a folder. subject: (embed(PIL crop) -> vector or None, baseline vectors) to
     keep only the matching person in pictures with several faces; detector: a face finder (detect_from_pil).
-    Returns {"made", "kept", "skipped", "no_person"}."""
-    seg = Segmenter(ensure_model(models_dir, log))
+    who: "photo" (the person finder, as always), "drawn" (charmask's character finder, `characters`) or "auto"
+    (both: charmask.looks_like_photo picks per picture); heads: a YOLO head finder (detect_from_pil) for a drawn
+    character's head kinds. Returns {"made", "kept", "skipped", "no_person"}."""
+    from fizgig.dataset import charmask
+    seg = Segmenter(ensure_model(models_dir, log)) if who != "drawn" else None
     counts = {"made": 0, "kept": 0, "skipped": 0, "no_person": 0}
     pics = pictures(folder)
     for i, p in enumerate(pics, 1):
@@ -183,14 +191,34 @@ def make_folder(folder, kind, models_dir, *, overwrite=False, subject=None, dete
             log(f"  {name}: can't be read ({e}) - skipped\n")
             counts["skipped"] += 1
             continue
-        cls = seg.classes(img)
-        person = mask_from(cls, "person")
-        if float(person.mean()) < 0.01:
-            log(f"  {name}: no person found - no mask written (it trains as normal)\n")
-            counts["no_person"] += 1
-            continue
-        m = mask_from(cls, kind)
-        note = ""
+        cls = seg.classes(img) if seg is not None else None
+        drawn = who == "drawn"
+        if who != "photo":
+            char = characters.mask(img)
+            drawn = drawn or not charmask.looks_like_photo(cls, char)
+        if drawn:
+            person = char
+            if float(person.mean()) < 0.01:
+                log(f"  {name}: no character found - no mask written (it trains as normal)\n")
+                counts["no_person"] += 1
+                continue
+            if kind not in charmask.DRAWN_KINDS:
+                log(f"  {name}: a drawn or furry character - can't tell clothes from fur, no mask written\n")
+                counts["no_person"] += 1
+                continue
+            hr = None
+            if kind in ("head", "body_clothes", "not_faces"):
+                hr = charmask.head_region(person.shape, [f.bbox for f in (heads.detect_from_pil(img) or [])])
+            m = charmask.mask_from(person, kind, hr)
+            note = " (character)" if who == "auto" else ""
+        else:
+            person = mask_from(cls, "person")
+            if float(person.mean()) < 0.01:
+                log(f"  {name}: no person found - no mask written (it trains as normal)\n")
+                counts["no_person"] += 1
+                continue
+            m = mask_from(cls, kind)
+            note = " (photo)" if who == "auto" else ""
         if subject is not None and detector is not None and kind not in ("not_faces", "background"):
             faces = [f.bbox for f in (detector.detect_from_pil(img) or [])]
             if len(faces) > 1:
@@ -205,7 +233,7 @@ def make_folder(folder, kind, models_dir, *, overwrite=False, subject=None, dete
                                                                          np.linalg.norm(b) + 1e-8) for b in bases])))
                 best = int(np.argmax(scores))
                 m = keep_figure(m, person, faces, best)
-                note = f" (kept 1 of {len(faces)} people: the best match, {scores[best] * 100:.0f}%)"
+                note += f" (kept 1 of {len(faces)} people: the best match, {scores[best] * 100:.0f}%)"
         if float(m.mean()) < MIN_COVER:
             log(f"  {name}: nothing of that kind found{note} - no mask written (it trains as normal)\n")
             counts["no_person"] += 1
