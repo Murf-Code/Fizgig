@@ -3108,10 +3108,8 @@ class Handler(BaseHTTPRequestHandler):
                 train = float(g("train_mp")) if g("train_mp") else None
             except ValueError:
                 mp, train = 1.0, None
-            find = ", ".join(sammask_words(g("find"))) if _prep.is_other(g("face")) else ""
-            if _prep.class_of(g("face")):              # one of the YOLO face model's other classes: "penis"
-                from fizgig.face_utils import class_label
-                find = class_label(_prep.class_of(g("face"))).lower()
+            face, find = _prep.migrate_target(g("face"), g("find"))   # an older build's "YOLO class: penis": Other…
+            find = ", ".join(sammask_words(find)) if _prep.is_other(face) else ""
             r = _prep.summary(folder, g("mode", _prep.MODES[0]), g("replace") == "1", mp, train, find)
             try:
                 names = os.listdir(folder)
@@ -4274,7 +4272,7 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/prep/test":              # Test face detection on one photo (writes nothing)
                 try:
                     words, sam_path = prep_jobs.find_words(str(b.get("face") or ""), str(b.get("find") or ""))
-                    if words:                          # Other… / a YOLO class: found with the YOLO model or SAM 3.1
+                    if words:                          # Other…: found with the YOLO model or SAM 3.1
                         return self.json(prep_jobs.test_things(str(b.get("path") or ""), words, sam_path))
                     return self.json(prep_jobs.test_faces(str(b.get("path") or ""), str(b.get("face") or "")))
                 except ValueError as e:

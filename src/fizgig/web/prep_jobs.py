@@ -90,8 +90,8 @@ def face_settings():
 
 
 def _class_info():
-    """face_settings()'s YOLO part: Crop to's extra classes, and every class name (Find this phrases the model finds
-    itself, so SAM 3.1 isn't needed for them)."""
+    """face_settings()'s YOLO part: the model's classes besides the face one, and every class name (Find this phrases
+    the model finds itself, so SAM 3.1 isn't needed for them)."""
     b = _yolo()
     try:
         names = list(b.all_classes().values()) if b is not None else []
@@ -155,8 +155,8 @@ def _yolo():
 
 
 def yolo_classes(backend=None):
-    """Crop to's extra choices: the YOLO face model's other classes ([{value, label, name}]; [] for a face-only model,
-    or when the face finder isn't the YOLO one)."""
+    """The YOLO face model's other classes ([{label, name}]; [] for a face-only model, or when the face finder isn't
+    the YOLO one). Other… sends a Find this phrase naming one of them to the YOLO model."""
     from fizgig import face_utils as F
     b = backend if backend is not None else _yolo()
     if b is None:
@@ -165,7 +165,7 @@ def yolo_classes(backend=None):
         extra = b.extra_classes()
     except Exception:
         return []
-    return [{"value": prep.class_target(n), "label": F.class_label(n), "name": n} for _k, n in extra.items()]
+    return [{"label": F.class_label(n), "name": n} for _k, n in extra.items()]
 
 
 def yolo_words(words, backend=None):
@@ -185,24 +185,18 @@ def yolo_words(words, backend=None):
 
 
 def find_words(face_label, find, backend=None):
-    """With the Face dropdown on Other… or one of the YOLO model's classes: (the phrases to find, the SAM 3.1 file),
-    checked - ValueError with a plain note when the box is empty, or SAM 3.1 is needed (a phrase that isn't one of
-    the YOLO model's classes) and isn't downloaded. The SAM file is "" when the YOLO model finds every phrase.
-    ([], "") for a face choice."""
+    """With the Face dropdown on Other…: (the phrases to find, the SAM 3.1 file), checked - ValueError with a plain
+    note when the box is empty, or SAM 3.1 is needed (a phrase that isn't one of the YOLO face model's classes) and
+    isn't downloaded. The SAM file is "" when the YOLO model finds every phrase. An older build's "YOLO class: <name>"
+    is Other… finding <name>. ([], "") for a face choice."""
     from fizgig.dataset import sammask
     from fizgig.user_data import MODELS_DIR
-    cls = prep.class_of(face_label)
-    if cls:
-        b = backend if backend is not None else _yolo()
-        if not yolo_words([cls], b):
-            raise ValueError(f"The face model doesn't find {cls}: pick the YOLO face model that has it under "
-                             "Anime/furry/drawn characters, or pick another Crop to.")
-        return [cls], ""
+    face_label, find = prep.migrate_target(face_label, find)
     if not prep.is_other(face_label):
         return [], ""
     words = sammask.split_words(find)
     if not words:
-        raise ValueError("Type what to find in Find this (e.g. paw, tail, hand).")
+        raise ValueError("Type what to find in Find this (e.g. hat, tail, hand).")
     by_yolo = yolo_words(words, backend)
     if all(w in by_yolo for w in words):
         return words, ""
@@ -276,6 +270,7 @@ def _tagger(folder, name=None):
 
 
 def start(folder, mode, mp, face_label, padding, replace, find="", captions=None):
+    face_label, find = prep.migrate_target(face_label, find)    # an older build's "YOLO class: penis": Other…
     if not folder or not os.path.isdir(folder):
         raise ValueError("Choose the training folder on the Start tab first.")
     if mode not in prep.MODES:
@@ -317,7 +312,7 @@ def start(folder, mode, mp, face_label, padding, replace, find="", captions=None
 
 
 def _things(words, sam_path, mode, folder, mp, face_label, padding, replace, caps=None):
-    """A prep run with Other… or a YOLO class: the YOLO face model finds its classes, SAM 3.1 the other words; SAM is
+    """A prep run with Other…: the YOLO face model finds the phrases it has a class for, SAM 3.1 the other words; SAM is
     freed from memory when the run ends."""
     from fizgig.dataset import sammask
     if not sam_path:                                   # the YOLO model finds it all: SAM 3.1 isn't touched
@@ -335,7 +330,7 @@ def _things(words, sam_path, mode, folder, mp, face_label, padding, replace, cap
 
 
 def test_things(path, words, sam_path):
-    """Test Find this (or a YOLO class) on one photo: the picture with what was found boxed and labelled with its
+    """Test Find this on one photo: the picture with what was found boxed and labelled with its
     name and score (the one each phrase crops to green), writes nothing."""
     from PIL import Image, ImageDraw
     from fizgig.dataset import sammask
