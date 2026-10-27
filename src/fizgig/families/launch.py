@@ -554,40 +554,63 @@ def _media_count(folder):
         return 0
 
 
-# Folders Fizgig itself makes inside a training folder: never trained on as sub-folders
-OWN_SUBFOLDERS = {"excluded_by_look", "originals"}
+# Folders Fizgig itself makes inside a training folder: never trained on as sub-folders. Image Prep's Keep them safe
+# (originals, then originals_2, _3... on later runs; crop tag trimming backs captions up there too), Exclude by look,
+# and the desktop's Remove. Matched in any case.
+OWN_SUBFOLDERS = {"excluded_by_look", "originals", "removed"}
+_OWN_NUMBERED = re.compile(r"originals(_\d+)?", re.IGNORECASE)
+
+
+def is_own_subfolder(name):
+    """A folder Fizgig made inside a training folder (originals, originals_2, excluded_by_look, removed)."""
+    n = os.path.basename(str(name).rstrip("\\/")).lower()
+    return n in OWN_SUBFOLDERS or bool(_OWN_NUMBERED.fullmatch(n))
 
 
 def subfolders_on(desc, st):
-    """Also train on its sub-folders (the Training tab tick, off by default): a plain LoRA or a fine-tune - not with
+    """Include sub-folders (the Start tab tick under the training folder, off by default): a plain LoRA or a fine-tune - not with
     Subjects 2-4, DOP or Fizgig LoRA Isolation (one folder per subject), nor an edit or a slider (paired files)."""
     return bool(st.get("subfolders")) and not (st.get("multiconcept") or dop_on(desc, st) or multi_person_on(desc, st)
                                                or edit_on(desc, st) or slider_on(desc, st))
 
 
-def subfolders(folder, skip=()):
+def subfolders(folder, skip=(), skipped=None):
     """[(relative path with "/", folder)] of every sub-folder at any depth holding training items (photos, clips,
-    songs), sorted: Fizgig's own (excluded_by_look, originals), hidden ones, and any folder in `skip` (the output,
-    cache or regularisation folder when it sits inside), with everything under them, are left out."""
+    songs), sorted: Fizgig's own (originals, originals_2..., excluded_by_look, removed), hidden ones, and any folder in
+    `skip` (the output, cache or regularisation folder when it sits inside), with everything under them, are left out.
+    skipped: a list that gets the relative paths of the Fizgig folders left out (for the run's log)."""
     if not folder or not os.path.isdir(folder):
         return []
     norm = lambda f: os.path.normcase(os.path.abspath(f)).rstrip("\\/")
     skip = {norm(f) for f in skip if f}
     out = []
     for root, dirs, _files in os.walk(folder):
-        dirs[:] = sorted(d for d in dirs if not d.startswith(".") and d.lower() not in OWN_SUBFOLDERS
+        if skipped is not None:
+            skipped += sorted(os.path.relpath(os.path.join(root, d), folder).replace("\\", "/")
+                              for d in dirs if not d.startswith(".") and is_own_subfolder(d))
+        dirs[:] = sorted(d for d in dirs if not d.startswith(".") and not is_own_subfolder(d)
                          and norm(os.path.join(root, d)) not in skip)
         if norm(root) != norm(folder) and _media_count(root):
             out.append((os.path.relpath(root, folder).replace("\\", "/"), root))
     return out
 
 
-def run_subfolders(desc, st):
+def run_subfolders(desc, st, skipped=None):
     """The run's sub-folders (subfolders), or [] when the tick is off or doesn't apply."""
     if not subfolders_on(desc, st):
         return []
     return subfolders(_s(st.get("image_folder")), (_s(st.get("LORA_OUTPUT_DIR")), _s(st.get("cache_root")),
-                                                   ft_reg_dir(desc, st)))
+                                                   ft_reg_dir(desc, st)), skipped)
+
+
+def own_skipped_line(desc, st):
+    """The run log's one line naming the Fizgig folders the sub-folder tick left out, or "" (none, or tick off)."""
+    skipped = []
+    run_subfolders(desc, st, skipped)
+    if not skipped:
+        return ""
+    return "[sub-folders] Not trained (Fizgig's own folders): " + ", ".join(skipped[:6]) + (
+        f" and {len(skipped) - 6} more" if len(skipped) > 6 else "")
 
 
 def _balance_repeats(folders):
@@ -1311,7 +1334,7 @@ def dataset_toml(desc, inputs):
         lines.append(f'cache_directory = "{cache_dir_for(root, folder).replace(chr(92), "/")}"')
     if subs and not _media_count(folder):     # everything is in the sub-folders: the training folder has no block
         del lines[head:]
-    for rel, f in subs:                  # Also train on its sub-folders: each its own block and cache folder
+    for rel, f in subs:                  # Include sub-folders: each its own block and cache folder
         lines += ["", "[[datasets]]", f'image_directory = "{f.replace(chr(92), "/")}"',
                   f'item_prefix = "{_toml_str(rel + "/")}"']
         lines += trig((inputs.get("recaption_triggers") or {}).get(rel + "/"))
@@ -1589,7 +1612,7 @@ def start_problems(desc, inputs):
         out += checks.training_folder(_s(v.get("image_folder")), _s(v.get("caption_ext", ".txt")),
                                       check_captions=not slider_on(desc, inputs, "prompts"), media_exts=exts)
         out += clip_problems(desc, _s(v.get("image_folder")))
-    for rel, f in subs:                  # Also train on its sub-folders: each one's captions and clips too
+    for rel, f in subs:                  # Include sub-folders: each one's captions and clips too
         out += checks.training_folder(f, _s(v.get("caption_ext", ".txt")), media_exts=exts,
                                       label=f"the sub-folder {rel}")
         out += clip_problems(desc, f)
@@ -1677,6 +1700,9 @@ def plan(desc, inputs):
     if p.problems:
         return p                        # nothing to write or run
     p.files.append((inputs["DATASET_CONFIG"], p.dataset_toml))
+    own = own_skipped_line(desc, inputs)
+    if own:
+        p.console.append(own)
     train = train_command(desc, inputs, p)
     people = [(f, s, w) for f, s, _why, w in multi_person_subjects(desc, inputs) if s and s["kind"] == "person"] \
         if multi_person_on(desc, inputs) else []

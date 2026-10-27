@@ -1,4 +1,4 @@
-"""Also train on its sub-folders (the Training tab tick, off by default): each sub-folder becomes its own dataset
+"""Include sub-folders (the Start tab tick under the training folder, off by default): each sub-folder becomes its own dataset
 block, and the loss watch keys every picture by its folder - so auto-recaption, exclusions and the per-image view
 find the right file, and same-named pictures in two folders stay apart."""
 import json

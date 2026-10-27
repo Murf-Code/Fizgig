@@ -3492,7 +3492,7 @@ def _move_extras(values):
 
 
 def _run_subfolders(folder, values):
-    """[(relative path, folder)] of the run's sub-folders when it trains them (Also train on its sub-folders)."""
+    """[(relative path, folder)] of the run's sub-folders when it trains them (Include sub-folders)."""
     if not (values or {}).get("TRAIN_SUBFOLDERS"):
         return []
     from fizgig.families import launch

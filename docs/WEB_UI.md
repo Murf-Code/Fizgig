@@ -20,7 +20,7 @@ With your RunPod API key (RunPod > Settings > API Keys, pasted into the tab), yo
 
 <p align="center"><img src="assets/screenshots/rent_a_pod.png" alt="Rent a pod: RunPod's free cards, cheapest per run first, each with Deploy" width="800"></p>
 
-On a pod in the Fizgig window, the Start tab's **From this computer** card lists the training folders on your own computer: **Send to this pod** uploads one, captions and all, and makes it the training folder (its sub-folders go too when **Also train on its sub-folders** is ticked). A dropped connection carries on where it stopped, and sending it again only sends what isn't there yet. (In a browser tab the card isn't there: use Upload a folder.)
+On a pod in the Fizgig window, the Start tab's **From this computer** card lists the training folders on your own computer: **Send to this pod** uploads one, captions and all, and makes it the training folder (its sub-folders go too when **Include sub-folders** is ticked). A dropped connection carries on where it stopped, and sending it again only sends what isn't there yet. (In a browser tab the card isn't there: use Upload a folder.)
 
 On a pod, the sidebar's **File manager** button opens the pod's file manager (port 8080) in a new tab: drag folders in, take big files out, anywhere in `/workspace`. Log in as `admin` with the pod's password; if it refused that password as too common, the button's tooltip says what to use instead. The Start tab's upload card and Runs & outputs link to it too.
 
@@ -138,7 +138,7 @@ Some models are gated: their makers require each user to accept the licence on H
 
 ## Uploading training data
 
-The training folder on the Start tab is a folder on the machine running Fizgig. When your training data is on the computer you're browsing from, use **Upload a training folder** on the Start tab: drop your folder onto it (or click **Upload a folder…**), and it uploads everything inside, subfolders included, into a new folder with the same name. The files of its subfolders all go into that one folder, unless **Also train on its sub-folders** is ticked on the Training tab: then the subfolders are kept as they are. You can also drop or choose single files, after typing a name for the new folder. When the upload finishes, the new folder becomes the training folder.
+The training folder on the Start tab is a folder on the machine running Fizgig. When your training data is on the computer you're browsing from, use **Upload a training folder** on the Start tab: drop your folder onto it (or click **Upload a folder…**), and it uploads everything inside, subfolders included, into a new folder with the same name. The files of its subfolders all go into that one folder, unless **Include sub-folders** is ticked under the training folder: then the subfolders are kept as they are. You can also drop or choose single files, after typing a name for the new folder. When the upload finishes, the new folder becomes the training folder.
 
 It takes pictures, `.mp4` clips, songs (`.wav`, `.mp3`, `.flac`, `.m4a`), caption `.txt` files, ACE-Step's `.json` song details, and `.zip` files, which are unpacked as they arrive. Anything else is left out and listed. Convert other video formats (`.mov`, `.webm`) to `.mp4` first.
 
