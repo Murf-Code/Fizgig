@@ -2539,8 +2539,9 @@ function valPickRow(r, wrap) {
 
 async function likenessPicker(single) {
   // single = {current, onPick(item)}: the same picker, one image for one sample prompt (paired likeness) - it closes
-  // on the click. single = {mode: "multi-toggle", picked: [names], onToggle(names, item), title}: it stays open, each
-  // click puts a picture in or out of the pick (Validation loss), and only the ✕ closes it.
+  // on the click (Image Prep's Test too, with pics = its own file pattern). single = {mode: "multi-toggle",
+  // picked: [names], onToggle(names, item), title}: it stays open, each click puts a picture in or out of the pick
+  // (Validation loss), and only the ✕ closes it.
   S.lik.single = single && (single.onPick || single.onToggle) ? single : null;
   const one = !!S.lik.single, multi = !!(S.lik.single && S.lik.single.mode === "multi-toggle");
   S.lik.multi = multi;
@@ -2561,7 +2562,8 @@ async function likenessPicker(single) {
   likenessMarks();
   if (!folder) return;
   const r = await api(`/api/captions?folder=${encodeURIComponent(folder)}&ext=${encodeURIComponent(capExt())}&family=${encodeURIComponent(S.family || "")}`).catch(() => ({items: []}));
-  for (const it of r.items.filter((x) => LIK_PICS.test(x.name))) {
+  const pics = (S.lik.single && S.lik.single.pics) || LIK_PICS;      // Image Prep's Test also lists .bmp
+  for (const it of r.items.filter((x) => pics.test(x.name))) {
     const fig = el("figure", {title: it.name, onclick: () => {
       if (S.lik.single && !S.lik.multi) { $("likModal").classList.remove("active"); S.lik.single.onPick(it); return; }
       const i = S.lik.picked.indexOf(it.name);
@@ -5282,30 +5284,38 @@ function faceSettingsWire() {
   $("prepYoloRow").append(up.status);
 }
 
+// Test: one photo from the training folder, picked in the Likeness picker's thumbnail grid (as Image Validation does)
+const PREP_TEST_PICS = /\.(png|jpe?g|webp|bmp)$/i;
 function prepTest() {
-  pick(S.imageFolder, false, async (path) => {
-    const host = $("prepTestResult");
-    const other = prepOther() || prepClass();
-    host.replaceChildren(el("div", {class: "field-hint", text: prepOther() ? "Finding… (the first time loads SAM 3.1)" :
-      "Finding faces… (the first time loads the face model)"}));
-    try {
-      const r = await api("/api/prep/test", {path, face: $("prepFace").value, find: $("prepFind").value});
-      if (other) {
-        if (!r.faces.length) { host.replaceChildren(el("div", {class: "field-hint", text: "Nothing found in that photo."})); return; }
-        host.replaceChildren(
-          el("div", {class: "field-hint", text: `${r.faces.length} found: ` + r.faces.map((f) => `${f.gender} (${f.score})` +
-            (f.selected ? ", cropped" : "")).join("; ") + ". Green = cropped, yellow = the others."}),
-          el("img", {class: "prep-test-img", src: r.image, alt: "what was found"}));
-        return;
-      }
-      if (!r.faces.length) { host.replaceChildren(el("div", {class: "field-hint", text: "No faces found in that photo."})); return; }
+  if (!S.imageFolder) {
+    $("prepTestResult").replaceChildren(el("div", {class: "field-hint", text: "Choose the training folder on the Start tab first."}));
+    return;
+  }
+  likenessPicker({title: "Image Prep: pick a photo to test on", pics: PREP_TEST_PICS, current: S.prep.testName || null,
+    onPick: (it) => { S.prep.testName = it.name; prepTestRun(it.path); }});
+}
+async function prepTestRun(path) {
+  const host = $("prepTestResult");
+  const other = prepOther() || prepClass();
+  host.replaceChildren(el("div", {class: "field-hint", text: prepOther() ? "Finding… (the first time loads SAM 3.1)" :
+    "Finding faces… (the first time loads the face model)"}));
+  try {
+    const r = await api("/api/prep/test", {path, face: $("prepFace").value, find: $("prepFind").value});
+    if (other) {
+      if (!r.faces.length) { host.replaceChildren(el("div", {class: "field-hint", text: "Nothing found in that photo."})); return; }
       host.replaceChildren(
-        el("div", {class: "field-hint", text: `${r.faces.length} face${r.faces.length === 1 ? "" : "s"} found (${r.finder}): ` +
-          r.faces.map((f, i) => `face ${i + 1}, ${f.gender === "unknown" ? "?" : f.gender}, ${f.area.toLocaleString()} px` +
-            (f.selected ? " (chosen for the crop)" : "")).join("; ") + ". Green = chosen, yellow = the others."}),
-        el("img", {class: "prep-test-img", src: r.image, alt: "faces found"}));
-    } catch (e) { host.replaceChildren(el("div", {class: "problems", text: e.message})); }
-  });
+        el("div", {class: "field-hint", text: `${r.faces.length} found: ` + r.faces.map((f) => `${f.gender} (${f.score})` +
+          (f.selected ? ", cropped" : "")).join("; ") + ". Green = cropped, yellow = the others."}),
+        el("img", {class: "prep-test-img", src: r.image, alt: "what was found"}));
+      return;
+    }
+    if (!r.faces.length) { host.replaceChildren(el("div", {class: "field-hint", text: "No faces found in that photo."})); return; }
+    host.replaceChildren(
+      el("div", {class: "field-hint", text: `${r.faces.length} face${r.faces.length === 1 ? "" : "s"} found (${r.finder}): ` +
+        r.faces.map((f, i) => `face ${i + 1}, ${f.gender === "unknown" ? "?" : f.gender}, ${f.area.toLocaleString()} px` +
+          (f.selected ? " (chosen for the crop)" : "")).join("; ") + ". Green = chosen, yellow = the others."}),
+      el("img", {class: "prep-test-img", src: r.image, alt: "faces found"}));
+  } catch (e) { host.replaceChildren(el("div", {class: "problems", text: e.message})); }
 }
 
 // ---- the Look Filter ----
