@@ -1,7 +1,7 @@
 """Trim tags that don't fit can use JTP-3 Hydra (RedRocket, Apache-2.0), an e621 tagger for furry art, instead of the
 WD EVA02 tagger (still the default, unchanged). The same trim rules: only general tags (e621 category 0) the tagger
-knows and scores low go; species, character, artist, copyright, meta (rating), lore, unknown tags, the first tag and
-the trigger word always stay. e621 names match with underscores or spaces, older e621 names through RedRocket's rename
+knows and scores low go, and so do species and character tags it doesn't see; artist, copyright, meta (rating), lore,
+unknown tags, the first tag and the trigger word always stay. e621 names match with underscores or spaces, older e621 names through RedRocket's rename
 list, and a tag implied by one the tagger sees keeps that score. The network is a stand-in here (the real one is a
 1.0 GB download), but its layout is checked against the real checkpoint's names and shapes."""
 import json
@@ -130,7 +130,7 @@ def test_confidence_is_the_demo_scale():
     assert J.Tagger.confidence(1.0) == 1.0 and abs(J.Tagger.confidence(0.6) - 0.2) < 1e-9
 
 
-def test_trim_with_jtp3_keeps_species_character_artist_and_meta(tmp_path):
+def test_trim_with_jtp3_keeps_artist_copyright_and_meta(tmp_path):
     t = _tagger(tmp_path, {"solo": 0.95, "fox": 0.5, "canine": 0.5, "tail": 0.55, "big_breasts": 0.97,
                            "breasts": 0.52, "long_hair": 0.52, "hair": 0.5, "animal_vulva": 0.9,
                            "krystal_(star_fox)": 0.5, "star_fox": 0.5, "safe": 0.5, "male_(lore)": 0.5,
@@ -145,11 +145,13 @@ def test_trim_with_jtp3_keeps_species_character_artist_and_meta(tmp_path):
     assert t.categories["animal pussy"] == 0 and t.categories["star fox"] == 3 and t.categories["male (lore)"] == 8
     cap = ("ruaidri, tail, fox, canine, Krystal_\\(star_fox\\), star fox, safe, male_(lore), by_some_artist, "
            "big breasts, breasts, long_hair, hair, animal_pussy, 3 heads, solo, my own tag")
-    out, dropped = wd_tagger.trim(cap, s, t.categories, ["ruaidri"], J.KEEP_SCORE)
-    assert dropped == ["tail", "long_hair", "hair", "3 heads"]
-    assert out == ("ruaidri, fox, canine, Krystal_\\(star_fox\\), star fox, safe, male_(lore), by_some_artist, "
-                   "big breasts, breasts, animal_pussy, solo, my own tag")
-    _, dropped = wd_tagger.trim("cat, " + cap, s, t.categories, ["ruaidri"], J.KEEP_SCORE)
+    out, dropped = wd_tagger.trim(cap, s, t.categories, ["ruaidri"], J.KEEP_SCORE, who=t.who)
+    assert dropped == ["tail", "fox", "canine", "Krystal_\\(star_fox\\)", "long_hair", "hair", "3 heads"]
+    assert out == ("ruaidri, star fox, safe, male_(lore), by_some_artist, big breasts, breasts, animal_pussy, solo, "
+                   "my own tag")         # species and characters it doesn't see go; copyright, meta, lore, artists stay
+    out, _ = wd_tagger.trim(cap, s, t.categories, ["ruaidri"], J.KEEP_SCORE)        # the WD default: characters
+    assert "fox" in out.split(", ") and "Krystal_\\(star_fox\\)" not in out.split(", ")
+    _, dropped = wd_tagger.trim("cat, " + cap, s, t.categories, ["ruaidri"], J.KEEP_SCORE, who=t.who)
     assert "tail" in dropped and "ruaidri" not in dropped and dropped[0] == "tail"   # the first tag (cat) stays
 
 
@@ -160,7 +162,7 @@ def test_crop_captions_use_the_chosen_tagger(tmp_path):
     (tmp_path / "a.txt").write_text("me, solo, tail, fox")
     cc = C.CropCaptions(keep=["me"], tagger=t, keep_score=J.KEEP_SCORE)
     cc.to_crop(str(pic), str(crop), lambda m: None, Image.new("RGB", (40, 40)))
-    assert (tmp_path / "FaceCrop_001.txt").read_text() == "me, solo, fox"
+    assert (tmp_path / "FaceCrop_001.txt").read_text() == "me, solo"     # fox (a species) isn't seen
 
 
 def test_fit_patches_keeps_aspect_and_never_enlarges():
@@ -368,11 +370,9 @@ def test_page_tagger_dropdown():
     assert out["oldServer"]["note"] == ""          # a server without "taggers": the run itself says what's missing
 
 
-def test_judge_gives_scores_and_the_network_probabilities(tmp_path):
-    t = _tagger(tmp_path, {"solo": 0.95, "fox": 0.3, "canine": 0.6, "animal_vulva": 0.8})
-    s, r = t.judge(Image.new("RGB", (32, 32)))
-    assert s["fox"] == 0.0 and r["fox"] == pytest.approx(0.3, abs=1e-3)     # under the floor, still ordered
-    assert r["animal pussy"] == r["animal vulva"] and s == t.scores(Image.new("RGB", (32, 32)))
+
+def test_jtp3_stand_ins_are_only_tags_in_its_list(tmp_path):
+    t = _tagger(tmp_path, {"solo": 0.95})
     assert t.who == (4, 5)
     # only stand-ins in its tag list are used: this small list has breasts, none of the others
     assert t.stand_ins["large breasts"] == ("breasts",) and t.stand_ins["petite"] == ("breasts",)

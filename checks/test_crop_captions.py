@@ -1,6 +1,6 @@
 """Image Prep crops keep their picture's caption (on by default), and "Trim tags that don't fit" (off by default)
 drops the general tags the WD EVA02 tagger (the default; JTP-3 Hydra in test_jtp3_tagger.py) no longer sees on the crop: only removed, never added; the trigger word,
-the first tag, character / rating / meta tags and tags it doesn't know stay; sentence captions are copied as written.
+the first tag, rating / meta tags and tags it doesn't know stay, characters only when seen; sentence captions are copied as written.
 The tagger is a stand-in here (the real one is a 1.2 GB download)."""
 import os
 import types
@@ -39,8 +39,8 @@ def test_trim_keeps_what_it_should():
            "standing, blue eyes")
     scores = {"wolf": 0.9, "full body": 0.05, "tail": 0.34, "smile": 0.35, "standing": 0.1, "blue eyes": 0.8}
     out, dropped = wd_tagger.trim(cap, scores, CATS, ["Ruaidri"], 0.35)
-    assert dropped == ["full_body", "tail", "standing"]
-    assert out == "ruaidri, wolf, smile, krystal \\(star fox\\), general, highres, by zaush, anthro, blue eyes"
+    assert dropped == ["full_body", "tail", "krystal \\(star fox\\)", "standing"]   # a character it doesn't see goes
+    assert out == "ruaidri, wolf, smile, general, highres, by zaush, anthro, blue eyes"
     # the first tag and the trigger word stay even when the tagger doesn't see them
     assert wd_tagger.trim("tail, wolf, smile", {"wolf": 0.9}, CATS, ["smile"]) == ("tail, wolf, smile", [])
     s = "A wolf with a tail, standing in a field."

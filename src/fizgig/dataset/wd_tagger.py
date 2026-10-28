@@ -3,9 +3,8 @@ Image Prep's "Trim tags that don't fit" asks it which of a crop's copied tags it
 demand, into Fizgig's models folder (model.onnx + selected_tags.csv, about 1.2 GB); run with onnxruntime (already a
 Fizgig requirement) on the GPU when its CUDA provider is there, else the CPU; freed when the prep run ends.
 
-General tags (category 0) the tagger no longer sees are dropped. Character tags (4) are judged together: the ones it
-sees on the crop stay, and so do the likeliest one and any about as likely (so a close-up of one of two characters
-keeps only theirs). Rating (9), meta and any tag the tagger doesn't know (artists, your own tags) always
+General tags (category 0) and character tags (4) the tagger no longer sees are dropped; fur colour, marking and
+pattern tags need only half the keep score. Rating (9), meta and any tag the tagger doesn't know (artists, your own tags) always
 stay. Tags are only removed, never added."""
 import csv
 import os
@@ -136,15 +135,32 @@ class Tagger:
         gc.collect()
 
 
-def trim(caption, scores, categories, keep_words=(), keep_score=KEEP_SCORE, who=WHO, ranks=None, stand_ins=None,
+_COLOURS = {"black", "blue", "brown", "green", "grey", "gray", "orange", "pink", "purple", "red", "tan", "teal",
+            "white", "yellow", "cream", "beige", "gold", "golden", "silver", "dark", "light", "multicolored",
+            "two tone", "monotone", "countershade", "spotted", "striped", "mottled"}
+_COATS = ("fur", "body", "skin", "scales", "feathers")
+_PATTERNS = ("markings", "marking", "stripes", "spots", "tuft", "countershading")
+
+
+def is_pattern(tag):
+    """A fur colour, marking or pattern tag ('black fur', 'two tone body', 'stripes', 'facial markings', 'chest
+    tuft', 'countershading'): on a close-up only a little of the coat shows, so trim keeps these at half the keep
+    score."""
+    n = norm(tag)
+    if n.endswith(_PATTERNS) and (n in _PATTERNS or n.rsplit(" ", 1)[-1] in _PATTERNS):
+        return True
+    for c in _COATS:
+        if n.endswith(" " + c) and n[:-len(c) - 1] in _COLOURS:
+            return True
+    return False
+
+
+def trim(caption, scores, categories, keep_words=(), keep_score=KEEP_SCORE, who=WHO, stand_ins=None,
          stand_in_extra=0.15):
     """(caption, dropped): a tag caption without the tags the tagger no longer sees on the crop. The first tag and the
     trigger word always stay; a sentence caption comes back as written.
-    - a general tag stays when it scores at least keep_score;
-    - who tags (a category in `who`: characters, and species for e621) are judged together, per category: one stays
-      when it scores at least keep_score, or when `ranks` (the network's own probabilities, default `scores`) puts it
-      at least half as likely as the likeliest of them, so a close-up of one of two characters keeps only theirs
-      and the likeliest always stays;
+    - a general tag, or a who tag (a category in `who`: characters, and species for e621), stays when it scores at
+      least keep_score; a fur colour / marking / pattern tag (is_pattern) at half of it;
     - a tag the tagger doesn't know stays, unless `stand_ins` names tags it does know that show the same thing
       ({"naked": ("nude",)}): then it stays when the best of them scores at least keep_score + stand_in_extra;
     - any other tag (rating, meta, artist, copyright...) stays."""
@@ -153,25 +169,17 @@ def trim(caption, scores, categories, keep_words=(), keep_score=KEEP_SCORE, who=
     if tags is None:
         return caption, []
     keep = {norm(w) for w in keep_words if w and str(w).strip()}
-    ranks = scores if ranks is None else ranks
     stand_ins = stand_ins or {}
-    names = [norm(t) for t in tags]
-    who_kept = set()
-    for cat in who:
-        pool = {n for n in names if categories.get(n) == cat}
-        top = max((ranks.get(n, 0.0) for n in pool), default=0.0)
-        who_kept |= {n for n in pool if scores.get(n, 0.0) >= keep_score or ranks.get(n, 0.0) >= top / 2}
     kept, dropped = [], []
-    for i, (t, n) in enumerate(zip(tags, names)):
+    for i, t in enumerate(tags):
+        n = norm(t)
         cat = categories.get(n)
         if i == 0 or n in keep:
             ok = True
-        elif cat == GENERAL:
-            ok = scores.get(n, 0.0) >= keep_score
-        elif cat in who:
-            ok = n in who_kept
+        elif cat == GENERAL or cat in who:
+            ok = scores.get(n, 0.0) >= (keep_score / 2 if cat == GENERAL and is_pattern(n) else keep_score)
         elif cat is None and n in stand_ins:
-            ok = max((scores.get(s, 0.0) for s in stand_ins[n]), default=0.0) >= keep_score + stand_in_extra
+            ok = max((scores.get(x, 0.0) for x in stand_ins[n]), default=0.0) >= keep_score + stand_in_extra
         else:
             ok = True
         (kept if ok else dropped).append(t)

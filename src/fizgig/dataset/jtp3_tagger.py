@@ -5,8 +5,8 @@ with e621 categories and implications, and the e621 rename list); run with plain
 vendored in jtp3_hydra/ (credit and licence there) on the GPU when there is one, else the CPU; freed when prep ends.
 
 The same trim rules as the WD tagger (wd_tagger.trim): general tags (e621 category 0) the tagger knows and scores
-under the keep score are dropped, and species (5) and character (4) tags are judged together, so a close-up of one of
-two characters keeps only theirs. Artist, copyright (3), meta (7, which holds the rating tags safe / questionable /
+under the keep score are dropped, and so are species (5) and character (4) tags it doesn't see on the crop; fur
+colour, marking and pattern tags need only half the keep score. Artist, copyright (3), meta (7, which holds the rating tags safe / questionable /
 explicit), lore (8), tags it doesn't know and your own always stay, except a few common e621 tags JTP-3 never learned
 (naked, belly, armpits...), which are judged by tags it knows that show the same thing (STAND_INS). Tags are never
 added.
@@ -34,7 +34,7 @@ LABEL = "JTP-3 Hydra tagger"
 SIZE_GB = 1.0
 GENERAL = 0
 KEEP_SCORE = 0.20                        # a general tag stays if the tagger scores it at least this on the crop
-WHO = (4, 5)                             # character and species tags: judged together (wd_tagger.trim's `who`)
+WHO = (4, 5)                             # character and species tags: dropped when not seen (wd_tagger.trim's `who`)
 _CHEST = ("pecs", "chest tuft", "breasts", "nipples", "flat chested", "featureless chest")
 _TORSO = ("navel", "abs", "stomach", "midriff", "big belly", "small waist", "slim")
 # Common e621 tags missing from JTP-3's list, and tags it knows that show the same thing is in view. Without these
@@ -246,8 +246,7 @@ def build(path, device="cpu", dtype=None):
 
 class Tagger:
     """The loaded tagger: scores(img) -> {normalised tag: probability}; categories: {normalised tag: e621 category};
-    judge(img) -> (scores, ranks) for wd_tagger.trim, ranks being the network's own probabilities; who and stand_ins
-    (STAND_INS, for the tags it doesn't know) for trim too."""
+    who and stand_ins (STAND_INS, for the tags it doesn't know) for wd_tagger.trim."""
     who = WHO
 
     def __init__(self, folder, log=print, net=None, labels=None, device=None):
@@ -286,18 +285,11 @@ class Tagger:
 
     def scores(self, img):
         """{normalised tag: confidence 0-1}, implied tags raised to their best implier, older e621 names included."""
-        return self.judge(img)[0]
-
-    def judge(self, img):
-        """(scores, ranks): scores() and {normalised tag: the network's probability}, which still orders tags that are
-        all under the confidence floor (trim's `ranks`)."""
-        ranks = {norm(t): float(v) for t, v in self.raw(img).items()}
-        s = inherit({n: self.confidence(v) for n, v in ranks.items()}, self.implies)
+        s = inherit({norm(t): self.confidence(v) for t, v in self.raw(img).items()}, self.implies)
         for old, new in self.aliases.items():
-            for d in (s, ranks):
-                if new in d and old not in d:
-                    d[old] = d[new]
-        return s, ranks
+            if new in s and old not in s:
+                s[old] = s[new]
+        return s
 
     def close(self):
         self.net = None

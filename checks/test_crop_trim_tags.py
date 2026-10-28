@@ -1,8 +1,8 @@
-"""Trim tags that don't fit, on close-ups of one of two characters: only the characters / species the tagger sees on
-the crop (or the likeliest of them) stay, and a few common e621 tags JTP-3 never learned (naked, belly, armpits...)
-are judged by tags it knows instead of always staying. The real case: a sheath close-up of an arcanine, cut from a
-picture of an arcanine and a growlithe, kept growlithe, belly, armpits, petite, thin waist, no nipples and naked.
-Its scores below are JTP-3 Hydra's own on that crop."""
+"""Trim tags that don't fit on close-ups: characters / species stay only when the tagger sees them on the crop, fur
+colour / marking / pattern tags need only half the keep score, and a few common e621 tags JTP-3 never learned (naked,
+belly, armpits...) are judged by tags it knows instead of always staying. The real case: a sheath close-up of an
+arcanine, cut from a picture of an arcanine and a growlithe, kept arcanine, growlithe, belly, armpits, petite, thin
+waist, no nipples and naked. Its scores below are JTP-3 Hydra's own on that crop."""
 import os
 
 from PIL import Image
@@ -25,8 +25,7 @@ CAPTION = ("@z4ush, 3 toes, abs, age difference, anthro, arcanine, armpits, ball
 SCORES = {"anthro": 0.861, "balls": 0.696, "black fur": 0.272, "butt": 0.009, "claws": 0.01, "female": 0.02,
           "genital piercing": 0.801, "hair": 0.066, "male": 0.996, "navel": 0.299, "nude": 0.153, "penis": 0.734,
           "piercing": 0.992, "sheath": 0.922, "simple background": 0.459, "smile": 0.009, "tail": 0.099,
-          "white background": 0.288}
-RANKS = {"arcanine": 0.242, "growlithe": 0.065}         # the network's own probabilities (both under confidence 0)
+          "white background": 0.288, "multicolored fur": 0.006}
 UNKNOWN = {"@z4ush", "armpits", "belly", "large balls", "naked", "nintendo", "no nipples", "petite", "pokemon",
            "thin waist", "video games"}                  # not in JTP-3's tag list
 
@@ -40,53 +39,62 @@ def _cats():
     return cats
 
 
-class FakeJudge:
-    """jtp3_tagger.Tagger's face for trim: judge(img) -> (scores, ranks), categories, who, stand_ins."""
+class FakeJTP3:
+    """jtp3_tagger.Tagger's face for trim: scores(img), categories, who, stand_ins."""
     who = J.WHO
     stand_ins = J.STAND_INS
 
     def __init__(self):
         self.categories = _cats()
 
-    def judge(self, img):
-        return dict(SCORES), dict(RANKS)
-
     def scores(self, img):
         return dict(SCORES)
 
 
+def _sheath(keep_score):
+    return C.CropCaptions(tagger=FakeJTP3(), keep_score=keep_score).text_for(CAPTION, Image.new("RGB", (8, 8)))
+
+
 def test_the_sheath_close_up_keeps_only_what_is_in_it():
-    cc = C.CropCaptions(tagger=FakeJudge(), keep_score=J.KEEP_SCORE)        # Chris's settings: JTP-3 at 0.20
-    out, dropped = cc.text_for(CAPTION, Image.new("RGB", (8, 8)))
-    assert out == ("@z4ush, anthro, arcanine, balls, black fur, genital piercing, large balls, male, navel, nintendo, "
-                   "penis, piercing, pokemon, sheath, simple background, video games, white background")
-    for gone in ("growlithe", "armpits", "belly", "petite", "thin waist", "no nipples", "naked"):
+    out, dropped = _sheath(J.KEEP_SCORE)                                   # Chris's settings: JTP-3 at 0.20
+    assert out == ("@z4ush, anthro, balls, black fur, genital piercing, large balls, male, navel, nintendo, penis, "
+                   "piercing, pokemon, sheath, simple background, video games, white background")
+    for gone in ("arcanine", "growlithe", "armpits", "belly", "petite", "thin waist", "no nipples", "naked",
+                 "multicolored fur", "orange fur", "stripes"):
         assert gone in dropped
+    # at 0.30 navel and white background go too, and black fur (a fur colour: half the bar) still stays
+    out, _ = _sheath(0.30)
+    assert out == ("@z4ush, anthro, balls, black fur, genital piercing, large balls, male, nintendo, penis, piercing, "
+                   "pokemon, sheath, simple background, video games")
 
 
 def test_before_the_fix_these_were_never_judged():
-    """The old rule (species and unknown tags always stay) kept them; the new one with no who / stand_ins does too."""
+    """The old rule (species and unknown tags always stay) kept them."""
     out, _ = wd_tagger.trim(CAPTION, SCORES, _cats(), (), J.KEEP_SCORE, who=())
-    for kept in ("growlithe", "armpits", "belly", "petite", "thin waist", "no nipples", "naked"):
+    for kept in ("arcanine", "growlithe", "armpits", "belly", "petite", "thin waist", "no nipples", "naked"):
         assert kept in out.split(", ")
 
 
-def test_who_tags_are_judged_together():
+def test_species_and_characters_need_to_be_seen():
     cats = {"fox": 5, "wolf": 5, "krystal": 4, "solo": 0}
-    # neither seen: the likeliest stays, one far less likely goes
-    out, dropped = wd_tagger.trim("me, fox, wolf, solo", {"solo": 0.9}, cats, (), 0.2, who=(4, 5),
-                                  ranks={"fox": 0.3, "wolf": 0.05})
-    assert out == "me, fox, solo" and dropped == ["wolf"]
-    # about as likely (at least half the likeliest) stays too, and one the tagger sees always stays
-    assert wd_tagger.trim("me, fox, wolf", {"wolf": 0.25}, cats, (), 0.2, who=(5,),
-                          ranks={"fox": 0.9, "wolf": 0.3}) == ("me, fox, wolf", [])
-    assert wd_tagger.trim("me, fox, wolf", {}, cats, (), 0.2, who=(5,),
-                          ranks={"fox": 0.9, "wolf": 0.5}) == ("me, fox, wolf", [])
-    # a lone species or character always stays, whatever it scores
-    assert wd_tagger.trim("me, fox, krystal", {}, cats, (), 0.2, who=(4, 5)) == ("me, fox, krystal", [])
+    assert wd_tagger.trim("me, fox, wolf, krystal, solo", {"solo": 0.9, "fox": 0.2}, cats, (), 0.2,
+                          who=(4, 5)) == ("me, fox, solo", ["wolf", "krystal"])
     # species aren't who tags for the WD tagger (its category 5 is meta), and the first tag always stays
     assert wd_tagger.WHO == (4,) and wd_tagger.Tagger.who == (4,)
-    assert wd_tagger.trim("wolf, fox", {}, cats, (), 0.2, who=(5,), ranks={"fox": 0.9}) == ("wolf, fox", [])
+    assert wd_tagger.trim("wolf, fox, krystal", {}, cats, (), 0.2) == ("wolf, fox", ["krystal"])
+
+
+def test_fur_colours_markings_and_patterns_get_half_the_bar():
+    for t in ("black fur", "Multicolored_Fur", "two tone body", "orange scales", "stripes", "spots", "facial markings",
+              "chest tuft", "countershading", "white spots", "striped fur", "markings"):
+        assert wd_tagger.is_pattern(t), t
+    for t in ("fur", "hair", "blonde hair", "cum on body", "long body", "wet fur", "tail feathers", "glistening body",
+              "striped thighhighs", "sheath"):
+        assert not wd_tagger.is_pattern(t), t
+    cats = {"black fur": 0, "stripes": 0, "smile": 0}
+    out, dropped = wd_tagger.trim("me, black fur, stripes, smile, spotted fur", {"black fur": 0.16, "stripes": 0.14,
+                                  "smile": 0.19}, cats, (), 0.30)
+    assert out == "me, black fur, spotted fur" and dropped == ["stripes", "smile"]   # one it doesn't know stays
 
 
 def test_stand_ins_judge_tags_the_tagger_does_not_know():
@@ -111,12 +119,12 @@ def test_stand_ins_name_real_jtp3_tags():
     assert J.WHO == (4, 5)
 
 
-def test_old_taggers_without_judge_still_trim():
+def test_taggers_without_who_or_stand_ins_still_trim():
     class Plain:
         categories = {"solo": 0, "tail": 0, "krystal": 4}
 
         def scores(self, img):
-            return {"solo": 0.9}
+            return {"solo": 0.9, "krystal": 0.5}
     cc = C.CropCaptions(tagger=Plain(), keep_score=0.35)
     assert cc.text_for("me, solo, tail, krystal", Image.new("RGB", (4, 4))) == ("me, solo, krystal", ["tail"])
 
@@ -124,6 +132,6 @@ def test_old_taggers_without_judge_still_trim():
 def test_the_page_says_how_characters_and_species_are_trimmed():
     html = open(os.path.join(STATIC, "index.html"), encoding="utf-8").read()
     js = open(os.path.join(STATIC, "app.js"), encoding="utf-8").read()
-    assert "Only the characters and species it sees in" in html and "the likeliest one stays" in html
+    assert "Characters and species stay only if it sees" in html and "need only half the score" in html
     assert "species, character, artist and copyright tags and keeps" not in js
     assert "(naked, belly, armpits) by ones it does" in js
