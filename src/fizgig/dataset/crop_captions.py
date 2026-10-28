@@ -34,6 +34,11 @@ def write(path, text):
     os.replace(tmp, path)
 
 
+def target_key(word):
+    """A crop target or caption tag as compared: lower case, spaces, _ and - dropped ("Paw pads" = "paw_pads" = pawpads)."""
+    return "".join(ch for ch in str(word or "").lower() if ch not in " _-\t")
+
+
 CLOSE_UP = "close-up"                                  # e621's (and Danbooru's) tag
 _CLOSE_UP_NAMES = {"close-up", "close up", "closeup"}
 
@@ -52,6 +57,12 @@ class CropCaptions:
         self.tagger, self.keep_score = tagger, float(keep_score)
         self.closeup = bool(closeup)
         self.add_score = None if add_score is None else float(add_score)
+        self.targets = []                     # what the crops are of (Prep.run sets it: "face", or the Find this words)
+
+    def _target_tags(self, tags):
+        """The caption's tags that name a crop target (case, spaces, _ and - ignored: Paw_Pads is pawpads)."""
+        want = {target_key(t) for t in self.targets if target_key(t)}
+        return [x for x in tags if target_key(x) in want] if want else []
 
     def text_for(self, caption, crop_img):
         """(caption, dropped): what the crop's caption says."""
@@ -64,7 +75,8 @@ class CropCaptions:
             return caption, [], None
         t = self.tagger
         scores = t.scores(crop_img)
-        text, dropped = wd_tagger.trim(caption, scores, t.categories, self.keep, self.keep_score,
+        keep = self.keep + self._target_tags(split_tags(caption))      # the crop's own target always stays
+        text, dropped = wd_tagger.trim(caption, scores, t.categories, keep, self.keep_score,
                                        who=getattr(t, "who", wd_tagger.WHO), stand_ins=getattr(t, "stand_ins", None))
         return text, dropped, scores
 
@@ -81,6 +93,14 @@ class CropCaptions:
             added = [n.replace(" ", "_") if under else n for n in wd_tagger.missing(
                 tags, scores, t.categories, self.add_score, who=getattr(t, "who", wd_tagger.WHO),
                 names=getattr(t, "names", None), aliases=getattr(t, "aliases", None))]
+        if tags is not None and cropped and scores is not None and self.add_score is not None:
+            under = any("_" in x for x in tags) and not any(" " in x for x in tags)
+            have = {target_key(x) for x in tags + added}
+            for w in self.targets:                     # Add missing tags on: the target goes in if the caption lacks it
+                k = target_key(w)
+                if k and k not in have:
+                    added.append(" ".join(str(w).split()).lower().replace(" ", "_" if under else " "))
+                    have.add(k)
         if tags is not None and cropped and self.closeup and \
                 not any(wd_tagger.norm(x) in _CLOSE_UP_NAMES for x in tags + added):
             added.append(CLOSE_UP)

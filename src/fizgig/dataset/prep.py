@@ -306,6 +306,7 @@ class Prep:
         self.detector = detector
         self.finder = finder
         self.captions = captions
+        self._originals = {}                     # folder -> its originals folder, picked once per run (run() resets)
 
     def _caption_crop(self, filepath, crop_path, crop_img):
         if self.captions is not None:
@@ -326,7 +327,6 @@ class Prep:
                                    self.log, crop_img, cropped=bool(cropped))
         except Exception as e:
             self.log(f"  caption not updated: {e}\n")
-        self._originals = {}
 
     # ---- originals ----
     def _originals_dir(self, folder):
@@ -462,6 +462,8 @@ class Prep:
         self._originals = {}
         area = target_area(prep_mp)
         face_mode = face_mode_of(face_label)
+        if self.captions is not None:                 # what the crops are of stays in their captions (trim never drops it)
+            self.captions.targets = list(self.finder.words) if self.finder is not None else ["face"]
         if self.detector is not None and mode != "Resize Only" and getattr(self.detector, "backend_name",
                                                                              "insightface") != "insightface":
             self.log(f"Face finder: {self.detector.describe()}\n")      # only when it isn't the usual one
