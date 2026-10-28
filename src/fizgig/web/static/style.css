@@ -60,7 +60,7 @@
   --pic-highlight: #3B9FD8;    /* Crop box, a picked region */
 
   /* Fizgig Advanced, fixed: things over pictures - the paired likeness badge (its seven score bands are fixed
-     colours in app.js's PAIR_BANDS, with their own dark or white text, so they read the same in every theme) and
+     colours in app.js's PAIR_BANDS, with their own dark or white text; Colour-blind safe swaps in PAIR_BANDS_SAFE) and
      the Likeness picker's turquoise picks */
   --pair-badge-bg: #8E44AD;    /* A paired badge before its band colour is set */
   --pair-badge-text: #10202A;
@@ -2493,7 +2493,7 @@ a.pick-pill-vast:hover { border-color: var(--success); }
 .pair-row.stale .pair-text { color: var(--warning-text); white-space: normal; }
 /* own line under the caption (was absolute at the bottom and covered the file name) */
 .lik-badge.pair-badge { position: static; display: inline-block; margin-top: 5px; background: var(--pair-badge-bg); }
-/* paired score colors: per prompt, own low..high (inline hsl); these classes are the one-epoch fallback tiers */
+/* paired score colors: a fixed band per 0.1 from app.js (PAIR_BANDS; PAIR_BANDS_SAFE in the Colour-blind safe theme) */
 .lik-badge.pair-badge { color: var(--pair-badge-text); font-weight: 700; text-shadow: none; border: 0; cursor: help; }
 .lik-badge.pair-badge.pair-best { outline: 2px solid var(--text-primary); outline-offset: 2px;
   box-shadow: 0 0 8px 2px color-mix(in srgb, var(--text-primary) 75%, transparent); }   /* white ring on dark themes, dark on light */

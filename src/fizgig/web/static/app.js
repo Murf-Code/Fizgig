@@ -2268,6 +2268,7 @@ async function likenessShow(dir, items, run, view) {
         title: `Paired ${ps.score.toFixed(3)} - whole-image DINOv2 similarity to ${ps.image}\n` +
           `Prompt ${ps.index + 1}: rank ${bi.rank} of ${bi.n} epochs` + ` - band ${bi.label}` + (ps.score >= PAIR_OVER ? ", may be overcooked" : "") + (bi.n > 1 ? ` (range ${bi.min.toFixed(2)}-${bi.max.toFixed(2)})` : ""),
         text: `${bi.best ? "★ " : ""}Paired ${ps.score.toFixed(2)}`});
+      b.dataset.score = ps.score;          // a theme change recolours it (applyTheme)
       b.style.background = bi.color;
       b.style.color = bi.text;
       fig.append(b);
@@ -2312,6 +2313,11 @@ const PAIR_BANDS = [     // [lowest score, colour, text colour, label]; one fixe
   [0.80, "#2ECC71", "#10202A", "0.80-0.89 (sweet spot)"],
   [0.90, "#B57BFF", "#10202A", "0.90+ (may be overcooked)"],
 ];
+// the Colour-blind safe theme's bands (Okabe-Ito: vermilion for low, blue for the sweet spot, no red against green);
+// [colour, text colour] per band, the same order and labels as PAIR_BANDS
+const PAIR_BANDS_SAFE = [["#8F3A00", "#FFFFFF"], ["#D55E00", "#FFFFFF"], ["#E69F00", "#10202A"], ["#F0E442", "#10202A"],
+  ["#56B4E9", "#10202A"], ["#0072B2", "#FFFFFF"], ["#CC79A7", "#10202A"]];
+const pairSafe = () => typeof document !== "undefined" && document.documentElement.dataset.theme === "colour-safe";
 function pairBand(score) {
   // round to 3 places first so 0.6 stored as 0.59999... still lands in 0.60-0.69
   const s = Math.round(score * 1000) / 1000;
@@ -2321,7 +2327,7 @@ function pairBand(score) {
 }
 function pairHeat(score) {
   // fixed colour band for a paired score (no fading, no per-run scale). t = band position 0..1.
-  const k = pairBand(score), [, color, text, label] = PAIR_BANDS[k];
+  const k = pairBand(score), [, c0, t0, label] = PAIR_BANDS[k], [color, text] = pairSafe() ? PAIR_BANDS_SAFE[k] : [c0, t0];
   return {t: k / (PAIR_BANDS.length - 1), band: k, color, text, label};
 }
 function pairBadgeInfo(paired) {
@@ -9743,6 +9749,9 @@ function applyTheme(key) {
   // the phone's browser bar takes the page colour (the meta's own value covers the first paint)
   document.querySelector('meta[name="theme-color"]').content = themeColor("--bg-deep");
   window.dispatchEvent(new Event("resize"));      // the canvases draw again in the new colours
+  for (const b of document.querySelectorAll(".pair-badge[data-score]")) {   // the paired badges' bands too
+    const h = pairHeat(Number(b.dataset.score)); b.style.background = h.color; b.style.color = h.text;
+  }
 }
 function wireTheme() {
   const render = () => {
