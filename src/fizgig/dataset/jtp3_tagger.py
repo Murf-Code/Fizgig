@@ -49,6 +49,19 @@ STAND_INS = {
     "armpits": _CHEST + ("raised arm", "raised arms", "arms above head", "hand behind head", "hands behind head",
                          "armpit hair"),
 }
+# Common caption tags JTP-3 knows under another name: judged by that name (wd_tagger.judged_as).
+RENAMES = {
+    "legs crossed": "crossed legs", "closed eyes": "eyes closed", "closed mouth": "mouth closed",
+    "arms up": "raised arms", "arms raised": "raised arms", "arm up": "raised arm", "ass": "butt",
+    "pectorals": "pecs", "completely nude": "nude", "completely naked": "nude", "from behind": "rear view",
+    "from side": "side view", "two-tone fur": "two tone fur", "thighhighs": "thigh highs",
+    "white thighhighs": "white thigh highs", "smiling": "smile", "erect penis": "erection", "horns": "horn",
+    "girl on top": "female on top", "bound legs": "legs tied", "looking to the side": "looking aside",
+    "straddle": "straddling", "lying on back": "on back", "kiss": "kissing", "facial cum": "cum on face",
+}
+# "barely visible pussy", "wet pussy"...: a tag JTP-3 doesn't know, judged by the tag after these words when it knows it
+PREFIXES = ("barely visible", "partially visible", "exposed", "wet", "imminent", "visible", "glistening", "dripping",
+            "spread", "small", "big", "huge", "large", "tiny", "erect", "hairy", "puffy", "presenting")
 CATEGORIES = ("general", "artist", "contributor", "copyright", "character", "species", "invalid", "meta", "lore")
 PATCH = 16
 MAX_PATCHES = 1024                       # NaFlex: up to 1024 16-pixel patches, about 512x512, aspect kept
@@ -269,6 +282,8 @@ class Tagger:
         self.stand_ins = {t: tuple(s for s in ss if s in self.categories) for t, ss in STAND_INS.items()
                           if t not in self.categories}
         self.stand_ins = {t: ss for t, ss in self.stand_ins.items() if ss}
+        self.renames = {t: r for t, r in RENAMES.items() if t not in self.categories and r in self.categories}
+        self.prefixes = PREFIXES
 
     def raw(self, img):
         """{e621 tag: probability} straight from the network."""

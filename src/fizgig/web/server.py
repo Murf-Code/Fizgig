@@ -3071,10 +3071,12 @@ class Handler(BaseHTTPRequestHandler):
             return self.json({"user": names})
         if path == "/api/prep/options":            # Image Prep: its choices, and whether face tools are here
             from fizgig.dataset import prep as _prep
+            from fizgig.dataset.crop_captions import DROP_DEFAULT
             return self.json({"modes": list(_prep.MODES), "megapixels": _prep.MEGAPIXELS,
                               "faces": _prep.FACE_TARGETS, "other": _prep.OTHER_TARGET,
                               "face_tools": prep_jobs.faces_available(),
-                              "face_settings": prep_jobs.face_settings()})
+                              "face_settings": prep_jobs.face_settings(),
+                              "drop_default": DROP_DEFAULT})
         if path in ("/api/masks/edit/list", "/api/masks/edit/picture", "/api/masks/edit/mask"):   # the mask editor
             from fizgig.web import mask_edit
             folder, name = (qs.get("folder") or [""])[0], (qs.get("name") or [""])[0]

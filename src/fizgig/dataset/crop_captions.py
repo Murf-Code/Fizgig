@@ -6,6 +6,7 @@ ever removed, never added; the trigger word, the first tag, rating / meta tags a
 (artists, your own) always stay; character / species tags stay only when it sees them on the crop. Sentence captions are copied as written (tag_variants.split_tags
 decides which is which)."""
 import os
+import re
 
 from fizgig.dataset import wd_tagger
 
@@ -39,6 +40,43 @@ def target_key(word):
     return "".join(ch for ch in str(word or "").lower() if ch not in " _-\t")
 
 
+# Always drop on crops: what a close-up rarely shows (who else is there, the room, the framing, the background).
+# One per line or comma separated; * is any words ("* out of frame"). Case doesn't matter. The crop's target never drops.
+DROP_DEFAULT = """duo, trio, group, threesome, group sex, background character, faceless character, * out of frame
+inside, outside, indoors, outdoors, day, night, daylight, public, public *, nudist, locker room, bedroom, bathroom
+night club, beach, forest, city, sky, blue sky, tree, grass, water, cloud, clouds, scenery
+furniture, bed, on bed, couch, on couch, sofa, chair, armchair, on armchair, table, window, wall, floor
+wooden floor, stone floor, brick wall, carpet, pillow, curtains, window curtains, door, wooden door
+full-length portrait, three-quarter portrait, half-length portrait, full body, magazine cover, cover
+text, english text, text reads *, imminent *
+background, * background"""
+# Not on face crops: these fit a face (FaceCrop), so they drop only on other close-ups
+NOT_FACE = ("portrait", "bust portrait", "headshot portrait")
+
+
+def drop_words(text):
+    """The Always drop on crops box's text as a list of patterns (lines or commas; blanks skipped)."""
+    return [w for w in (" ".join(x.split()) for x in re.split(r"[,\n]", str(text or ""))) if w]
+
+
+def _pattern(word):
+    n = wd_tagger.norm(word)
+    return re.compile("^" + ".*".join(re.escape(p) for p in n.split("*")) + "$") if "*" in n else n
+
+
+def dropped_by(tags, words, keep=()):
+    """The tags matching a drop pattern (words; * is any text), never those in keep (normalised)."""
+    pats = [_pattern(w) for w in words]
+    out = []
+    for t in tags:
+        n = wd_tagger.norm(t)
+        if n in keep or target_key(n) in keep:
+            continue
+        if any((p.match(n) if hasattr(p, "match") else p == n) for p in pats):
+            out.append(t)
+    return out
+
+
 CLOSE_UP = "close-up"                                  # e621's (and Danbooru's) tag
 _CLOSE_UP_NAMES = {"close-up", "close up", "closeup"}
 
@@ -47,16 +85,18 @@ class CropCaptions:
     """Image Prep's caption settings: copy (a crop gets its picture's caption), trim with a taggers.py Tagger (None:
     no trimming), keep_score (a general tag stays at or above it), ext (the dataset's caption extension), keep (the
     trigger word), closeup (a crop's tag caption gets "close-up"), add_score (with a tagger: tags it is at least
-    this sure of on the crop are added, wd_tagger.missing; None: none are)."""
+    this sure of on the crop are added, wd_tagger.missing; None: none are), drop (Always drop on crops: patterns
+    dropped from a crop's caption, drop_words; None: off)."""
 
     def __init__(self, copy=True, ext=".txt", keep=(), tagger=None, keep_score=wd_tagger.KEEP_SCORE, overwrite=False,
-                 closeup=False, add_score=None):
+                 closeup=False, add_score=None, drop=None):
         self.copy, self.overwrite = bool(copy), bool(overwrite)
         self.ext = ext if str(ext or "").startswith(".") else "." + str(ext or "txt")
         self.keep = [k for k in keep if k]
         self.tagger, self.keep_score = tagger, float(keep_score)
         self.closeup = bool(closeup)
         self.add_score = None if add_score is None else float(add_score)
+        self.drop = None if drop is None else list(drop)
         self.targets = []                     # what the crops are of (Prep.run sets it: "face", or the Find this words)
 
     def _target_tags(self, tags):
@@ -77,7 +117,8 @@ class CropCaptions:
         scores = t.scores(crop_img)
         keep = self.keep + self._target_tags(split_tags(caption))      # the crop's own target always stays
         text, dropped = wd_tagger.trim(caption, scores, t.categories, keep, self.keep_score,
-                                       who=getattr(t, "who", wd_tagger.WHO), stand_ins=getattr(t, "stand_ins", None))
+                                       who=getattr(t, "who", wd_tagger.WHO), stand_ins=getattr(t, "stand_ins", None),
+                                       renames=getattr(t, "renames", None), prefixes=getattr(t, "prefixes", ()))
         return text, dropped, scores
 
     def caption_for(self, caption, crop_img, cropped=True):
@@ -101,6 +142,18 @@ class CropCaptions:
                 if k and k not in have:
                     added.append(" ".join(str(w).split()).lower().replace(" ", "_" if under else " "))
                     have.add(k)
+        if tags is not None and cropped and self.drop is not None:
+            words = list(self.drop)
+            if [target_key(w) for w in self.targets] != ["face"]:
+                words += NOT_FACE                      # portrait tags stay on face crops only
+            keep = {target_key(w) for w in self.keep + self.targets if target_key(w)}
+            keep |= {wd_tagger.norm(w) for w in self.keep + self.targets if w}
+            gone = dropped_by(tags, words, keep)
+            if gone:
+                tags = [x for x in tags if x not in gone]
+                dropped = list(dropped) + gone
+                text = ", ".join(tags)
+            added = [x for x in added if x not in dropped_by(added, words, keep)]
         if tags is not None and cropped and self.closeup and \
                 not any(wd_tagger.norm(x) in _CLOSE_UP_NAMES for x in tags + added):
             added.append(CLOSE_UP)

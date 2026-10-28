@@ -181,13 +181,31 @@ def bar_for(n, cat, keep_score):
     return keep_score
 
 
+def judged_as(n, categories, renames=None, prefixes=()):
+    """The tag the tagger knows that an unknown tag n (normalised) is judged by, or None: its other name (renames,
+    {"legs crossed": "crossed legs"}), or for "barely visible pussy" / "wet pussy" (a word in prefixes in front of a
+    tag it knows) that tag."""
+    renames = renames or {}
+    if n in renames and renames[n] in categories:
+        return renames[n]
+    for p in prefixes:
+        if n.startswith(p + " "):
+            rest = n[len(p) + 1:].strip()
+            rest = renames.get(rest, rest)
+            if rest in categories:
+                return rest
+    return None
+
+
 def trim(caption, scores, categories, keep_words=(), keep_score=KEEP_SCORE, who=WHO, stand_ins=None,
-         stand_in_extra=0.15):
+         stand_in_extra=0.15, renames=None, prefixes=()):
     """(caption, dropped): a tag caption without the tags the tagger no longer sees on the crop. The first tag and the
     trigger word always stay; a sentence caption comes back as written.
     - a general tag, or a who tag (a category in `who`: characters, and species for e621), stays when it scores at
       least keep_score; a fur colour / marking / pattern tag (is_pattern) at half of it, a background tag
       (is_background) at background_bar(keep_score);
+    - a tag the tagger doesn't know but knows under another name (renames), or with a word in front (prefixes:
+      "barely visible pussy" is judged as "pussy"), is judged as that tag (judged_as);
     - a tag the tagger doesn't know stays, unless `stand_ins` names tags it does know that show the same thing
       ({"naked": ("nude",)}): then it stays when the best of them scores at least keep_score + stand_in_extra;
     - any other tag (rating, meta, artist, copyright...) stays."""
@@ -205,6 +223,10 @@ def trim(caption, scores, categories, keep_words=(), keep_score=KEEP_SCORE, who=
             ok = True
         elif cat == GENERAL or cat in who:
             ok = scores.get(n, 0.0) >= bar_for(n, cat, keep_score)
+        elif cat is None and judged_as(n, categories, renames, prefixes):
+            m = judged_as(n, categories, renames, prefixes)
+            c2 = categories[m]
+            ok = scores.get(m, 0.0) >= bar_for(m, c2, keep_score) if (c2 == GENERAL or c2 in who) else True
         elif cat is None and n in stand_ins:
             ok = max((scores.get(x, 0.0) for x in stand_ins[n]), default=0.0) >= keep_score + stand_in_extra
         else:

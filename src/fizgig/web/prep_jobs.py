@@ -246,9 +246,15 @@ def add_score(v):
     return f
 
 
+def drop_list(v):
+    """Always drop on crops' patterns from the page's text; missing (settings saved before it) is the default list."""
+    from fizgig.dataset.crop_captions import DROP_DEFAULT, drop_words
+    return drop_words(DROP_DEFAULT if v is None else v)
+
+
 def caption_settings(c):
     """The page's caption settings for crops ({copy, trim, tagger, keep_score, ext, trigger, closeup, add,
-    add_score}), checked: (settings or
+    add_score, drop, drop_list}), checked: (settings or
     None, the tagger's folder or ""). tagger is "wd-eva02" (the default) or "jtp3" (taggers.py). ValueError when Trim
     is on and that tagger isn't downloaded."""
     if not isinstance(c, dict):
@@ -261,7 +267,8 @@ def caption_settings(c):
     c = {"copy": c.get("copy", True) is not False, "trim": bool(c.get("trim")), "tagger": name,
          "keep_score": keep_score(c.get("keep_score"), mod.KEEP_SCORE), "ext": caption_ext(c.get("ext")),
          "trigger": str(c.get("trigger") or "").strip(), "closeup": c.get("closeup", True) is not False,
-         "add": bool(c.get("add")), "add_score": add_score(c.get("add_score")) if c.get("add") else wd_tagger.ADD_SCORE}
+         "add": bool(c.get("add")), "add_score": add_score(c.get("add_score")) if c.get("add") else wd_tagger.ADD_SCORE,
+         "drop": c.get("drop", True) is not False, "drop_list": drop_list(c.get("drop_list"))}
     folder = ""
     if c["copy"] and c["trim"]:
         folder = mod.find_model(MODELS_DIR)
@@ -278,7 +285,8 @@ def crop_captions(c, tagger=None):
     from fizgig.dataset.crop_captions import CropCaptions
     return CropCaptions(copy=c["copy"], ext=c["ext"], keep=[c["trigger"]], tagger=tagger if c["trim"] else None,
                         keep_score=c["keep_score"], closeup=c.get("closeup", True),
-                        add_score=c["add_score"] if c.get("add") and c["trim"] else None)
+                        add_score=c["add_score"] if c.get("add") and c["trim"] else None,
+                        drop=c.get("drop_list", drop_list(None)) if c.get("drop", True) else None)
 
 
 def _tagger(folder, name=None):

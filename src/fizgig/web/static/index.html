@@ -302,6 +302,14 @@
                     Copy the picture's caption to its crops</label></div>
                   <div><label class="checkbox-label"><input type="checkbox" id="prepCapCloseup" checked>
                     Tag crops as close-up</label></div>
+                  <div><label class="checkbox-label"><input type="checkbox" id="prepCapDrop" checked>
+                    Always drop these tags on crops</label></div>
+                  <div id="prepDropBox">
+                    <textarea id="prepDropList" class="w-path" rows="5" spellcheck="false"></textarea>
+                    <div class="field-hint">Comma or one per line; * means any words (* out of frame, imminent *).
+                      Case doesn't matter. What you crop to always stays, even if it's listed. Portrait and bust
+                      portrait stay on face crops and drop on every other close-up. <a href="#" id="prepDropReset">Reset to the default list</a></div>
+                  </div>
                   <div><label class="checkbox-label"><input type="checkbox" id="prepCapTrim">
                     Trim tags that don't fit the crop</label></div>
                   <div id="prepTrimBox" style="display:none">
