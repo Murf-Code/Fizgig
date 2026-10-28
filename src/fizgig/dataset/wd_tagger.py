@@ -4,7 +4,7 @@ demand, into Fizgig's models folder (model.onnx + selected_tags.csv, about 1.2 G
 Fizgig requirement) on the GPU when its CUDA provider is there, else the CPU; freed when the prep run ends.
 
 General tags (category 0) and character tags (4) the tagger no longer sees are dropped; fur colour, marking and
-pattern tags need only half the keep score. Rating (9), meta and any tag the tagger doesn't know (artists, your own tags) always
+pattern tags need only half the keep score, background tags a quarter more. Rating (9), meta and any tag the tagger doesn't know (artists, your own tags) always
 stay. Tags are only removed, never added."""
 import csv
 import os
@@ -155,12 +155,37 @@ def is_pattern(tag):
     return False
 
 
+_PLACES = {"outside", "inside", "outdoors", "indoors"}
+BACKGROUND_EXTRA = 0.25                  # a background tag needs this much more than other tags (capped at 0.95)
+
+
+def is_background(tag):
+    """A background tag ('simple background', 'white background', 'gradient background', 'outside'...): a crop shows
+    a little of the background around anything, so these need a higher score (background_bar)."""
+    n = norm(tag)
+    return n.endswith(" background") or n == "background" or n in _PLACES
+
+
+def background_bar(score):
+    return min(score + BACKGROUND_EXTRA, 0.95)
+
+
+def bar_for(n, cat, keep_score):
+    """The score a tag (normalised n, category cat) needs to stay on a crop."""
+    if cat == GENERAL and is_pattern(n):
+        return keep_score / 2
+    if cat == GENERAL and is_background(n):
+        return background_bar(keep_score)
+    return keep_score
+
+
 def trim(caption, scores, categories, keep_words=(), keep_score=KEEP_SCORE, who=WHO, stand_ins=None,
          stand_in_extra=0.15):
     """(caption, dropped): a tag caption without the tags the tagger no longer sees on the crop. The first tag and the
     trigger word always stay; a sentence caption comes back as written.
     - a general tag, or a who tag (a category in `who`: characters, and species for e621), stays when it scores at
-      least keep_score; a fur colour / marking / pattern tag (is_pattern) at half of it;
+      least keep_score; a fur colour / marking / pattern tag (is_pattern) at half of it, a background tag
+      (is_background) at background_bar(keep_score);
     - a tag the tagger doesn't know stays, unless `stand_ins` names tags it does know that show the same thing
       ({"naked": ("nude",)}): then it stays when the best of them scores at least keep_score + stand_in_extra;
     - any other tag (rating, meta, artist, copyright...) stays."""
@@ -177,7 +202,7 @@ def trim(caption, scores, categories, keep_words=(), keep_score=KEEP_SCORE, who=
         if i == 0 or n in keep:
             ok = True
         elif cat == GENERAL or cat in who:
-            ok = scores.get(n, 0.0) >= (keep_score / 2 if cat == GENERAL and is_pattern(n) else keep_score)
+            ok = scores.get(n, 0.0) >= bar_for(n, cat, keep_score)
         elif cat is None and n in stand_ins:
             ok = max((scores.get(x, 0.0) for x in stand_ins[n]), default=0.0) >= keep_score + stand_in_extra
         else:

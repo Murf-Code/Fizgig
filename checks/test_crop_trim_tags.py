@@ -5,6 +5,7 @@ arcanine, cut from a picture of an arcanine and a growlithe, kept arcanine, grow
 waist, no nipples and naked. Its scores below are JTP-3 Hydra's own on that crop."""
 import os
 
+import pytest
 from PIL import Image
 
 from fizgig.dataset import crop_captions as C
@@ -58,14 +59,14 @@ def _sheath(keep_score):
 def test_the_sheath_close_up_keeps_only_what_is_in_it():
     out, dropped = _sheath(J.KEEP_SCORE)                                   # Chris's settings: JTP-3 at 0.20
     assert out == ("@z4ush, anthro, balls, black fur, genital piercing, large balls, male, navel, nintendo, penis, "
-                   "piercing, pokemon, sheath, simple background, video games, white background")
+                   "piercing, pokemon, sheath, simple background, video games")
     for gone in ("arcanine", "growlithe", "armpits", "belly", "petite", "thin waist", "no nipples", "naked",
                  "multicolored fur", "orange fur", "stripes"):
         assert gone in dropped
-    # at 0.30 navel and white background go too, and black fur (a fur colour: half the bar) still stays
+    # at 0.30 navel and simple background go too, and black fur (a fur colour: half the bar) still stays
     out, _ = _sheath(0.30)
     assert out == ("@z4ush, anthro, balls, black fur, genital piercing, large balls, male, nintendo, penis, piercing, "
-                   "pokemon, sheath, simple background, video games")
+                   "pokemon, sheath, video games")
 
 
 def test_before_the_fix_these_were_never_judged():
@@ -133,5 +134,26 @@ def test_the_page_says_how_characters_and_species_are_trimmed():
     html = open(os.path.join(STATIC, "index.html"), encoding="utf-8").read()
     js = open(os.path.join(STATIC, "app.js"), encoding="utf-8").read()
     assert "Characters and species stay only if it sees" in html and "need only half the score" in html
+    assert "background tags 0.25 more" in html
     assert "species, character, artist and copyright tags and keeps" not in js
     assert "(naked, belly, armpits) by ones it does" in js
+
+
+def test_background_tags_need_a_higher_score():
+    for t in ("simple background", "white_background", "gradient background", "transparent background",
+              "detailed background", "outside", "inside"):
+        assert wd_tagger.is_background(t), t
+    for t in ("white fur", "background character", "sheath"):
+        assert not wd_tagger.is_background(t), t
+    assert wd_tagger.background_bar(0.2) == pytest.approx(0.45) and wd_tagger.background_bar(0.9) == 0.95
+    cats = {"simple background": 0, "white background": 0, "smile": 0}
+    out, dropped = wd_tagger.trim("me, simple background, white background, smile",
+                                  {"simple background": 0.46, "white background": 0.4, "smile": 0.3}, cats, (), 0.2)
+    assert out == "me, simple background, smile" and dropped == ["white background"]
+
+
+def test_the_sheath_close_up_backgrounds():
+    out, dropped = _sheath(0.20)                  # simple background 0.459 just clears 0.45; white 0.288 doesn't
+    assert "simple background" in out.split(", ") and "white background" in dropped
+    out, dropped = _sheath(0.30)
+    assert "simple background" in dropped and "white background" in dropped
