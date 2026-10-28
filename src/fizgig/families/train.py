@@ -1134,7 +1134,7 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
                  send_only_swap=True,
                  trigger_word=None, trigger_position="start", recaption_triggers=None, recaption_instruction=None,
                  recaption_instruction_detailed=None, recaption_task=None, recaption_task_detailed=None,
-                 captioner=None, finetune=False, ft_rotations=10, ft_save_every_rotations=1, ft_rotate_every=1, ft_max_parts=0,
+                 captioner=None, recaption_with=None, finetune=False, ft_rotations=10, ft_save_every_rotations=1, ft_rotate_every=1, ft_max_parts=0,
                  ft_start_window=0,
                  ft_epochs_done=0, ft_fused_backward=False, reg_lr_multiplier=0.2, preview_checkpoint=None,
                  preview_checkpoint_cache="auto", preview_int8=False, family_options=None,
@@ -1813,6 +1813,7 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
                   recaption_triggers=json.loads(recaption_triggers) if recaption_triggers else None,
                   recaption_instruction=recaption_instruction,
                   recaption_instruction_detailed=recaption_instruction_detailed, captioner_path=captioner,
+                  recaption_with=json.loads(recaption_with) if recaption_with else None,
                   recaption_task=recaption_task, recaption_task_detailed=recaption_task_detailed)
     # Gradient accumulation (Krea 2's rule): N micro-batches average into one update - each loss is divided by N, the
     # optimizer steps every N and at every epoch end (a partial group is flushed), so updates per epoch are
@@ -3169,7 +3170,8 @@ def setup_parser():
     p.add_argument("--reclaim_cooldown", type=int, default=200, help="steps between automatic reclaims")
     p.add_argument("--reclaim_max_tries", type=int, default=3, help="automatic reclaims a run at most")
     p.add_argument("--per_image_lr", action="store_true", help="scale each step by the image's loss-watch multiplier")
-    p.add_argument("--auto_recaption", action="store_true", help="recaption stuck images (needs --captioner)")
+    p.add_argument("--auto_recaption", action="store_true",
+                   help="recaption stuck images (needs --captioner or --recaption_with)")
     p.add_argument("--warmup_look_outliers", action="store_true", help="LR warm-up for Look Filter outliers")
     p.add_argument("--trigger_position", default="start", choices=("start", "end"))
     p.add_argument("--recaption_triggers", default=None,
@@ -3179,7 +3181,9 @@ def setup_parser():
     p.add_argument("--recaption_task", default=None, help="the first try's Captions tab task, for the log")
     p.add_argument("--recaption_task_detailed", default=None, help="the second try's Captions tab task, for the log")
     p.add_argument("--captioner", default=None,
-                   help="auto-recaption's captioner: the Krea 2 Qwen3-VL-4B text encoder file (as the Captions tab)")
+                   help="auto-recaption's Qwen3-VL captioner: the Krea 2 Qwen3-VL-4B text encoder file")
+    p.add_argument("--recaption_with", default=None,
+                   help="auto-recaption's model when not Qwen3-VL: the Captions tab's Florence-2 or tagger, as JSON")
     p.add_argument("--lokr_factor", type=int, default=8, help="LoKR only: w1 is about factor x factor")
     p.add_argument("--network_alpha", type=float, default=32)
     p.add_argument("--learning_rate", type=float, default=1e-4)
@@ -3345,6 +3349,7 @@ def main():
         recaption_triggers=a.recaption_triggers,
         recaption_instruction=a.recaption_instruction,
         recaption_instruction_detailed=a.recaption_instruction_detailed, captioner=a.captioner,
+        recaption_with=a.recaption_with,
         recaption_task=a.recaption_task, recaption_task_detailed=a.recaption_task_detailed,
         network_dim=a.network_dim, network_alpha=a.network_alpha, learning_rate=a.learning_rate,
         max_train_epochs=a.max_train_epochs, save_every_n_epochs=a.save_every_n_epochs,

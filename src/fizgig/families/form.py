@@ -347,10 +347,11 @@ def form(desc):
                  "profiles - real but unusual) start at x0.4 and ramp to x1.0 over the first ~4 epochs, so they refine "
                  "the identity instead of fighting it while it forms. Run the Look Filter (with 3 baselines) on this "
                  "folder first: it saves the scores with the dataset. Without them this does nothing."),
-            _row("KREA2_AUTO_RECAPTION", "Auto-recaption stuck images (Qwen3-VL rewrites the caption between "
-                 "epochs)", "check", "A stuck image gets a new caption written from what is in it, and a fresh start; "
-                 "a second try goes into more detail. Still stuck after that, it is left out of training - edit its "
-                 "caption to bring it back. Needs the Krea 2 text encoder set in Preferences."),
+            _row("KREA2_AUTO_RECAPTION", "Auto-recaption stuck images (the Captions tab's model rewrites the "
+                 "caption between epochs)", "check", "A stuck image gets a new caption written from what is in it, and "
+                 "a fresh start; a second try goes into more detail. Still stuck after that, it is left out of "
+                 "training - edit its caption to bring it back. Uses the model picked on the Captions tab: Qwen3-VL "
+                 "(needs the Krea 2 text encoder set in Preferences), Florence-2, or a tagger."),
             _row("RECAPTION_FIRST", "First try uses", "choice",
                  "The Captions tab's instruction for that task, as you've edited it there. The defaults are written "
                  "for a person (viewpoint, whether the face shows): for a style or a concept, set both tries to suit "
@@ -1000,7 +1001,7 @@ def _uncaptioned(folder, ext):
 
 
 def state(desc, values, image_folder="", captioner="", speed_file=False, checkpoint_file=False, base_file="",
-          checkpoint_path="", look_file=False, look_fetch=("", None)):
+          checkpoint_path="", look_file=False, look_fetch=("", None), recaption_with=None):
     """What the current values hide, grey out or note (see the module docstring), and force: values the page sets
     (as the desktop unticks what automagic3 owns). captioner: the shared captioner's file when it is set and on disk
     (auto-recaption needs it); speed_file: the preview Turbo LoRA is set and on disk; checkpoint_file: the preview
@@ -1035,10 +1036,16 @@ def state(desc, values, image_folder="", captioner="", speed_file=False, checkpo
             pace = 0.0
         if pace > 0:
             hidden.add("SAMPLE_STEPS")
-    if not captioner:
+    # auto-recaption uses the Captions tab's model (recaption_with; None when that is Qwen3-VL without its file, or
+    # from an older caller: then the captioner file decides, as before)
+    rw = recaption_with or {}
+    can_recap = bool(rw) or bool(captioner)
+    if not can_recap:
         hidden |= {"KREA2_AUTO_RECAPTION", "CAPTION_TRIGGER_WORD"}
-    if not captioner or not values.get("KREA2_AUTO_RECAPTION"):
-        hidden |= {"RECAPTION_FIRST", "RECAPTION_SECOND"}
+    if not can_recap or not values.get("KREA2_AUTO_RECAPTION") or rw.get("backend", "qwen") != "qwen":
+        hidden |= {"RECAPTION_FIRST", "RECAPTION_SECOND"}       # Qwen3-VL's instructions: the other models take none
+    if rw.get("model"):
+        notes["KREA2_AUTO_RECAPTION"] = f"Captions with {rw['model']} (picked on the Captions tab)."
     kind = _kind(desc, values)
     # Include sub-folders: a plain LoRA or a fine-tune (Subjects 2-4, DOP and Isolation keep one folder per
     # subject; an edit or a slider pairs files)
@@ -1631,7 +1638,7 @@ def _option_values(desc, values):
 
 
 def inputs(desc, values, *, models, python, repo_dir, image_folder, cache_root, samples_dir, inference_int8=False,
-           captioner="", caption_overrides=None, vram_reclaim=None):
+           captioner="", caption_overrides=None, vram_reclaim=None, recaption_with=None):
     """The launch plan's inputs from the form's values, as the desktop's _family_launch_inputs builds them."""
     v = batch_off(desc, {**DEFAULTS, **values})      # above Batch Size 1 any batch-1-only switch goes as off
     kind = _kind(desc, v)
@@ -1675,7 +1682,7 @@ def inputs(desc, values, *, models, python, repo_dir, image_folder, cache_root, 
                     "per_image_lr": b("KREA2_PER_IMAGE_LR") and desc.loss_watch,
                     "warmup": b("KREA2_WARMUP_LOOK") and desc.loss_watch,
                     "recaption": b("KREA2_AUTO_RECAPTION") and desc.loss_watch},
-        captioner=captioner, caption_trigger=s("CAPTION_TRIGGER_WORD"),
+        captioner=captioner, recaption_with=recaption_with, caption_trigger=s("CAPTION_TRIGGER_WORD"),
         caption_overrides=caption_overrides,
         recaption_tasks=(_recaption_key(s("RECAPTION_FIRST"), "training"),
                          _recaption_key(s("RECAPTION_SECOND"), "exhaustive")),

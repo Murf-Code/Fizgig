@@ -20,6 +20,7 @@ FAMILY_EDIT, ...) plus the values the app reads from its other tabs, all lower c
     captioner, caption_trigger, caption_overrides   auto-recaption: model path, trigger word, edited instructions
     recaption_triggers          auto-recaption's trigger word for each other folder ({key prefix: word})
     recaption_tasks             auto-recaption's (first try, second try) Captions tab task keys
+    recaption_with              auto-recaption's model: the Captions tab's pick, as its worker config (else Qwen3-VL)
     keep_checkpointing          a helper is set to train a share: gradient checkpointing stays on (both halves match)
     samples                     {"enabled", "every", "width", "height", "steps", "cfg", "negative", "seed",
                                  "at_first": ..., "prompts": [lines as typed on the Samples tab]}
@@ -944,14 +945,21 @@ def train_command(desc, inputs, plan):
     if multi_person_on(desc, st):    # the side-by-sides are hard on purpose: no verdicts, per-image LR or look warm-up
         lw = {**lw, "detect": False, "per_image_lr": False, "warmup": False}
     watch = [("detect", "--log_per_image_loss"), ("per_image_lr", "--per_image_lr"), ("warmup", "--warmup_look_outliers")]
-    can_recaption = bool(st.get("captioner"))   # every family captions with the shared captioner
+    # every family captions with the Captions tab's model (recaption_with); none saved: Qwen3-VL, the shared captioner
+    rw = st.get("recaption_with") or {}
+    qwen = rw.get("backend", "qwen") == "qwen"
+    can_recaption = bool(st.get("captioner")) if qwen else bool(rw)
     # multi-person mode reads triggers fused as captions load; a new AI caption is encoded as written, unfused
     can_recaption = can_recaption and not multi_person_on(desc, st)
     if can_recaption:
         watch.append(("recaption", "--auto_recaption"))
     cmd += [flag for key, flag in watch if lw.get(key)]
     if can_recaption and lw.get("recaption"):
-        cmd += ["--captioner", st.get("captioner", "")]
+        if qwen:
+            cmd += ["--captioner", st.get("captioner", "")]
+        else:
+            import json as _json
+            cmd += ["--recaption_with", _json.dumps(rw)]
         trig = _s(st.get("caption_trigger"))
         if trig and trig.lower() != "trigger_word":
             cmd += ["--trigger_word", trig]      # leads each AI caption, as the Captions tab writes it
@@ -960,7 +968,7 @@ def train_command(desc, inputs, plan):
             cmd += ["--recaption_triggers", _json.dumps(st["recaption_triggers"])]
         from fizgig.krea2.caption_text import RECAPTION_DEFAULTS, recaption_instruction
         ovr = st.get("caption_overrides") or {}
-        tasks = tuple(st.get("recaption_tasks") or RECAPTION_DEFAULTS)
+        tasks = tuple(st.get("recaption_tasks") or RECAPTION_DEFAULTS) if qwen else ()   # Qwen3-VL's instructions
         for key, (flag, task_flag) in zip(tasks, (("--recaption_instruction", "--recaption_task"),
                                                   ("--recaption_instruction_detailed", "--recaption_task_detailed"))):
             label, instr, edited = recaption_instruction(key, ovr)

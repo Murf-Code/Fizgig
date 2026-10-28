@@ -133,6 +133,37 @@ def test_auto_recaption_writes_the_subfolders_caption(tree, monkeypatch):
     assert open(tree / "a.txt", encoding="utf-8").read() == "a photo"           # the same-named one is untouched
 
 
+def test_auto_recaption_uses_the_captions_tabs_florence_model(tree, monkeypatch):
+    pytest.importorskip("torch")
+    from fizgig.families import loss_watch
+    from fizgig.scripts import batch_caption
+    tasks = []
+    monkeypatch.setattr(batch_caption, "_load_florence", lambda *a, **k: ("florence", "proc"))
+    monkeypatch.setattr(batch_caption, "_caption_florence",
+                        lambda m, p, d, path, task, n: tasks.append(task) or f"florence {len(tasks)}")
+    folders = {"": str(tree), "outfits/red/": str(tree / "outfits" / "red")}
+    obj = types.SimpleNamespace(captioner_path=None, instr=None, instr_detailed=None, trigger_word="zmain",
+                                triggers={}, trigger_position="end", caption_ext=".txt", auto_recaption=True,
+                                recap={"backend": "florence", "florence_model": "microsoft/Florence-2-base",
+                                       "florence_task": "<CAPTION>"},
+                                watch=types.SimpleNamespace(where=lambda k: where(k, folders)))
+    rows = loss_watch.Watch._recaption(obj, [("a", str(tree / "a.png"), 1), ("a", str(tree / "a.png"), 2)],
+                                       {"a": "item"}, "cpu")
+    assert tasks == ["<CAPTION>", "<MORE_DETAILED_CAPTION>"]      # the tab's task, then its most detailed
+    assert [r[2] for r in rows] == ["florence 1, zmain", "florence 2, zmain"]
+    assert open(tree / "a.txt", encoding="utf-8").read() == "florence 2, zmain"
+
+
+def test_launch_recaptions_with_florence_without_the_krea2_encoder():
+    from fizgig.families import form, launch
+    from fizgig.families.registry import get
+    desc = get("sdxl")
+    rw = {"backend": "florence", "model": "microsoft/Florence-2-base", "florence_model": "microsoft/Florence-2-base"}
+    st = form.state(desc, {"KREA2_AUTO_RECAPTION": True}, captioner="", recaption_with=rw)
+    assert "KREA2_AUTO_RECAPTION" not in st["hidden"] and "RECAPTION_FIRST" in st["hidden"]
+    assert "KREA2_AUTO_RECAPTION" in form.state(desc, {}, captioner="")["hidden"]   # Qwen3-VL without its file
+
+
 def test_the_per_image_view_finds_each_picture_and_caption(tree, tmp_path):
     from fizgig.web import image_loss
     # nothing stored about the folders: a run moved to a pod (or back) finds them from its own training folder

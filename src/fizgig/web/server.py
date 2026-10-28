@@ -489,6 +489,29 @@ def load_state() -> dict:
     return _read_json(STATE_FILE)
 
 
+def recaption_with(captioner=""):
+    """Auto-recaption's captioner: the model picked on the Captions tab (Qwen3-VL when none is saved or it is gone),
+    as the caption worker's config plus that tab's Florence-2 task or tag settings. None when Qwen3-VL is picked and
+    its file (the Krea 2 text encoder) is not set."""
+    saved = load_state().get("captions") or {}
+    model = str(saved.get("model") or "")
+    from fizgig.dataset import tag_captions
+    tid = tag_captions.tagger_id(model)
+    if not (tid or model in captions.FLORENCE_MODELS):
+        model = captions.QWEN_MODEL
+    if model == captions.QWEN_MODEL and not captioner:
+        return None
+    cfg = {**captions._worker_config(model, captioner, False), "model": model}
+    if tid:
+        pick = lambda k: (saved.get(k) or {}).get(tid) if isinstance(saved.get(k), dict) else None
+        cfg["tags"] = {"min_score": pick("tagMin"), "max_tags": saved.get("tagMax"), "style": saved.get("tagStyle"),
+                       "ratings": saved.get("tagRatings"), "char_score": pick("tagChar")}
+    elif model != captions.QWEN_MODEL:
+        task = str(saved.get("task") or "")
+        cfg["florence_task"] = task if task in captions.FLORENCE_TASKS else "<DETAILED_CAPTION>"
+    return cfg
+
+
 def save_state(changes: dict):
     if not changes:
         return
@@ -963,7 +986,8 @@ def _plan(family_key, values, image_folder, resume="", ft_continue=None, models=
         inference_int8=str(prefs.get("inference_int8", "")).strip() in ("1", "True", "true"),
         vram_reclaim={k: prefs.get(k, d) for k, d in launch.RECLAIM_PREF_DEFAULTS.items()},
         captioner=captioner if captioner and os.path.isfile(captioner) else "",
-        caption_overrides=dict(raw_ovr) if isinstance(raw_ovr, dict) else {})
+        caption_overrides=dict(raw_ovr) if isinstance(raw_ovr, dict) else {},
+        recaption_with=recaption_with(captioner if captioner and os.path.isfile(captioner) else ""))
     # auto-recaption's trigger word per folder: a sub-folder's or another subject's own (the Captions tab's for it, else
     # the word its captions open with), never the training folder's
     trig = {f"{rel}/": subject_trigger(f, ext) for rel, f in launch.run_subfolders(desc, inputs)}
@@ -3675,6 +3699,7 @@ class Handler(BaseHTTPRequestHandler):
                 dit = next((f.pref_key for f in desc.model_files if f.role == "dit"), "")
                 st = form.state(desc, vals, b.get("image_folder") or "",
                                 captioner=cap if cap and os.path.isfile(cap) else "",
+                                recaption_with=recaption_with(cap if cap and os.path.isfile(cap) else ""),
                                 speed_file=bool(spf and os.path.isfile(spf)),
                                 checkpoint_file=bool(ckf and os.path.isfile(ckf)),
                                 base_file=pref_path(prefs, dit) if dit else "",
