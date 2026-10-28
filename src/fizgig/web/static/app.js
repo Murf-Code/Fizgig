@@ -4479,7 +4479,7 @@ const prepSettings = () => ({
   mode: (document.querySelector('input[name="prepMode"]:checked') || {}).value || "Auto Prep (Face Crops)",
   mp: $("prepMp").value || "1.0", face: $("prepFace").value || "Largest Face", padding: $("prepPadding").value || "20",
   find: $("prepFind").value || "", capCopy: $("prepCapCopy").checked, capTrim: $("prepCapTrim").checked,
-  capCloseup: $("prepCapCloseup").checked,
+  capCloseup: $("prepCapCloseup").checked, capAdd: $("prepCapAdd").checked, addScore: $("prepAddScore").value || "0.70",
   tagger: $("prepTagger").value || "wd-eva02", keepScore: $("prepKeepScore").value || TAGGER_KEEP[$("prepTagger").value] || "0.35",
   replace: (document.querySelector('input[name="prepReplace"]:checked') || {}).value === "1"});
 // Trim tags' taggers (fizgig/dataset/taggers.py): what each is for, and the keep score a fresh pick starts at
@@ -4504,6 +4504,8 @@ async function loadPrep() {
     $("prepCapCopy").checked = saved.capCopy !== false;             // on unless turned off
     $("prepCapTrim").checked = !!saved.capTrim;
     $("prepCapCloseup").checked = saved.capCloseup !== false;       // on unless turned off
+    $("prepCapAdd").checked = !!saved.capAdd;
+    $("prepAddScore").value = saved.addScore || "0.70";
     $("prepTagger").value = saved.tagger in TAGGER_KEEP ? saved.tagger : "wd-eva02";
     $("prepKeepScore").value = saved.keepScore || TAGGER_KEEP[$("prepTagger").value];
     if (saved.padding) $("prepPadding").value = saved.padding;
@@ -5113,6 +5115,8 @@ function prepTrimBlocked() {
   if (p.mode === "Resize Only" || !(p.capCopy && p.capTrim)) return "";
   const t = prepTaggerInfo(), k = Number(p.keepScore);
   if (!(k > 0 && k < 1)) return `Keep tags scored at least: a number between 0 and 1, like ${TAGGER_KEEP[p.tagger] || "0.35"}.`;
+  const a = Number(p.addScore);
+  if (p.capAdd && !(a > 0 && a <= 1)) return "Add tags scored at least: a number between 0 and 1, like 0.70.";
   if (t && !t.path) return `Trim tags needs the ${prepTaggerName()}: press Download under Trim first, or untick Trim.`;
   return "";
 }
@@ -5165,6 +5169,7 @@ function prepTaggerShow() {
   const on = $("prepCapCopy").checked && $("prepCapTrim").checked, t = prepTaggerInfo() || {}, f = t.fetch || {};
   const id = $("prepTagger").value || "wd-eva02", name = prepTaggerName();
   $("prepTrimBox").style.display = on ? "" : "none";
+  $("prepAddScore").disabled = !$("prepCapAdd").checked;
   $("prepTaggerHint").textContent = TAGGER_HINTS[id] || "";
   const st = $("prepTaggerState");
   if (!on || !S.prep.maskOpts) return;
@@ -5235,6 +5240,7 @@ async function prepRun() {
   if (block) { $("prepState").textContent = block; return; }
   try {
     await api("/api/prep/run", {folder: S.imageFolder, ...p, captions: {copy: p.capCopy, trim: p.capTrim, tagger: p.tagger, keep_score: p.keepScore, closeup: p.capCloseup,
+      add: p.capAdd, add_score: p.addScore,
       ext: S.values.DATASET_CAPTION_EXT || ".txt", trigger: S.values.CAPTION_TRIGGER_WORD || ""}});
     $("prepLog").textContent = ""; S.prep.logSize = 0;
     pollPrep();
@@ -5519,6 +5525,8 @@ function wirePrep() {
   $("prepCapCloseup").addEventListener("change", savePrepSoon);
   $("prepCapTrim").addEventListener("change", () => { prepFindShow(); savePrepSoon(); });
   $("prepKeepScore").addEventListener("input", () => { prepFindShow(); savePrepSoon(); });
+  $("prepCapAdd").addEventListener("change", () => { prepTaggerShow(); prepFindShow(); savePrepSoon(); });
+  $("prepAddScore").addEventListener("input", () => { prepFindShow(); savePrepSoon(); });
   $("prepTagger").addEventListener("change", () => { prepTaggerPicked(); prepFindShow(); savePrepSoon(); });
   $("prepFind").addEventListener("change", () => prepSummary());
   $("prepRun").addEventListener("click", prepRun);

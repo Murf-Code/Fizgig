@@ -107,12 +107,14 @@ def preprocess(img, size):
 
 
 class Tagger:
-    """The loaded tagger: scores(img) -> {normalised tag: probability}; categories: {normalised tag: category}."""
+    """The loaded tagger: scores(img) -> {normalised tag: probability}; categories: {normalised tag: category};
+    names: its tags, normalised."""
     who = WHO
 
     def __init__(self, folder, log=print, session=None):
         self.tags = read_tags(os.path.join(folder, "selected_tags.csv"))
         self.categories = {norm(n): c for n, c in self.tags}
+        self.names = list(self.categories)
         if session is None:
             import onnxruntime as ort
             avail = ort.get_available_providers()
@@ -209,3 +211,28 @@ def trim(caption, scores, categories, keep_words=(), keep_score=KEEP_SCORE, who=
             ok = True
         (kept if ok else dropped).append(t)
     return (", ".join(kept), dropped) if dropped else (caption, [])
+
+
+ADD_SCORE = 0.70                         # Add missing tags: a tag it is at least this sure of
+
+
+def missing(tags, scores, categories, add_score=ADD_SCORE, who=WHO, names=None, aliases=None):
+    """The tags the tagger is sure of (at least add_score; a background tag at background_bar(add_score)) that the
+    caption's tags don't have, surest first, normalised. Only general and who tags (characters, species): never
+    rating, meta, artist or copyright tags. aliases ({older name: tag}) count an older name in the caption as there."""
+    aliases = aliases or {}
+    have = {norm(t) for t in tags}
+    have |= {aliases[n] for n in have if n in aliases}
+    out = []
+    for n in sorted(names if names is not None else scores, key=lambda n: -scores.get(n, 0.0)):
+        sc = scores.get(n, 0.0)
+        if sc < add_score:
+            break
+        cat = categories.get(n)
+        if n in have or (cat != GENERAL and cat not in who):
+            continue
+        if cat == GENERAL and is_background(n) and sc < background_bar(add_score):
+            continue
+        out.append(n)
+        have.add(n)
+    return out

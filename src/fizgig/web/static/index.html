@@ -312,8 +312,13 @@
                     <div class="field-row"><span class="field-label">Keep tags scored at least:</span>
                       <input type="text" id="prepKeepScore" class="w-num" value="0.35">
                       <span class="field-hint">lower keeps more</span></div>
+                    <div><label class="checkbox-label"><input type="checkbox" id="prepCapAdd">
+                      Add missing tags the tagger is sure of</label></div>
+                    <div class="field-row"><span class="field-label">Add tags scored at least:</span>
+                      <input type="text" id="prepAddScore" class="w-num" value="0.70">
+                      <span class="field-hint">higher adds fewer</span></div>
                     <div class="field-hint">The tagger looks at each crop, and a tag it no longer sees is
-                      dropped. It only removes tags, never adds any. Characters and species stay only if it sees
+                      dropped. It only adds tags when Add missing tags is on. Characters and species stay only if it sees
                       them in the crop. Fur colours, markings and patterns need only half the score, background tags 0.25 more. Your trigger word, the first tag,
                       rating and meta tags, and tags the tagger doesn't know (artists, your own) always stay.
                       Sentence captions are copied as written.</div>

@@ -246,7 +246,8 @@ def build(path, device="cpu", dtype=None):
 
 class Tagger:
     """The loaded tagger: scores(img) -> {normalised tag: probability}; categories: {normalised tag: e621 category};
-    who and stand_ins (STAND_INS, for the tags it doesn't know) for wd_tagger.trim."""
+    who and stand_ins (STAND_INS, for the tags it doesn't know) for wd_tagger.trim; names (its tags, normalised) and
+    aliases for wd_tagger.missing."""
     who = WHO
 
     def __init__(self, folder, log=print, net=None, labels=None, device=None):
@@ -259,6 +260,7 @@ class Tagger:
             log(f"Loading {LABEL} ({'GPU' if device.startswith('cuda') else 'CPU'}) ...\n")
             net, labels, self.background = build(os.path.join(folder, WEIGHTS), device)
         self.net, self.labels = net, list(labels)
+        self.names = [norm(t) for t in self.labels]
         self.implies = {norm(t): [norm(p) for p in imp] for t, (_c, imp) in self.meta.items() if imp}
         self.categories = {norm(t): self.meta.get(t, (GENERAL, []))[0] for t in self.labels}
         for old, new in self.aliases.items():

@@ -199,3 +199,80 @@ def test_close_up_is_on_unless_turned_off(tmp_path, monkeypatch):
     js = open(os.path.join(STATIC, "app.js"), encoding="utf-8").read()
     assert 'id="prepCapCloseup" checked>' in html and "Tag crops as close-up" in html
     assert "closeup: p.capCloseup" in js and "saved.capCloseup !== false" in js
+
+
+def test_missing_tags_the_tagger_is_sure_of():
+    cats = {"solo": 0, "mammal": 0, "simple background": 0, "explicit": 7, "fox": 5, "krystal": 4, "star fox": 3,
+            "animal vulva": 0, "tail": 0}
+    sc = {"solo": 0.92, "mammal": 1.0, "simple background": 0.8, "explicit": 0.99, "fox": 0.75, "krystal": 0.9,
+          "star fox": 0.9, "animal vulva": 0.95, "tail": 0.69}
+    got = wd_tagger.missing(["me", "Solo", "animal pussy"], sc, cats, 0.70, who=(4, 5),
+                            aliases={"animal pussy": "animal vulva"})
+    # surest first; no rating / meta / copyright; an older name in the caption counts; background needs 0.95
+    assert got == ["mammal", "krystal", "fox"]
+    # the WD tagger's who is characters only (no fox); a background at 0.8 clears 0.55 + 0.25
+    assert wd_tagger.missing([], sc, cats, 0.55) == ["mammal", "animal vulva", "solo", "krystal", "simple background",
+                                                     "tail"]
+    assert wd_tagger.missing([], sc, cats, 0.70, names=["tail", "solo"]) == ["solo"]   # only the tagger's own tags
+
+
+def test_crop_captions_add_what_the_tagger_is_sure_of():
+    class T:
+        categories = {"solo": 0, "tail": 0, "long hair": 0, "safe": 9}
+        names = ["solo", "tail", "long hair", "safe"]
+
+        def scores(self, img):
+            return {"solo": 0.95, "tail": 0.1, "long hair": 0.9, "safe": 0.99}
+    img = Image.new("RGB", (4, 4))
+    cc = C.CropCaptions(keep=["me"], tagger=T(), keep_score=0.35, closeup=True, add_score=0.70)
+    assert cc.caption_for("me, solo, tail", img) == ("me, solo, long hair, close-up", ["tail"], ["long hair", "close-up"])
+    assert cc.caption_for("me, solo_x, tail", img)[0] == "me, solo_x, solo, long_hair, close-up"   # underscore style
+    s = "A fox standing in a field, looking at the camera."
+    assert cc.caption_for(s, img) == (s, [], [])                                    # sentences: as written
+    off = C.CropCaptions(tagger=T(), keep_score=0.35)
+    assert off.caption_for("me, solo, tail", img) == ("me, solo", ["tail"], [])     # off by default
+    assert cc.text_for("me, solo, tail", img) == ("me, solo", ["tail"])            # text_for only trims
+
+
+def test_sheath_close_up_with_add_missing_tags():
+    class T(FakeJTP3):
+        names = None
+    sc = dict(SCORES, mammal=1.0, genitals=0.97, canid=0.93, solo=0.92, canine=0.9, **{"brown body": 0.83,
+              "explicit": 0.98, "close-up": 0.6})
+    t = T()
+    t.categories.update(mammal=0, genitals=0, canid=0, solo=0, canine=0, explicit=7, **{"brown body": 0, "close-up": 0})
+    t.scores = lambda img: dict(sc)
+    text, _, added = C.CropCaptions(tagger=t, keep_score=0.2, closeup=True, add_score=0.89).caption_for(
+        CAPTION, Image.new("RGB", (8, 8)))
+    assert added == ["mammal", "genitals", "canid", "solo", "canine", "close-up"]
+    assert text.endswith("video games, mammal, genitals, canid, solo, canine, close-up")
+
+
+def test_add_missing_tags_on_the_page(tmp_path, monkeypatch):
+    from fizgig import user_data
+    from fizgig.web import prep_jobs
+    monkeypatch.setattr(user_data, "MODELS_DIR", str(tmp_path))
+    d = tmp_path / wd_tagger.FOLDER
+    d.mkdir()
+    for f in wd_tagger.FILES:
+        (d / f).write_text("")
+    c, _ = prep_jobs.caption_settings({"trim": True, "add": True, "add_score": "0.89"})
+    assert c["add"] is True and c["add_score"] == 0.89 and prep_jobs.crop_captions(c, "T").add_score == 0.89
+    c, _ = prep_jobs.caption_settings({"trim": True, "add": True, "add_score": ""})
+    assert c["add_score"] == 0.70
+    assert prep_jobs.crop_captions({**c, "add": False}, "T").add_score is None     # off
+    assert prep_jobs.crop_captions({**c, "trim": False}, "T").add_score is None    # needs Trim's tagger
+    for bad in ("0", "1.5", "lots"):
+        with pytest.raises(ValueError, match="Add missing tags scored at least"):
+            prep_jobs.caption_settings({"trim": True, "add": True, "add_score": bad})
+    prep_jobs.caption_settings({"trim": True, "add": False, "add_score": "lots"})   # ignored while off
+    html = open(os.path.join(STATIC, "index.html"), encoding="utf-8").read()
+    js = open(os.path.join(STATIC, "app.js"), encoding="utf-8").read()
+    assert '<input type="checkbox" id="prepCapAdd">' in html and "Add missing tags the tagger is sure of" in html
+    # the same kind of box as Keep tags scored at least, on its own labelled row
+    assert ('<div class="field-row"><span class="field-label">Add tags scored at least:</span>\n'
+            '                      <input type="text" id="prepAddScore" class="w-num" value="0.70">') in html
+    assert 'id="prepKeepScore" class="w-num"' in html
+    assert "It only adds tags when Add missing tags is on." in html and "never adds any" not in html
+    assert "capAdd: $(\"prepCapAdd\").checked" in js and "add: p.capAdd, add_score: p.addScore" in js
+    assert "saved.addScore || \"0.70\"" in js and "Add tags scored at least: a number between 0 and 1" in js

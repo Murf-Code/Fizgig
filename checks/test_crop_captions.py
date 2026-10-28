@@ -206,7 +206,7 @@ def test_page_settings_checked(tmp_path, monkeypatch):
     monkeypatch.setattr(user_data, "MODELS_DIR", str(tmp_path))
     c, folder = prep_jobs.caption_settings({"copy": True, "trim": False, "ext": "caption", "trigger": " me "})
     assert c == {"copy": True, "trim": False, "tagger": "wd-eva02", "keep_score": 0.35, "ext": ".caption",
-                 "trigger": "me", "closeup": True} and folder == ""          # no tagger picked (an older page): the WD tagger
+                 "trigger": "me", "closeup": True, "add": False, "add_score": 0.7} and folder == ""          # no tagger picked (an older page): the WD tagger
     assert prep_jobs.caption_settings(None) == (None, "")
     with pytest.raises(ValueError, match="press Download under it"):
         prep_jobs.caption_settings({"trim": True})

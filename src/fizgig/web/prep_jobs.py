@@ -232,20 +232,36 @@ def keep_score(v, default=None):
     return f
 
 
+def add_score(v):
+    """Add missing tags' score from the page: a number from 0 to 1 (ValueError otherwise); blank is 0.70."""
+    from fizgig.dataset import wd_tagger
+    if v is None or str(v).strip() == "":
+        return wd_tagger.ADD_SCORE
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        f = -1.0
+    if not 0.0 < f <= 1.0:
+        raise ValueError("Add missing tags scored at least: a number between 0 and 1, like 0.70.")
+    return f
+
+
 def caption_settings(c):
-    """The page's caption settings for crops ({copy, trim, tagger, keep_score, ext, trigger, closeup}), checked: (settings or
+    """The page's caption settings for crops ({copy, trim, tagger, keep_score, ext, trigger, closeup, add,
+    add_score}), checked: (settings or
     None, the tagger's folder or ""). tagger is "wd-eva02" (the default) or "jtp3" (taggers.py). ValueError when Trim
     is on and that tagger isn't downloaded."""
     if not isinstance(c, dict):
         return None, ""
-    from fizgig.dataset import taggers
+    from fizgig.dataset import taggers, wd_tagger
     from fizgig.user_data import MODELS_DIR
     from fizgig.web.captions import caption_ext
     name = taggers.pick(c.get("tagger"))
     mod = taggers.get(name)
     c = {"copy": c.get("copy", True) is not False, "trim": bool(c.get("trim")), "tagger": name,
          "keep_score": keep_score(c.get("keep_score"), mod.KEEP_SCORE), "ext": caption_ext(c.get("ext")),
-         "trigger": str(c.get("trigger") or "").strip(), "closeup": c.get("closeup", True) is not False}
+         "trigger": str(c.get("trigger") or "").strip(), "closeup": c.get("closeup", True) is not False,
+         "add": bool(c.get("add")), "add_score": add_score(c.get("add_score")) if c.get("add") else wd_tagger.ADD_SCORE}
     folder = ""
     if c["copy"] and c["trim"]:
         folder = mod.find_model(MODELS_DIR)
@@ -261,7 +277,8 @@ def crop_captions(c, tagger=None):
         return None
     from fizgig.dataset.crop_captions import CropCaptions
     return CropCaptions(copy=c["copy"], ext=c["ext"], keep=[c["trigger"]], tagger=tagger if c["trim"] else None,
-                        keep_score=c["keep_score"], closeup=c.get("closeup", True))
+                        keep_score=c["keep_score"], closeup=c.get("closeup", True),
+                        add_score=c["add_score"] if c.get("add") and c["trim"] else None)
 
 
 def _tagger(folder, name=None):

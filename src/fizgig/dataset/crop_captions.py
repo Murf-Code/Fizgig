@@ -41,34 +41,48 @@ _CLOSE_UP_NAMES = {"close-up", "close up", "closeup"}
 class CropCaptions:
     """Image Prep's caption settings: copy (a crop gets its picture's caption), trim with a taggers.py Tagger (None:
     no trimming), keep_score (a general tag stays at or above it), ext (the dataset's caption extension), keep (the
-    trigger word), closeup (a crop's tag caption gets "close-up")."""
+    trigger word), closeup (a crop's tag caption gets "close-up"), add_score (with a tagger: tags it is at least
+    this sure of on the crop are added, wd_tagger.missing; None: none are)."""
 
     def __init__(self, copy=True, ext=".txt", keep=(), tagger=None, keep_score=wd_tagger.KEEP_SCORE, overwrite=False,
-                 closeup=False):
+                 closeup=False, add_score=None):
         self.copy, self.overwrite = bool(copy), bool(overwrite)
         self.ext = ext if str(ext or "").startswith(".") else "." + str(ext or "txt")
         self.keep = [k for k in keep if k]
         self.tagger, self.keep_score = tagger, float(keep_score)
         self.closeup = bool(closeup)
+        self.add_score = None if add_score is None else float(add_score)
 
     def text_for(self, caption, crop_img):
         """(caption, dropped): what the crop's caption says."""
+        return self._judge(caption, crop_img)[:2]
+
+    def _judge(self, caption, crop_img):
+        """(caption, dropped, the tagger's scores on the crop or None)."""
         from fizgig.dataset.tag_variants import split_tags
         if self.tagger is None or crop_img is None or split_tags(caption) is None:
-            return caption, []
+            return caption, [], None
         t = self.tagger
-        return wd_tagger.trim(caption, t.scores(crop_img), t.categories, self.keep, self.keep_score,
-                              who=getattr(t, "who", wd_tagger.WHO), stand_ins=getattr(t, "stand_ins", None))
+        scores = t.scores(crop_img)
+        text, dropped = wd_tagger.trim(caption, scores, t.categories, self.keep, self.keep_score,
+                                       who=getattr(t, "who", wd_tagger.WHO), stand_ins=getattr(t, "stand_ins", None))
+        return text, dropped, scores
 
     def caption_for(self, caption, crop_img, cropped=True):
-        """(caption, dropped, added): the crop's caption - trimmed (text_for), and for a crop (cropped) "close-up"
-        added to a tag caption without it."""
+        """(caption, dropped, added): the crop's caption - trimmed (text_for), the tags the tagger is sure of added
+        (add_score), and for a crop (cropped) "close-up" added to a tag caption without it."""
         from fizgig.dataset.tag_variants import split_tags
-        text, dropped = self.text_for(caption, crop_img)
+        text, dropped, scores = self._judge(caption, crop_img)
         tags = split_tags(text)
         added = []
+        if tags is not None and scores is not None and self.add_score is not None:
+            t = self.tagger
+            under = any("_" in x for x in tags) and not any(" " in x for x in tags)    # long_hair style
+            added = [n.replace(" ", "_") if under else n for n in wd_tagger.missing(
+                tags, scores, t.categories, self.add_score, who=getattr(t, "who", wd_tagger.WHO),
+                names=getattr(t, "names", None), aliases=getattr(t, "aliases", None))]
         if tags is not None and cropped and self.closeup and \
-                not any(wd_tagger.norm(t) in _CLOSE_UP_NAMES for t in tags):
+                not any(wd_tagger.norm(x) in _CLOSE_UP_NAMES for x in tags + added):
             added.append(CLOSE_UP)
         if added:
             text = ", ".join(tags + added)
