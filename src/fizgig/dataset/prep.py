@@ -2,8 +2,8 @@
 desktop app's Image Prep tab and the web UI's, so the two can't drift apart.
 
 Everything happens IN the training folder. Prep never upscales and sizes by AREA (megapixels), floored to the
-training bucket grid, so a prepped image is exactly what trains (see resize_image). Originals are moved to an
-'originals' subfolder unless the user chose to replace them.
+training bucket grid, so a prepped image is exactly what trains (see resize_image). Resized originals are moved to an
+'originals' subfolder unless the user chose to replace them; crops are added beside their pictures, which stay.
 
 The Look Filter scores every face against 3 baselines (the mean similarity - one photo would bake its own angle and
 light into every score) with the face embedder Image Prep's face settings pick (ArcFace for people, DINOv2 for furry /
@@ -268,18 +268,27 @@ def summary(folder, mode, replace, prep_mp, train_mp=None, find=""):
     if find and mode == "Auto Prep (Face Crops)":
         what = f"{count} → {sized}, plus a close-up of each {find} found"
     elif find and mode == "Face Crop Only":
-        what = (f"{count} → just the cropped {find} from each picture (the biggest one found), saved as PNG "
+        what = (f"{count} → a close-up of the {find} in each picture (the biggest one found), added as PNG "
                 f"named {CROP_PREFIX}{word_slug(find.replace('\n', ',').split(',')[0].strip() or find)}_001.png and on, as the close-ups "
                 f"of Resize + close-up crops are")
     elif mode == "Auto Prep (Face Crops)":
         what = f"{count} → {sized}, plus one face close-up each{f' (≈{n * 2} files)' if n else ''}"
     elif mode == "Face Crop Only":
-        what = (f"{count} → just the cropped face from each photo, saved as PNG named {FACE_CROP_PREFIX}001.png and "
+        what = (f"{count} → a face close-up from each photo, added as PNG named {FACE_CROP_PREFIX}001.png and "
                 f"on, as the close-ups of Resize + close-up crops are")
     else:
         what = f"{count} → {sized}"
-    originals = ("Your original files are replaced ⚠ there is no undo." if replace else
-                 "Your originals are moved to the 'originals' subfolder — nothing is deleted.")
+    if mode == "Face Crop Only":
+        originals = ("Your pictures and captions stay as they are; the crops are added beside them. Pictures with "
+                     "nothing to crop are only resized" + (" ⚠ in place, no undo." if replace else
+                                                            ", their old copies kept in 'originals'."))
+    elif mode == "Auto Prep (Face Crops)":
+        originals = ("Your pictures stay in the dataset, resized, with the crops added beside them. " +
+                     ("Your original files are replaced ⚠ there is no undo." if replace else
+                      "Their full-size originals are kept in the 'originals' subfolder — nothing is deleted."))
+    else:
+        originals = ("Your original files are replaced ⚠ there is no undo." if replace else
+                     "Your originals are moved to the 'originals' subfolder — nothing is deleted.")
     lines = [f"{what}. Everything lands in your training folder. {originals}"]
     if mode != "Resize Only" and median_area is not None and median_area <= area:
         what_cut = "close-ups" if find else "face close-ups"
@@ -439,6 +448,11 @@ class Prep:
         return self.detector.get_largest(faces), ""
 
     @staticmethod
+    def is_crop(filename):
+        """A crop Fizgig made (FaceCrop_ / Crop_): never cropped again on a re-run."""
+        return filename.startswith(FACE_CROP_PREFIX) or filename.startswith(CROP_PREFIX)
+
+    @staticmethod
     def _next_index(folder, stem, first_part=False):
         """The next free number after stem (FaceCrop_ / Crop_paw_): every file of that name counts - a picture, its
         caption or mask, or a caption left behind by a crop that was deleted (Crop_sheath_045.txt), so a new crop
@@ -474,27 +488,24 @@ class Prep:
 
     def _place_crop(self, filepath, img, crop_path, folder, replace, crop_mask=None):
         """Close-up crops only: the crop is saved under its own name (crop_path: FaceCrop_NNN / Crop_<word>_NNN, as
-        the Resize + close-up crops mode names them), gets the picture's caption the way those crops do (copied,
-        trimmed, close-up, the target kept), and the picture, its caption and its mask go to the run's originals
-        folder (deleted when replacing)."""
+        the Resize + close-up crops mode names them) and gets the picture's caption the way those crops do (copied,
+        trimmed, close-up, the target kept). The picture, its caption and its mask stay where they are, untouched -
+        the crop is added beside them (replace doesn't apply: nothing is overwritten). A mask gets the same crop."""
         from fizgig.dataset.crop_captions import CropCaptions, find_caption
         atomic_png_save(img, crop_path)
         caps = self.captions if self.captions is not None else CropCaptions()     # None: the caption copied as is
-        cap_src = find_caption(filepath, caps.ext)
-        if cap_src:
+        if find_caption(filepath, caps.ext):
             try:
                 caps.to_crop(filepath, crop_path, self.log, img)
             except Exception as e:
                 self.log(f"  caption not copied: {e}\n")
-        self.handle_original(filepath, crop_path, folder, replace)
-        if cap_src and os.path.exists(cap_src):              # the picture's caption goes with the picture
-            if replace:
-                os.remove(cap_src)
-            else:
-                d = self._originals_for(folder)
-                os.makedirs(d, exist_ok=True)
-                shutil.move(cap_src, os.path.join(d, os.path.basename(cap_src)))
-        self.keep_mask(filepath, crop_path, folder, replace, crop_mask)
+        if crop_mask is not None:
+            from fizgig.dataset.masks import MASK_SUFFIX, mask_for, read_mask
+            m = mask_for(filepath)
+            if m:
+                out_mask = os.path.splitext(crop_path)[0] + MASK_SUFFIX + ".png"
+                atomic_png_save(crop_mask(read_mask(m)), out_mask)
+                self.log(f"  its mask: cropped the same way -> {os.path.basename(out_mask)}\n")
 
     # ---- the three modes ----
     def run(self, mode, folder, prep_mp, face_label="Largest Face", face_padding=20.0, replace=False):
@@ -561,7 +572,7 @@ class Prep:
         for filepath in image_files(source):
             filename = os.path.basename(filepath)
             ext = os.path.splitext(filename)[1].lower()
-            if filename.startswith(FACE_CROP_PREFIX):
+            if self.is_crop(filename):
                 self.log(f"Skipped (derivative): {filename}\n")
                 skipped += 1
                 continue
@@ -635,7 +646,7 @@ class Prep:
             filename = os.path.basename(filepath)
             ext = os.path.splitext(filename)[1].lower()
             base = os.path.splitext(filename)[0]
-            if base.startswith(FACE_CROP_PREFIX):
+            if self.is_crop(filename):
                 self.log(f"Skipped (derivative): {filename}\n")
                 skipped += 1
                 continue
@@ -705,7 +716,7 @@ class Prep:
         for filepath in image_files(source):
             filename = os.path.basename(filepath)
             ext = os.path.splitext(filename)[1].lower()
-            if filename.startswith(FACE_CROP_PREFIX) or filename.startswith(CROP_PREFIX):
+            if self.is_crop(filename):
                 self.log(f"Skipped (derivative): {filename}\n")
                 skipped += 1
                 continue
@@ -777,7 +788,7 @@ class Prep:
             filename = os.path.basename(filepath)
             ext = os.path.splitext(filename)[1].lower()
             base = os.path.splitext(filename)[0]
-            if base.startswith("FaceCrop_") or base.startswith(CROP_PREFIX):
+            if self.is_crop(filename):
                 self.log(f"Skipped (derivative): {filename}\n")
                 skipped += 1
                 continue

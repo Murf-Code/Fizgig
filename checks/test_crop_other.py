@@ -123,7 +123,7 @@ def test_crop_only_crops_the_biggest(tmp_path):
     prep.Prep(log.append, None, prep.ThingFinder(seg, ["paw", "hand"])).run(
         "Face Crop Only", str(tmp_path), 4.2, prep.OTHER_TARGET, 0.0, False)
     assert Image.open(tmp_path / "Crop_hand_001.png").size == (60, 60)       # named for the word that was found
-    assert not (tmp_path / "a.png").exists() and (tmp_path / "originals" / "a.png").exists()
+    assert (tmp_path / "a.png").exists() and not (tmp_path / "originals").exists()   # the picture stays
     assert "[hand]" in "".join(log)
 
 
@@ -178,14 +178,13 @@ def test_face_paths_unchanged(tmp_path, mode, label):
     if mode == "Auto Prep (Face Crops)":
         assert out["old"] == out["new"]
         return
-    # Close-up crops only now names its crops as Auto Prep does (FaceCrop_NNN, the caption with it; the picture and
-    # its caption to originals): the same crops, pixel for pixel, under those names
+    # Close-up crops only now names its crops as Auto Prep does (FaceCrop_NNN, the caption with it) and adds them
+    # beside the pictures, which stay with their captions untouched: the same crops, pixel for pixel
     old_f, new_f = out["old"][1], out["new"][1]
-    assert sorted(new_f) == ["FaceCrop_001.png", "FaceCrop_001.txt", "FaceCrop_002.png", "originals/a.jpg",
-                             "originals/a.txt", "originals/b.png"]
+    assert sorted(new_f) == ["FaceCrop_001.png", "FaceCrop_001.txt", "FaceCrop_002.png", "a.jpg", "a.txt", "b.png"]
     assert new_f["FaceCrop_001.png"] == old_f["a.png"] and new_f["FaceCrop_002.png"] == old_f["b.png"]
-    assert new_f["FaceCrop_001.txt"] == new_f["originals/a.txt"] == b"x"
-    assert new_f["originals/a.jpg"] == old_f["originals/a.jpg"]
+    assert new_f["FaceCrop_001.txt"] == new_f["a.txt"] == b"x"
+    assert new_f["a.jpg"] == old_f["originals/a.jpg"]
 
 
 # ---- the run: checks before it starts, SAM freed after ----
@@ -384,6 +383,10 @@ def test_summary_unchanged_for_faces_and_says_what_is_found(tmp_path):
             new_s, old_s = prep.summary(str(tmp_path), mode, rep, 1.0, 2.0), old.summary(str(tmp_path), mode, rep, 1.0, 2.0)
             if mode == "Face Crop Only":                  # it now says what the crops are named; the rest as it was
                 assert "FaceCrop_001.png" in new_s["lines"][0] and new_s["lines"][1:] == old_s["lines"][1:]
+                assert "stay as they are" in new_s["lines"][0]
+                assert new_s["warn"] == old_s["warn"]
+            elif mode == "Auto Prep (Face Crops)":        # it now says the resized pictures stay beside the crops
+                assert "stay in the dataset" in new_s["lines"][0] and new_s["lines"][1:] == old_s["lines"][1:]
                 assert new_s["warn"] == old_s["warn"]
             else:
                 assert new_s == old_s

@@ -257,7 +257,7 @@ def test_test_button_boxes_and_labels(tmp_path, monkeypatch):
 def test_summary_reads_right(tmp_path):
     _pic(tmp_path / "a.png", 200, 160, 1)
     s = prep.summary(str(tmp_path), "Face Crop Only", False, 1.0, None, F.class_label("penis").lower())
-    assert "just the cropped penis from each picture" in s["lines"][0] and "Crop_penis_001.png" in s["lines"][0]
+    assert "a close-up of the penis in each picture" in s["lines"][0] and "Crop_penis_001.png" in s["lines"][0]
     s = prep.summary(str(tmp_path), "Auto Prep (Face Crops)", False, 1.0, None, F.class_label("pawpads").lower())
     assert "a close-up of each paw pads found" in s["lines"][0]
     server = open(os.path.join(HERE, "..", "src", "fizgig", "web", "server.py"), encoding="utf-8").read()

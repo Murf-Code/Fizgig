@@ -1,8 +1,10 @@
 """Where Image Prep puts things, pinned: every mode that makes crops names them the same way - Crop_<word>_NNN for
 what you type, FaceCrop_NNN for faces, numbered on after any file of that name already there (Chris: "no matter
 what crop setting the file name should remain consistent"). Resize + close-up crops saves them beside the resized
-pictures; Close-up crops only (Face Crop Only) keeps just the crop, the picture going to originals. Either way a run's originals (and the
-captions they had) go into ONE originals folder - originals, or originals_2 when an earlier run's originals are there.
+pictures; Close-up crops only (Face Crop Only) adds the crop beside its picture, which stays in the dataset with its caption
+untouched (Chris: "when it crops an image, I still want that original image to remain in the dataset") - no originals
+folder for crops. Resized originals go into ONE originals folder - originals, or originals_2 when an earlier run's
+originals are there.
 Chris's Zaush run (Face Crop Only, Other… sheath, captions on) put each original in its own folder, originals_2 to
 originals_46: the caption step forgot the run's originals folder after every picture, so the next one picked a new one."""
 import os
@@ -63,14 +65,13 @@ def _things(tmp_path, mode, caps):
 def test_crop_only_other_names_crops_like_auto_prep(tmp_path, trim, earlier):
     _folder(tmp_path, earlier=earlier)
     _things(tmp_path, "Face Crop Only", _caps(trim))
-    o = "originals_2" if earlier else "originals"
-    want = [f"{o}/p{i}.{e}" for i in range(4) for e in ("jpg", "txt")]
+    want = [f"p{i}.{e}" for i in range(4) for e in ("jpg", "txt")]                # the pictures stay, untouched
     want += [f"Crop_sheath_{i:03d}.{e}" for i in range(1, 5) for e in ("png", "txt")]
     if earlier:
         want.append("originals/old.jpg")
     assert _tree(tmp_path) == sorted(want)
     for i in range(4):
-        assert (tmp_path / o / f"p{i}.txt").read_text() == CAP                  # the picture's caption, as it was
+        assert (tmp_path / f"p{i}.txt").read_text() == CAP                       # the picture's caption, as it was
     assert (tmp_path / "Crop_sheath_001.txt").read_text() == ("ruaidri, sheath, wolf" if trim else CAP)
     w, h = Image.open(tmp_path / "Crop_sheath_001.png").size
     assert w == h and w < 200
@@ -117,11 +118,13 @@ def test_crop_only_nothing_found_stays_whole_under_its_name(tmp_path):
     assert (tmp_path / "p0.txt").read_text() == CAP
 
 
-def test_crop_only_replace_deletes_the_picture_and_its_caption(tmp_path):
+def test_crop_only_replace_still_keeps_the_picture_and_its_caption(tmp_path):
     _folder(tmp_path, n=1, earlier=False)
+    before = (tmp_path / "p0.jpg").read_bytes()
     prep.Prep(lambda _t: None, None, prep.ThingFinder(_Seg(), ["sheath"]), captions=_caps(False)).run(
         "Face Crop Only", str(tmp_path), 0.05, prep.OTHER_TARGET, 20.0, True)
-    assert _tree(tmp_path) == ["Crop_sheath_001.png", "Crop_sheath_001.txt"]
+    assert _tree(tmp_path) == ["Crop_sheath_001.png", "Crop_sheath_001.txt", "p0.jpg", "p0.txt"]
+    assert (tmp_path / "p0.jpg").read_bytes() == before and (tmp_path / "p0.txt").read_text() == CAP
 
 
 def test_crop_only_without_caption_settings_still_keeps_the_caption(tmp_path):
@@ -131,7 +134,7 @@ def test_crop_only_without_caption_settings_still_keeps_the_caption(tmp_path):
     prep.Prep(lambda _t: None, None, prep.ThingFinder(_Seg(), ["sheath"])).run(
         "Face Crop Only", str(tmp_path), 0.05, prep.OTHER_TARGET, 20.0, False)
     assert (tmp_path / "Crop_sheath_001.txt").read_text() == CAP
-    assert (tmp_path / "originals" / "p0.txt").read_text() == CAP
+    assert (tmp_path / "p0.txt").read_text() == CAP and not (tmp_path / "originals").exists()
 
 
 def test_mask_follows_the_crop_name(tmp_path):
@@ -139,8 +142,8 @@ def test_mask_follows_the_crop_name(tmp_path):
     Image.new("L", (300, 300), 200).save(tmp_path / "p0-masklabel.png")
     _things(tmp_path, "Face Crop Only", _caps(False))
     names = _tree(tmp_path)
-    assert "Crop_sheath_001-masklabel.png" in names and "originals/p0-masklabel.png" in names
-    assert "p0-masklabel.png" not in names
+    assert "Crop_sheath_001-masklabel.png" in names and "p0-masklabel.png" in names   # the picture keeps its mask
+    assert not any(n.startswith("originals") for n in names)
 
 
 def test_resize_only_keeps_names(tmp_path):
@@ -163,18 +166,19 @@ def test_auto_prep_other_crop_names_beside_the_pictures(tmp_path, earlier):
     assert not any(n.startswith("originals_3") for n in names) and not any("/Crop_" in n for n in names), names
 
 
-def test_face_crop_only_with_captions_one_originals_folder(tmp_path):
+def test_face_crop_only_keeps_the_pictures_and_makes_no_originals_folder(tmp_path):
     _folder(tmp_path, n=3)
     prep.Prep(lambda _t: None, _Det([F._face_info(60, 60, 140, 140)]), captions=_caps(True)).run(
         "Face Crop Only", str(tmp_path), 0.05, "Largest Face", 20.0, False)
     dirs = sorted(d for d in os.listdir(tmp_path) if os.path.isdir(tmp_path / d))
-    assert dirs == ["originals", "originals_2"]
-    assert sorted(os.listdir(tmp_path / "originals_2")) == [f"p{i}.{e}" for i in range(3) for e in ("jpg", "txt")]
+    assert dirs == ["originals"]                                                 # only the earlier run's
     files = sorted(n for n in os.listdir(tmp_path) if os.path.isfile(tmp_path / n))
-    assert files == [f"FaceCrop_{i:03d}.{e}" for i in range(1, 4) for e in ("png", "txt")]   # as Auto Prep names faces
+    assert files == sorted([f"FaceCrop_{i:03d}.{e}" for i in range(1, 4) for e in ("png", "txt")] +   # as Auto Prep names faces
+                           [f"p{i}.{e}" for i in range(3) for e in ("jpg", "txt")])
+    assert all((tmp_path / f"p{i}.txt").read_text() == CAP for i in range(3))
 
 
-def test_a_second_run_uses_a_fresh_folder(tmp_path):
+def test_a_second_run_never_crops_its_crops(tmp_path):
     _folder(tmp_path, n=2, earlier=False)
     p = prep.Prep(lambda _t: None, None, prep.ThingFinder(_Seg(), ["sheath"]), captions=_caps(True))
     p.run("Face Crop Only", str(tmp_path), 0.05, prep.OTHER_TARGET, 20.0, False)
@@ -182,10 +186,9 @@ def test_a_second_run_uses_a_fresh_folder(tmp_path):
         Image.fromarray(np.random.default_rng(9 + i).integers(0, 255, (300, 300, 3), dtype=np.uint8)).save(
             tmp_path / f"q{i}.jpg")
     p.run("Face Crop Only", str(tmp_path), 0.05, prep.OTHER_TARGET, 20.0, False)
-    assert sorted(os.listdir(tmp_path / "originals_2")) == ["q0.jpg", "q1.jpg"]   # the second run's own folder
-    assert sorted(os.listdir(tmp_path / "originals")) == [f"p{i}.{e}" for i in range(2) for e in ("jpg", "txt")]
-    assert sorted(n for n in os.listdir(tmp_path) if n.endswith(".png")) == [f"Crop_sheath_{i:03d}.png" for i in range(1, 5)]
-    assert not (tmp_path / "originals_3").exists()
+    # the pictures stay and are cropped again (p0, p1 -> 003, 004; q0, q1 -> 005, 006); the crops never are
+    assert sorted(n for n in os.listdir(tmp_path) if n.endswith(".png")) == [f"Crop_sheath_{i:03d}.png" for i in range(1, 7)]
+    assert not any(n.startswith("originals") for n in os.listdir(tmp_path))
 
 
 # ---- the crop's target stays in its caption ----

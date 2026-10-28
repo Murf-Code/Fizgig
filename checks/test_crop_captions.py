@@ -177,9 +177,8 @@ def test_crop_only_trims_in_place_and_keeps_the_original(tmp_path):
               captions=C.CropCaptions(keep=["ruaidri"], tagger=FakeTagger(SEEN))).run(
         "Face Crop Only", str(tmp_path), 4.2, "Largest Face", 20.0, False)
     assert (tmp_path / "FaceCrop_001.txt").read_text() == "ruaidri, wolf, smile"     # named like Auto Prep's crops
-    assert (tmp_path / "FaceCrop_001.png").exists() and not (tmp_path / "a.txt").exists()
-    assert (tmp_path / "originals" / "a.txt").read_text() == CAP
-    assert (tmp_path / "originals" / "a.jpg").exists()
+    assert (tmp_path / "FaceCrop_001.png").exists() and (tmp_path / "a.txt").read_text() == CAP   # left as it was
+    assert (tmp_path / "a.jpg").exists() and not (tmp_path / "originals").exists()
 
 
 def test_crop_only_no_face_leaves_the_caption(tmp_path):
