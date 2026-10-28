@@ -183,7 +183,7 @@ Model files download from the **Preferences** tab: one **Download models for me*
 
 Prefer Vast.ai? The same image runs there: **[Fizgig on Vast.ai](https://cloud.vast.ai/?ref_id=757773&creator_id=757773&name=Fizgig%20LoRa%20Training%20and%20Fine-tuning)** ([guide](docs/VAST.md)).
 
-Step by step: [Quick start](docker/README.md#quick-start-nothing-installed-on-your-computer). The pod also has a drag-and-drop file manager for big datasets and fine-tunes (the **File manager** button in the sidebar), one-click model downloads and an optional auto-stop when training finishes. A pod updates to the newest Fizgig each time it starts; to keep one on a version, [set `FIZGIG_REF`](docker/README.md#keep-a-pod-on-one-version). [The full pod guide](docker/README.md).
+Step by step: [Quick start](docker/README.md#quick-start-nothing-installed-on-your-computer). The pod also has a drag-and-drop file manager for big datasets and fine-tunes (the **File manager** button in the sidebar), one-click model downloads and an optional auto-stop when training finishes. Opened from your own Fizgig, a pod runs the same version as your computer ([which Fizgig a pod runs](docker/README.md#which-fizgig-a-pod-runs)). [The full pod guide](docker/README.md).
 
 Mid-job on the old pod with the remote desktop? It stays available as **[Fizgig Classic v7.x](https://console.runpod.io/deploy?type=GPU&gpu=RTX+5090&count=1&template=faoq8ed6um&ref=vkb387ep)**, and pods you already have keep running as they are.
 

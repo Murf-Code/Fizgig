@@ -292,11 +292,58 @@ _CHECK_JS = r"""
       if (!r.ok) throw new Error(r.status);
       return r.json();
     }).then(function (d) {
-      window.pywebview.api.build_check(d.commit || '');
+      window.pywebview.api.build_check(d.commit || '', d.pod_version || null);
     }).catch(function () { if (++tries < 400) setTimeout(ask, 3000); });   // the login page first, then it answers
   }
   ask();
 })();
+"""
+
+
+# a pod on another build that can switch (pod_version.py): asked to run this computer's, with a cover while it does
+# (its web UI starts again: a few seconds, a minute or two when the version needs other packages), then the page
+# again. A pod that can't now (busy, or the version isn't on GitHub) gets the usual build note or cover, with why.
+_MATCH_JS = r"""
+(function (mine, by) {
+  if (document.getElementById('fizgigMatch')) return;
+  var tok = function () { var t = document.querySelector('meta[name="fizgig-token"]'); return t ? t.content : ''; };
+  var o = document.createElement('div');
+  o.id = 'fizgigMatch';
+  o.style.cssText = 'position:fixed;inset:0;z-index:2147483646;background:color-mix(in srgb, var(--overlay, #0A0E14) 92%, transparent);display:flex;' +
+    'align-items:center;justify-content:center;padding:16px;font:14px Segoe UI,system-ui,sans-serif;color:var(--text-primary, #F0F4F8)';
+  var c = document.createElement('div');
+  c.style.cssText = 'max-width:520px;background:var(--bg-surface, #1A2029);border:1px solid var(--border, #2A3341);border-radius:12px;padding:22px 24px;text-align:center';
+  var h = document.createElement('div');
+  h.textContent = "Putting this pod on this computer's Fizgig";
+  h.style.cssText = 'font-size:17px;font-weight:700;margin-bottom:8px';
+  var p = document.createElement('div');
+  p.textContent = 'So the two work together (moving a run, helpers, this window). It takes a few seconds, a minute or two when the version needs other packages.';
+  p.style.cssText = 'line-height:1.5;color:var(--text-secondary, #93A3B5)';
+  c.appendChild(h); c.appendChild(p); o.appendChild(c);
+  var shown = false, t0 = Date.now();
+  var show = function () { if (!shown) { shown = true; document.body.appendChild(o); } };
+  var give = function (why) { o.remove(); window.pywebview.api.build_show(why || ''); };
+  var wait = function () {
+    if (Date.now() - t0 > 10 * 60 * 1000) return give("It didn't come back on this computer's Fizgig within 10 minutes.");
+    fetch('/api/about', {credentials: 'same-origin', headers: {'X-Fizgig-Token': tok()}}).then(function (r) {
+      if (r.status === 403) { location.reload(); return null; }   // started again: a new page token, a new page
+      if (!r.ok) throw new Error(r.status); return r.json();
+    }).then(function (d) {
+      if (!d) return;
+      if (d.commit === mine) return location.reload();
+      var v = d.pod_version || {};
+      if (v.state === 'failed') return give(v.error);
+      setTimeout(wait, 3000);
+    }).catch(function () { setTimeout(wait, 3000); });     // its web UI is starting again
+  };
+  fetch('/api/pod/match', {method: 'POST', credentials: 'same-origin',
+    headers: {'Content-Type': 'application/json', 'X-Fizgig-Token': tok()},
+    body: JSON.stringify({commit: mine, by: by})}).then(function (r) { return r.json(); }).then(function (d) {
+    if (d.same) return;
+    if (d.switching) { show(); setTimeout(wait, 4000); return; }
+    give(d.busy || d.error || '');
+  }).catch(function () { give(''); });
+})(__ARGS__);
 """
 
 
@@ -573,18 +620,33 @@ def main():
             def build(self):
                 return _build()
 
-            def build_check(self, pod_build):
+            def build_check(self, pod_build, pod_version=None):
                 try:
                     url = window.get_current_url() or ""
                 except Exception:
                     url = ""
-                pod = ".proxy.runpod.net" in url or not url
+                pv = pod_version if isinstance(pod_version, dict) else {}
+                pod = ".proxy.runpod.net" in url or not url or bool(pv)
                 v = build_verdict(pod_build, pod=pod, name="" if pod else _pod_name(url.split("#")[0]))
+                shown[0] = v
+                if (not v["ok"] or v.get("older")) and pv.get("allowed") and _build():
+                    import socket                 # a pod that can switch: to this computer's build
+                    window.evaluate_js(_MATCH_JS.replace("__ARGS__", json.dumps(_build()) + ", " +
+                                                         json.dumps(socket.gethostname())))
+                    return {**v, "matching": True}
+                return self.build_show("")
+
+            def build_show(self, why):
+                """The build note or cover for the page as it is (why: what stopped the pod switching)."""
+                v = shown[0] or {"ok": True}
+                why = str(why or "").strip()
                 if not v["ok"]:
                     window.evaluate_js(_BLOCK_JS.replace("__ARGS__", json.dumps(v["title"]) + ", " +
-                                                         json.dumps(v["message"])))
+                                                         json.dumps(v["message"] + (f" (It can't switch to this "
+                                                                    f"computer's: {why})" if why else ""))))
                 elif v.get("note"):
-                    window.evaluate_js(_NOTE_JS.replace("__ARGS__", json.dumps(v["note"])))
+                    window.evaluate_js(_NOTE_JS.replace("__ARGS__", json.dumps(v["note"] + (
+                        f" It can't switch to this computer's now: {why}" if why else ""))))
                 return v
 
             def local_datasets(self):
@@ -610,6 +672,7 @@ def main():
             home = url
 
         left = [""]                       # the pod this window was last on, for Switch to the pod
+        shown = [None]                    # the last page's build verdict (build_show tells it after a switch fails)
 
         zoom_keys_done = [False]
 

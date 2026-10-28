@@ -3,7 +3,10 @@ import os
 import time
 
 import pytest
-import requests
+
+# The CI checks install only checks/requirements.txt, so skip when the Hub client isn't there.
+requests = pytest.importorskip("requests")
+pytest.importorskip("huggingface_hub")
 from huggingface_hub.errors import EntryNotFoundError, GatedRepoError, RepositoryNotFoundError
 
 from fizgig.utils import hf_public

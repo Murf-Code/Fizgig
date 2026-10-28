@@ -8586,6 +8586,10 @@ function helpActivity(h) {
   const a = h.activity;
   if (h.state === "login") return ["Its password changed or its login ran out: add it again with its password", "warn", null];
   if (h.state === "away") return ["Not answering: is it on, awake and running Fizgig?", "muted", null];
+  if (h.build && h.build !== "same" && h.match && h.state === "busy") return [`Training its own run (${h.training}). ` +
+    h.match, "muted", null];
+  if (h.build && h.build !== "same" && h.match) return [h.match.startsWith("Switching") ? h.match + "…" :
+    `Another Fizgig version there. ${h.match}`, h.match.startsWith("Switching") ? "muted" : "warn", null];
   if (h.build && h.build !== "same") return [{mine: "Newer Fizgig there: update this computer to use it",
     theirs: "Older Fizgig there: update it when it's free", other: "Different Fizgig versions: update both"}[h.build] ||
     "Different Fizgig version", "warn", null];
@@ -8950,6 +8954,27 @@ function wirePods() {
 function showAbout(a) {
   $("aboutVersion").textContent = "Version " + a.version + (a.commit ? ` · build ${a.commit.slice(0, 7)}` : "");
   $("aboutUpdate").textContent = a.update;
+  const pv = a.pod_version;                // a pod kept on the version of the computer using it (pod_version.py)
+  if (pv && pv.pinned && pv.pinned === a.commit) {
+    const say = el("span", {class: "field-hint"});
+    $("aboutUpdate").replaceChildren(`This pod runs the same Fizgig as ${pv.by || "the computer that last used it"}, so ` +
+      "the two work together, and keeps it at every start. ", el("button", {class: "btn btn-sm", text: "Use the newest Fizgig",
+      title: "Start this pod's Fizgig again on the newest version (the computer switches it back when it next opens it)",
+      onclick: async () => {
+        try {
+          await api("/api/pod/newest", {});
+          say.textContent = " Starting again on the newest Fizgig: the page reloads when it's back.";
+          for (let i = 0; i < 200; i++) {
+            await new Promise((res) => setTimeout(res, 3000));
+            const r = await fetch("/api/about", {headers: {"X-Fizgig-Token": TOKEN}}).catch(() => null);
+            if (r && r.status === 403) return location.reload();     // started again: a new page token, a new page
+            const b = r && r.ok ? await r.json().catch(() => null) : null;
+            if (b && b.commit !== a.commit) return location.reload();
+            if (b && b.pod_version && b.pod_version.state === "failed") { say.textContent = " " + b.pod_version.error; return; }
+          }
+        } catch (e) { say.textContent = " " + e.message; }
+      }}), say);
+  }
   const r = a.release || {}, newer = r.status === "update_available";
   $("aboutRelease").replaceChildren(...(newer ? [el("div", {class: "about-banner"},
     el("strong", {text: `⬆ Fizgig ${r.tag} is available`}),

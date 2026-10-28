@@ -448,13 +448,12 @@ def form(desc):
                  "0.1 keeps a little of the background, so the LoRA still knows your subject sits in a scene. "
                  "0 ignores it completely - then a very small mask trains hard on a few spots.", launch.MASK_FLOORS),
             _row("MASK_PRIOR", "Outside the mask, keep the model's own picture (prior preservation)", "choice",
-                 "Prior preservation outside the mask. "
-                 "Off: outside the mask the LoRA still learns your photos a little (as much as the setting above). "
-                 "On: there it learns to draw what the model itself would, so backgrounds and the model's look stay "
-                 "the model's own. It works with the setting above at 0 too: 0 stops the outside learning your photos, and this "
-                 "still keeps it to the model's own picture. Each step takes longer (up to about half again). The "
-                 "higher the number, the firmer.",
-                 launch.MASK_PRIORS),
+                 "Off: outside the mask the LoRA still learns a little of your photos (as much as How much outside "
+                 "the mask counts says).\n"
+                 "0.5, 1 or 2: outside the mask it learns to draw what the model itself would, so backgrounds and the "
+                 "model's look stay its own. The higher the number, the firmer.\n"
+                 "Speed: each step takes up to about half as long again.",
+                 launch.MASK_PRIORS, hint_labels=True),                 # one spaced line per choice, name in bold
         ])
     if getattr(desc, "caption_variants", True):
         # tag shuffle / tag dropout / caption dropout (dataset/tag_variants.py): the text encoder is frozen, so the

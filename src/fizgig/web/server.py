@@ -3185,7 +3185,9 @@ class Handler(BaseHTTPRequestHandler):
             from fizgig.web import update_check
             if (qs.get("check") or [""])[0] == "1":
                 update_check.start()
-            return self.json({**about_info(), "release": update_check.status()})
+            from fizgig.web import pod_version
+            return self.json({**about_info(), "release": update_check.status(),
+                              "pod_version": pod_version.status() if on_pod() else None})
         if path == "/api/datasets":
             return self.json(list_datasets())
         if path == "/api/upload/status":
@@ -4084,6 +4086,12 @@ class Handler(BaseHTTPRequestHandler):
                 if not base:
                     return self.json({"error": "This computer has no address on a network for a phone to open."}, 400)
                 return self.json({"url": base + "?phone=" + _phone_pass_new(), "seconds": 30})
+            if path == "/api/pod/match":            # a pod: run this computer's Fizgig (pod_version.py)
+                from fizgig.web import pod_version
+                return self.json(pod_version.match(b.get("commit"), str(b.get("by") or "")[:80], bool(b.get("auto"))))
+            if path == "/api/pod/newest":           # a pod: back on the newest Fizgig
+                from fizgig.web import pod_version
+                return self.json(pod_version.newest())
             if path == "/api/restart":              # Restart now: a new password (or none) takes effect
                 if on_pod():
                     return self.json({"error": "A pod's password comes from its template: restart the pod."}, 400)
@@ -4714,6 +4722,7 @@ def run_server(host, port=None, password=None, password_arg=False, open_browser=
             logger.info(f"Port {want} is in use; the web UI takes {port} and keeps it (Preferences > Web UI)")
         if str(load_prefs().get("web_port") or "") != str(port):
             update_prefs({"web_port": str(port)})
+    _SRV[0] = srv
     if history.close_orphans():                        # a run left "running" by a stopped or crashed server
         logger.info("A run from before was still recorded as running: it is recorded as stopped now")
     webqueue.load()                                    # held if it holds anything: a restart never launches a run
@@ -4758,9 +4767,23 @@ def run_server(host, port=None, password=None, password_arg=False, open_browser=
         srv.server_close()
         if _RESTART[0]:
             _respawn()
+        if _SWITCH[0]:                         # a pod on another version: its start-up script starts it again
+            logging.shutdown()
+            os._exit(0)
 
 
 _RESTART = [False]
+_SWITCH = [False]
+_SRV = [None]
+
+
+def shutdown_for_switch():
+    """A pod switching version (pod_version.py): its helpers' workers go, then the server, then the process."""
+    from fizgig.web import helpers
+    helpers.shutdown()
+    _SWITCH[0] = True
+    if _SRV[0] is not None:
+        _SRV[0].shutdown()
 _held = [0.0]
 
 
@@ -4834,6 +4857,9 @@ def main(argv=None):
                                                      "FIZGIG_PASSWORD, then on a pod VNC_PASSWORD, then the one in "
                                                      "Preferences)")
     a = ap.parse_args(argv)
+    if on_pod():                              # a pod kept on the version of the computer using it: that one first
+        from fizgig.web import pod_version
+        pod_version.boot()
     user_data.migrate()                       # Fizgig 7's loose files into user_data, before anything reads them
     # a pod: its VNC_PASSWORD, the remote desktop's, so one password opens both. Elsewhere VNC_PASSWORD is ignored (a
     # stray one would open the web UI to the network while Preferences says no password).

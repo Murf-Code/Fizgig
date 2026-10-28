@@ -581,7 +581,24 @@ def _check(h, mine):
     state = "elsewhere" if i.get("helping") or other else "busy" if i.get("training") else "ready"
     return {"state": state, "ping_ms": int((time.time() - t) * 1000), "gpu": i.get("gpu"), "vram": i.get("vram"),
             "build": build, "worker": i.get("worker") or {}, "elsewhere": i.get("helping") or other,
-            "training": i.get("training")}
+            "training": i.get("training"), "pod": bool(i.get("pod"))}
+
+
+def _match_pod(h, lv, mine):
+    """A pod of the list on another build, free: asked to run this computer's (pod_version.py). Asked again a minute
+    and a half later while it differs (busy then, or switching: it is back on the new build in under a minute)."""
+    if time.time() - lv.get("match_at", 0) < 90:
+        return
+    lv["match_at"] = time.time()
+    try:
+        d = Client(h["url"], h.get("cookie", "")).call("/api/pod/match", {"commit": mine, "by": socket.gethostname(),
+                                                                          "auto": True}, timeout=15)
+    except Exception as e:
+        lv["match"] = ""                       # a pod from before this: it says nothing, the build note stays
+        logger.info(f"[helpers] matching {h.get('name')}: {e}")
+        return
+    lv["match"] = ("Switching to this computer's Fizgig" if d.get("switching") else d.get("busy") or d.get("error")
+                   or "")
 
 
 def listing(look=False):
@@ -595,6 +612,7 @@ def listing(look=False):
                      "previews": h.get("previews"), "share": h.get("share"),
                      "state": st, "training": lv.get("training"), "gpu": lv.get("gpu"), "vram": lv.get("vram"),
                      "ping_ms": lv.get("ping_ms"), "build": lv.get("build"), "elsewhere": lv.get("elsewhere"),
+                     "match": lv.get("match", ""),
                      "activity": lv.get("activity"), "previews_stat": lv.get("previews_stat", ""),
                      "check_stat": lv.get("check_stat", ""),
                      "share_stat": lv.get("share_stat", "") or ("Its share follows the two GPUs' speeds, round by "
@@ -805,6 +823,13 @@ def _check_loop():
                         continue
                 lv["misses"] = 0
                 lv.update(r)
+                if r.get("pod") and r.get("state") == "ready" and r.get("build") not in ("", "same", None) and \
+                        _lead["mine"]:
+                    _match_pod(h, lv, _lead["mine"])
+                elif r.get("pod") and r.get("state") == "busy" and r.get("build") not in ("", "same", None):
+                    lv["match"] = "It switches to this computer's Fizgig once its run is done"
+                elif r.get("build") in ("", "same"):
+                    lv["match"] = ""
             if _local.get("uuid") and _local_clash():
                 local_stop()                 # Preferences put this Fizgig on that card: one Fizgig per card
                 _local["text"] = "Stopped: Preferences put this Fizgig on that GPU"
@@ -3609,7 +3634,10 @@ def move_start(hid, now=False):
     if lv.get("state") != "ready":
         raise ValueError(f"{h.get('name')} can't take it: {why or 'it is not ready yet'}.")
     if lv.get("build") not in (None, "", "same"):
-        raise ValueError(f"{h.get('name')} runs another Fizgig version ({lv['build']}): both need the same one.")
+        word = {"mine": "a newer Fizgig than this computer", "theirs": "an older Fizgig than this computer"}.get(
+            lv["build"], "another Fizgig version")
+        how = (lv.get("match") or "") if lv.get("pod") else "Update the older one, then Move."
+        raise ValueError(f"{h.get('name')} runs {word}, and both need the same one. {how}".strip())
     s = _srv()
     with s._lock:
         r = {k: s._run.get(k) for k in ("state", "stage", "family", "values", "lora", "output_dir", "resume_mode")}
