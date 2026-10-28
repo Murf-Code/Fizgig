@@ -233,7 +233,7 @@ def keep_score(v, default=None):
 
 
 def add_score(v):
-    """Add missing tags' score from the page: a number from 0 to 1 (ValueError otherwise); blank is 0.70."""
+    """Add missing tags' score from the page: a number from 0 to 1 (ValueError otherwise); blank is 0.90."""
     from fizgig.dataset import wd_tagger
     if v is None or str(v).strip() == "":
         return wd_tagger.ADD_SCORE
@@ -242,7 +242,7 @@ def add_score(v):
     except (TypeError, ValueError):
         f = -1.0
     if not 0.0 < f <= 1.0:
-        raise ValueError("Add missing tags scored at least: a number between 0 and 1, like 0.70.")
+        raise ValueError("Add missing tags scored at least: a number between 0 and 1, like 0.90.")
     return f
 
 

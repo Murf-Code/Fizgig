@@ -259,7 +259,7 @@ def test_add_missing_tags_on_the_page(tmp_path, monkeypatch):
     c, _ = prep_jobs.caption_settings({"trim": True, "add": True, "add_score": "0.89"})
     assert c["add"] is True and c["add_score"] == 0.89 and prep_jobs.crop_captions(c, "T").add_score == 0.89
     c, _ = prep_jobs.caption_settings({"trim": True, "add": True, "add_score": ""})
-    assert c["add_score"] == 0.70
+    assert c["add_score"] == 0.90
     assert prep_jobs.crop_captions({**c, "add": False}, "T").add_score is None     # off
     assert prep_jobs.crop_captions({**c, "trim": False}, "T").add_score is None    # needs Trim's tagger
     for bad in ("0", "1.5", "lots"):
@@ -271,8 +271,8 @@ def test_add_missing_tags_on_the_page(tmp_path, monkeypatch):
     assert '<input type="checkbox" id="prepCapAdd">' in html and "Add missing tags the tagger is sure of" in html
     # the same kind of box as Keep tags scored at least, on its own labelled row
     assert ('<div class="field-row"><span class="field-label">Add tags scored at least:</span>\n'
-            '                      <input type="text" id="prepAddScore" class="w-num" value="0.70">') in html
+            '                      <input type="text" id="prepAddScore" class="w-num" value="0.90">') in html
     assert 'id="prepKeepScore" class="w-num"' in html
     assert "It only adds tags when Add missing tags is on." in html and "never adds any" not in html
     assert "capAdd: $(\"prepCapAdd\").checked" in js and "add: p.capAdd, add_score: p.addScore" in js
-    assert "saved.addScore || \"0.70\"" in js and "Add tags scored at least: a number between 0 and 1" in js
+    assert "saved.addScore || \"0.90\"" in js and "Add tags scored at least: a number between 0 and 1" in js

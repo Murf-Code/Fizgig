@@ -4479,7 +4479,7 @@ const prepSettings = () => ({
   mode: (document.querySelector('input[name="prepMode"]:checked') || {}).value || "Auto Prep (Face Crops)",
   mp: $("prepMp").value || "1.0", face: $("prepFace").value || "Largest Face", padding: $("prepPadding").value || "20",
   find: $("prepFind").value || "", capCopy: $("prepCapCopy").checked, capTrim: $("prepCapTrim").checked,
-  capCloseup: $("prepCapCloseup").checked, capAdd: $("prepCapAdd").checked, addScore: $("prepAddScore").value || "0.70",
+  capCloseup: $("prepCapCloseup").checked, capAdd: $("prepCapAdd").checked, addScore: $("prepAddScore").value || "0.90",
   tagger: $("prepTagger").value || "wd-eva02", keepScore: $("prepKeepScore").value || TAGGER_KEEP[$("prepTagger").value] || "0.35",
   replace: (document.querySelector('input[name="prepReplace"]:checked') || {}).value === "1"});
 // Trim tags' taggers (fizgig/dataset/taggers.py): what each is for, and the keep score a fresh pick starts at
@@ -4505,7 +4505,7 @@ async function loadPrep() {
     $("prepCapTrim").checked = !!saved.capTrim;
     $("prepCapCloseup").checked = saved.capCloseup !== false;       // on unless turned off
     $("prepCapAdd").checked = !!saved.capAdd;
-    $("prepAddScore").value = saved.addScore || "0.70";
+    $("prepAddScore").value = saved.addScore || "0.90";
     $("prepTagger").value = saved.tagger in TAGGER_KEEP ? saved.tagger : "wd-eva02";
     $("prepKeepScore").value = saved.keepScore || TAGGER_KEEP[$("prepTagger").value];
     if (saved.padding) $("prepPadding").value = saved.padding;
@@ -5116,7 +5116,7 @@ function prepTrimBlocked() {
   const t = prepTaggerInfo(), k = Number(p.keepScore);
   if (!(k > 0 && k < 1)) return `Keep tags scored at least: a number between 0 and 1, like ${TAGGER_KEEP[p.tagger] || "0.35"}.`;
   const a = Number(p.addScore);
-  if (p.capAdd && !(a > 0 && a <= 1)) return "Add tags scored at least: a number between 0 and 1, like 0.70.";
+  if (p.capAdd && !(a > 0 && a <= 1)) return "Add tags scored at least: a number between 0 and 1, like 0.90.";
   if (t && !t.path) return `Trim tags needs the ${prepTaggerName()}: press Download under Trim first, or untick Trim.`;
   return "";
 }

@@ -213,7 +213,7 @@ def trim(caption, scores, categories, keep_words=(), keep_score=KEEP_SCORE, who=
     return (", ".join(kept), dropped) if dropped else (caption, [])
 
 
-ADD_SCORE = 0.70                         # Add missing tags: a tag it is at least this sure of
+ADD_SCORE = 0.90                         # Add missing tags: a tag it is at least this sure of
 
 
 def missing(tags, scores, categories, add_score=ADD_SCORE, who=WHO, names=None, aliases=None):
