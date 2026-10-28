@@ -239,7 +239,7 @@ def test_prep_face_crops_with_the_defaults(tmp_path, monkeypatch):
     text = "".join(log)
     assert "Face finder" not in text and "[face: female]" in text
     old = F.crop_to_face(Image.fromarray(pic), F.FaceInfo((20, 10, 60, 58), "female", 0.8, 40 * 48, (40, 34)), 20.0)
-    assert np.array_equal(np.asarray(Image.open(tmp_path / "a.png")), np.asarray(old))
+    assert np.array_equal(np.asarray(Image.open(tmp_path / "FaceCrop_001.png")), np.asarray(old))
 
 
 def _fi(x1, y1, x2, y2, gender="unknown", src="yolo"):

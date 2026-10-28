@@ -29,6 +29,7 @@ FACE_TARGETS = ["Largest Face", "Largest Male Face", "Largest Female Face"]
 OTHER_TARGET = "Other…"           # the Face dropdown's Other…: crop to what the Find this box names (SAM 3.1)
 FIND_SCORE = 0.5                  # SAM 3.1's cutoff for a hit: the same as Make masks uses
 FIND_MIN_SIDE = 16                # a hit smaller than this (pixels, either side) is too small to crop
+FACE_CROP_PREFIX = "FaceCrop_"     # face close-ups: FaceCrop_001.png
 CROP_PREFIX = "Crop_"             # Find this close-ups: Crop_paw_001.png (faces keep FaceCrop_)
 CLASS_TARGET = "YOLO class: "     # an older build's Crop to choice for a YOLO class ("YOLO class: penis"): now Other…
 
@@ -267,12 +268,14 @@ def summary(folder, mode, replace, prep_mp, train_mp=None, find=""):
     if find and mode == "Auto Prep (Face Crops)":
         what = f"{count} → {sized}, plus a close-up of each {find} found"
     elif find and mode == "Face Crop Only":
-        what = (f"{count} → replaced by just the cropped {find} from each picture (the biggest one found), "
-                f"saved as PNG")
+        what = (f"{count} → just the cropped {find} from each picture (the biggest one found), saved as PNG "
+                f"named {CROP_PREFIX}{word_slug(find.replace('\n', ',').split(',')[0].strip() or find)}_001.png and on, as the close-ups "
+                f"of Resize + close-up crops are")
     elif mode == "Auto Prep (Face Crops)":
         what = f"{count} → {sized}, plus one face close-up each{f' (≈{n * 2} files)' if n else ''}"
     elif mode == "Face Crop Only":
-        what = f"{count} → replaced by just the cropped face from each photo, saved as PNG"
+        what = (f"{count} → just the cropped face from each photo, saved as PNG named {FACE_CROP_PREFIX}001.png and "
+                f"on, as the close-ups of Resize + close-up crops are")
     else:
         what = f"{count} → {sized}"
     originals = ("Your original files are replaced ⚠ there is no undo." if replace else
@@ -436,26 +439,62 @@ class Prep:
         return self.detector.get_largest(faces), ""
 
     @staticmethod
-    def next_facecrop_index(folder):
+    def _next_index(folder, stem, first_part=False):
+        """The next free number after stem (FaceCrop_ / Crop_paw_): every file of that name counts - a picture, its
+        caption or mask, or a caption left behind by a crop that was deleted (Crop_sheath_045.txt), so a new crop
+        never takes an old one's caption. first_part: FaceCrop_001_x counts as 1, as it always has."""
+        from fizgig.dataset.masks import MASK_SUFFIX
         best = 0
-        for f in glob.glob(os.path.join(glob.escape(folder), "FaceCrop_*.png")):
-            parts = os.path.splitext(os.path.basename(f))[0].split("_")
-            if len(parts) >= 2:
-                try:
-                    best = max(best, int(parts[1]))
-                except ValueError:
-                    pass
-        return best + 1
-
-    @staticmethod
-    def next_crop_index(folder, word):
-        """The next number for Crop_<word>_NNN.png."""
-        best, stem = 0, f"{CROP_PREFIX}{word_slug(word)}_"
-        for f in glob.glob(os.path.join(glob.escape(folder), glob.escape(stem) + "*.png")):
-            tail = os.path.splitext(os.path.basename(f))[0][len(stem):]
+        try:
+            names = os.listdir(folder)
+        except OSError:
+            return 1
+        for f in names:
+            name = os.path.splitext(f)[0]
+            if name.endswith(MASK_SUFFIX):
+                name = name[:-len(MASK_SUFFIX)]
+            if not name.startswith(stem):
+                continue
+            tail = name[len(stem):]
+            if first_part:
+                tail = tail.split("_")[0]
             if tail.isdigit():
                 best = max(best, int(tail))
         return best + 1
+
+    @classmethod
+    def next_facecrop_index(cls, folder):
+        """The next number for FaceCrop_NNN.png."""
+        return cls._next_index(folder, FACE_CROP_PREFIX, first_part=True)
+
+    @classmethod
+    def next_crop_index(cls, folder, word):
+        """The next number for Crop_<word>_NNN.png."""
+        return cls._next_index(folder, f"{CROP_PREFIX}{word_slug(word)}_")
+
+    def _place_crop(self, filepath, img, crop_path, folder, replace, crop_mask=None):
+        """Close-up crops only: the crop is saved under its own name (crop_path: FaceCrop_NNN / Crop_<word>_NNN, as
+        the Resize + close-up crops mode names them), gets the picture's caption the way those crops do (copied,
+        trimmed, close-up, the target kept), and the picture, its caption and its mask go to the run's originals
+        folder (deleted when replacing)."""
+        from fizgig.dataset.crop_captions import CropCaptions, find_caption
+        atomic_png_save(img, crop_path)
+        caps = self.captions if self.captions is not None else CropCaptions()     # None: the caption copied as is
+        cap_src = find_caption(filepath, caps.ext)
+        if cap_src:
+            try:
+                caps.to_crop(filepath, crop_path, self.log, img)
+            except Exception as e:
+                self.log(f"  caption not copied: {e}\n")
+        self.handle_original(filepath, crop_path, folder, replace)
+        if cap_src and os.path.exists(cap_src):              # the picture's caption goes with the picture
+            if replace:
+                os.remove(cap_src)
+            else:
+                d = self._originals_for(folder)
+                os.makedirs(d, exist_ok=True)
+                shutil.move(cap_src, os.path.join(d, os.path.basename(cap_src)))
+        self.keep_mask(filepath, crop_path, folder, replace, crop_mask)
 
     # ---- the three modes ----
     def run(self, mode, folder, prep_mp, face_label="Largest Face", face_padding=20.0, replace=False):
@@ -518,9 +557,14 @@ class Prep:
         from fizgig.face_utils import crop_to_face
         self.log(f"Mode: Face Crop Only ({face_mode}, padding {face_padding}%)\n\n")
         converted = skipped = errors = face_crops = no_face = 0
+        crop_index = self.next_facecrop_index(output)
         for filepath in image_files(source):
             filename = os.path.basename(filepath)
             ext = os.path.splitext(filename)[1].lower()
+            if filename.startswith(FACE_CROP_PREFIX):
+                self.log(f"Skipped (derivative): {filename}\n")
+                skipped += 1
+                continue
             try:
                 img = load_image(filepath)
                 original = img.size
@@ -546,6 +590,15 @@ class Prep:
                     self.log(f"  Face error ({filename}): {fe}\n")
                 img, resized = resize_image(img, area)
                 w, h = img.size
+                if cropped:                                  # named as Resize + close-up crops names its crops
+                    crop_name = f"{FACE_CROP_PREFIX}{crop_index:03d}.png"
+                    self._place_crop(filepath, img, os.path.join(output, crop_name), output, replace, crop_mask)
+                    self.log(f"Face crop: {crop_name} ({w}x{h}) from {filename} "
+                             f"({original[0]}x{original[1]}){crop_info}\n")
+                    crop_index += 1
+                    converted += 1
+                    img.close()
+                    continue
                 output_path = os.path.join(output, os.path.splitext(filename)[0] + ".png")
                 if filepath == output_path and ext == '.png' and not resized and not cropped \
                         and not _rotated(filepath):
@@ -582,7 +635,7 @@ class Prep:
             filename = os.path.basename(filepath)
             ext = os.path.splitext(filename)[1].lower()
             base = os.path.splitext(filename)[0]
-            if base.startswith("FaceCrop_"):
+            if base.startswith(FACE_CROP_PREFIX):
                 self.log(f"Skipped (derivative): {filename}\n")
                 skipped += 1
                 continue
@@ -598,7 +651,7 @@ class Prep:
                         if sel:
                             crop = crop_to_face(original_img, sel, face_padding)
                             crop, _ = resize_image(crop, area)
-                            crop_name = f"FaceCrop_{crop_index:03d}.png"
+                            crop_name = f"{FACE_CROP_PREFIX}{crop_index:03d}.png"
                             crop.save(os.path.join(output, crop_name), "PNG")
                             self.crop_mask_for(filepath, original_img.size, sel, face_padding,
                                                os.path.join(output, crop_name))
@@ -648,13 +701,18 @@ class Prep:
         from fizgig.face_utils import crop_to_face
         self.log(f"Mode: Crop only ({', '.join(self.finder.words)}, padding {padding}%)\n\n")
         converted = skipped = errors = crops = none = 0
+        index = {}
         for filepath in image_files(source):
             filename = os.path.basename(filepath)
             ext = os.path.splitext(filename)[1].lower()
+            if filename.startswith(FACE_CROP_PREFIX) or filename.startswith(CROP_PREFIX):
+                self.log(f"Skipped (derivative): {filename}\n")
+                skipped += 1
+                continue
             try:
                 img = load_image(filepath)
                 original = img.size
-                cropped, crop_info, crop_mask = False, "", None
+                cropped, crop_info, crop_mask, word = False, "", None, ""
                 try:
                     sel = self.finder.largest(self.finder.find(img))
                     if sel:
@@ -664,6 +722,7 @@ class Prep:
                         cropped = True
                         crops += 1
                         crop_info = f" [{sel.gender}]"
+                        word = word_slug(sel.gender)
                     else:
                         self.log(f"  Nothing found in {filename}, not cropped\n")
                         none += 1
@@ -671,6 +730,17 @@ class Prep:
                     self.log(f"  Find error ({filename}): {fe}\n")
                 img, resized = resize_image(img, area)
                 w, h = img.size
+                if cropped:                                  # named as Resize + close-up crops names its crops
+                    if word not in index:
+                        index[word] = self.next_crop_index(output, word)
+                    crop_name = f"{CROP_PREFIX}{word}_{index[word]:03d}.png"
+                    self._place_crop(filepath, img, os.path.join(output, crop_name), output, replace, crop_mask)
+                    self.log(f"Crop: {crop_name} ({w}x{h}) from {filename} "
+                             f"({original[0]}x{original[1]}){crop_info}\n")
+                    index[word] += 1
+                    converted += 1
+                    img.close()
+                    continue
                 output_path = os.path.join(output, os.path.splitext(filename)[0] + ".png")
                 if filepath == output_path and ext == '.png' and not resized and not cropped \
                         and not _rotated(filepath):

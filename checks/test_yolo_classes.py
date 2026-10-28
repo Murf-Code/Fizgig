@@ -228,7 +228,7 @@ def test_class_choice_runs_without_sam(tmp_path, monkeypatch):
     _pic(tmp_path / "b.png", 200, 160, 2)
     prep.Prep(log.append, None, prep.ThingFinder(None, ["penis"], yolo=y, yolo_words={"penis": 1})).run(
         "Face Crop Only", str(tmp_path), 4.2, prep.OTHER_TARGET, 0.0, False)
-    assert Image.open(tmp_path / "b.png").size == (40, 40) and "[penis]" in "".join(log)
+    assert Image.open(tmp_path / "Crop_penis_001.png").size == (40, 40) and "[penis]" in "".join(log)
     y.boxes = []
     _pic(tmp_path / "b.png", 200, 160, 2)
     log = []
@@ -257,7 +257,7 @@ def test_test_button_boxes_and_labels(tmp_path, monkeypatch):
 def test_summary_reads_right(tmp_path):
     _pic(tmp_path / "a.png", 200, 160, 1)
     s = prep.summary(str(tmp_path), "Face Crop Only", False, 1.0, None, F.class_label("penis").lower())
-    assert "replaced by just the cropped penis from each picture" in s["lines"][0]
+    assert "just the cropped penis from each picture" in s["lines"][0] and "Crop_penis_001.png" in s["lines"][0]
     s = prep.summary(str(tmp_path), "Auto Prep (Face Crops)", False, 1.0, None, F.class_label("pawpads").lower())
     assert "a close-up of each paw pads found" in s["lines"][0]
     server = open(os.path.join(HERE, "..", "src", "fizgig", "web", "server.py"), encoding="utf-8").read()

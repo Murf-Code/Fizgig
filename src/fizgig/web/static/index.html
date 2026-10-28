@@ -269,8 +269,8 @@
                 <label class="radio-label"><input type="radio" name="prepMode" value="Auto Prep (Face Crops)">
                   Resize + close-up crops (recommended for people and characters)</label>
                 <div class="field-hint radio-hint">Every picture is resized and saved as PNG, plus a zoomed-in crop of
-                  what you picked under Crop to (a face, or anything you type) saved beside it: more detail shots for
-                  better likeness. 💡 Works best on high-res originals: if your pictures are already shrunk to
+                  what you picked under Crop to (a face, or anything you type) saved beside it (FaceCrop_001.png,
+                  Crop_sheath_001.png and on): more detail shots for better likeness. 💡 Works best on high-res originals: if your pictures are already shrunk to
                   training size, the crops come out soft. Start from the biggest versions you have.</div>
                 <label class="radio-label"><input type="radio" name="prepMode" value="Resize Only"> Resize only</label>
                 <div class="field-hint radio-hint">Just resize and convert to PNG. Use for styles, objects, or
@@ -278,7 +278,9 @@
                 <label class="radio-label"><input type="radio" name="prepMode" value="Face Crop Only">
                   Close-up crops only</label>
                 <div class="field-hint radio-hint">Keep only the crop from each picture (a face, or whatever you
-                  picked under Crop to). The full picture isn't kept.</div>
+                  picked under Crop to), named like the crops above: FaceCrop_001.png for faces, Crop_sheath_001.png
+                  for what you type. The full picture isn't kept for training: it goes to the originals folder (or is
+                  deleted if you replace originals). A picture where nothing is found is just resized.</div>
                 <div class="field-row prep-opts">
                   <span class="field-label">Target megapixels:</span><select id="prepMp" class="w-combo"></select>
                   <span class="field-hint">MP (larger images shrink to fit; smaller are left alone)</span>
