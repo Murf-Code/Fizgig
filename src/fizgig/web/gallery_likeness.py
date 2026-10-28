@@ -11,6 +11,7 @@ import threading
 import time
 
 from fizgig.web import prep_jobs
+from fizgig.web.sample_pairs import dataset_rel
 
 PICS = (".png", ".jpg", ".jpeg", ".webp")
 _lock = threading.Lock()
@@ -100,7 +101,7 @@ def state(samples_dir, dataset_dir, paired=False):
     with _lock:
         running = paired or samples_dir in _runs
     if names and not running and dataset_dir and os.path.isdir(dataset_dir) \
-            and not all(os.path.exists(os.path.join(dataset_dir, os.path.basename(str(n)))) for n in names):
+            and not all(os.path.exists(os.path.join(dataset_dir, *dataset_rel(n).split("/"))) for n in names):
         names = []                                    # another run's pick (a different dataset): not chosen yet
         d["status"] = ""
     if len(names) == 3 and not running and dataset_dir and os.path.isdir(samples_dir)             and not str(d.get("status", "")).startswith("error"):     # a failed pick waits for a new one
@@ -118,7 +119,8 @@ def state(samples_dir, dataset_dir, paired=False):
 
 def start(samples_dir, dataset_dir, names):
     """Score this samples folder against three dataset photos (names in the dataset folder); none = clear."""
-    names = [os.path.basename(str(n)) for n in names or []]
+    names = [dataset_rel(n) for n in names or []]            # "sub/0001.png" with Include sub-folders
+    names = [n for n in names if n]
     with _lock:
         cur = _runs.get(samples_dir)
         gen = (cur["gen"] if cur else 0) + 1
@@ -133,8 +135,8 @@ def start(samples_dir, dataset_dir, names):
         raise ValueError("Training image folder not set - set it on the Start tab.")
     if len(names) != 3:
         raise ValueError(f"Pick exactly 3 photos (got {len(names)}).")
-    paths = [os.path.join(dataset_dir, n) for n in names]
-    missing = [os.path.basename(p) for p in paths if not os.path.exists(p)]
+    paths = [os.path.join(dataset_dir, *n.split("/")) for n in names]
+    missing = [n for n, p in zip(names, paths) if not os.path.exists(p)]
     if missing:
         raise ValueError("Not in the training image folder: " + ", ".join(missing))
     if not os.path.isdir(samples_dir):
@@ -142,7 +144,7 @@ def start(samples_dir, dataset_dir, names):
     with _lock:
         _runs[samples_dir] = {"gen": gen, "dataset": dataset_dir}
     _claim(samples_dir)
-    threading.Thread(target=_worker, args=(samples_dir, gen, paths), daemon=True).start()
+    threading.Thread(target=_worker, args=(samples_dir, gen, paths, names), daemon=True).start()
     return "scoring started"
 
 
@@ -152,13 +154,13 @@ def _live(samples_dir, gen):
         return r is not None and r["gen"] == gen
 
 
-def _worker(samples_dir, gen, baselines):
+def _worker(samples_dir, gen, baselines, names=None):
     """Newest samples first (the current run's epochs score at once), then a look for new ones every ~4 s; a picture
     written in the last 5 s waits (a half-written file reads as no face), and a no-face rescores if its file changes.
     Scores for the same three photos survive a restart."""
     import numpy as np
     from fizgig.face_utils import same_embedder
-    names = [os.path.basename(b) for b in baselines]
+    names = list(names) if names else [os.path.basename(b) for b in baselines]   # as picked ("sub/0001.png")
     _write(samples_dir, names, "loading the face model…", read(samples_dir).get("scores") or {})
     emb, msg = prep_jobs.session_embedder(baselines, log=lambda m: print(m.replace("[faces]", "[likeness]"), flush=True))
     meta = {"embedder": emb.cache_id, "embedder_label": emb.label, "thresholds": dict(emb.thresholds)}

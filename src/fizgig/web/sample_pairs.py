@@ -69,6 +69,14 @@ def resolve(pairs, prompts):
     return sorted(ok, key=lambda p: p["index"]), stale
 
 
+def dataset_rel(name):
+    """A picked training image -> its path from the training folder, "/"-separated: a bare name stays a name, an
+    Include sub-folders pick keeps its "sub/" ("sub/0001.png"); a drive, a leading slash, "." and ".." are dropped,
+    so it never leaves the folder."""
+    parts = str(name or "").replace("\\", "/").split("/")
+    return "/".join(x for x in parts if x not in ("", ".", "..") and ":" not in x)
+
+
 def sidecar(samples_dir, run):
     return os.path.join(samples_dir, f".pairs_{run}.json")
 
@@ -77,7 +85,7 @@ def sidecar_text(pairs, prompts, dataset_dir):
     """What launch writes: the resolved pairings with the image's full path."""
     ok, _ = resolve(pairs, prompts)
     for p in ok:
-        p["path"] = os.path.join(dataset_dir or "", os.path.basename(p["image"]))
+        p["path"] = os.path.join(dataset_dir or "", *dataset_rel(p["image"]).split("/"))
     return json.dumps({"pairs": ok})
 
 

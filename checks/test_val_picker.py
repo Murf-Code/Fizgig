@@ -19,7 +19,7 @@ const src = fs.readFileSync(process.env.STATIC + "/app.js", "utf8");
 const fn = (name) => { const i = src.indexOf("function " + name + "("); const a = src.lastIndexOf("\n", i) + 1;
   return src.slice(a, src.indexOf("\n}\n", i) + 3); };
 const code = src.match(/const \$ = \(id\)[^\n]*\n/)[0] + src.match(/const el = \(tag[\s\S]*?\n};\n/)[0] +
-  src.match(/const LIK_PICS = [^\n]*\n/)[0] + fn("likenessPicker") + fn("likenessMarks");
+  src.match(/const LIK_PICS = [^\n]*\n/)[0] + fn("trainImagesUrl") + fn("likenessPicker") + fn("likenessMarks");
 const items = ["a.png", "b.png", "c.png", "d.jpg"].map((n) => ({name: n, path: "/d/" + n}));
 const S = {lik: {picked: []}, imageFolder: "/d", family: "krea2"};
 const TOKEN = "t", capExt = () => ".txt", api = async () => ({items});

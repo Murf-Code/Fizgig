@@ -3308,7 +3308,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._stream(p)
         if path == "/api/captions":
             return self._captions((qs.get("folder") or [""])[0], (qs.get("ext") or [".txt"])[0],
-                                  (qs.get("family") or [""])[0])
+                                  (qs.get("family") or [""])[0], subs=(qs.get("subs") or [""])[0] == "1",
+                                  skip=qs.get("skip") or ())
         return self.json({"error": "not found"}, 404)
 
     def _log_stream(self, since):
@@ -3423,27 +3424,35 @@ class Handler(BaseHTTPRequestHandler):
                                      "time": e.stat().st_mtime, "kind": _checkpoint_kind(e.path),
                                      "run": base(e.name)} for e in items]})
 
-    def _captions(self, folder, ext, family=""):
+    def _captions(self, folder, ext, family="", subs=False, skip=()):
+        """The folder's items with their captions. subs: the training sub-folders too (Include sub-folders: the
+        training run's own folder rules, so originals, originals_2..., removed are left out), each item named by its
+        path from the folder ("sub/0001.png") with "sub" as its "sub"."""
         out = []
         try:
-            names = sorted(os.listdir(folder))
+            os.listdir(folder)
         except OSError:
             return self.json({"items": []})
-        keep = _caption_media_filter(names, family)
-        lower = {n.lower(): n for n in names}
-        for n in names:
-            stem, e = os.path.splitext(n)
-            if e.lower() not in MEDIA or not keep(n) or is_mask_file(n):
-                continue
-            cap = os.path.join(folder, stem + ext)
+        for rel, d in [("", folder)] + (launch.subfolders(folder, skip) if subs else []):
             try:
-                text = captions.read_text(cap)          # any encoding: one odd file never empties the list (#225)
+                names = sorted(os.listdir(d))
             except OSError:
-                text = None
-            p = os.path.join(folder, n)
-            mask = mask_for_stem(folder, stem, lower)        # masked training: the picture's mask, shown on its row
-            out.append((n, p, {"caption": text, "size": _media_size(p),
-                               **({"mask": os.path.basename(mask)} if mask else {})}))
+                continue
+            keep = _caption_media_filter(names, family)
+            lower = {n.lower(): n for n in names}
+            for n in names:
+                stem, e = os.path.splitext(n)
+                if e.lower() not in MEDIA or not keep(n) or is_mask_file(n):
+                    continue
+                cap = os.path.join(d, stem + ext)
+                try:
+                    text = captions.read_text(cap)          # any encoding: one odd file never empties the list (#225)
+                except OSError:
+                    text = None
+                p = os.path.join(d, n)
+                mask = mask_for_stem(d, stem, lower)        # masked training: the picture's mask, shown on its row
+                out.append((f"{rel}/{n}" if rel else n, p, {"caption": text, "size": _media_size(p),
+                            **({"sub": rel} if rel else {}), **({"mask": os.path.basename(mask)} if mask else {})}))
         return self.json({"items": pair_songs(out)})
 
     # -- POST

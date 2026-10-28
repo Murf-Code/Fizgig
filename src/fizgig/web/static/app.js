@@ -2451,10 +2451,17 @@ function captionMatch(prompt, caption) {
   const inter = [...A].filter((x) => B.has(x)).length, union = new Set([...A, ...B]).size;
   return union ? inter / union : 0;
 }
+// the training images as the pickers list them: with Include sub-folders ticked, the sub-folders too (training's own
+// folder rules: originals, originals_2..., removed and the output folder left out), named "sub/0001.png"
+function trainImagesUrl(top) {
+  const subs = !top && !!(S.values || {}).TRAIN_SUBFOLDERS;
+  return `/api/captions?folder=${encodeURIComponent(S.imageFolder || "")}&ext=${encodeURIComponent(capExt())}&family=${encodeURIComponent(S.family || "")}` +
+    (subs ? `&subs=1&skip=${encodeURIComponent((S.values || {}).LORA_OUTPUT_DIR || "")}` : "");
+}
 async function pairCaptions() {        // the training captions, read once per folder (the picker's listing)
-  const folder = S.imageFolder || "";
+  const folder = (S.imageFolder || "") + ((S.values || {}).TRAIN_SUBFOLDERS ? "|subs" : "");
   if (S.pairCapsFor === folder && S.pairCaps) return S.pairCaps;
-  const r = await api(`/api/captions?folder=${encodeURIComponent(folder)}&ext=${encodeURIComponent(capExt())}&family=${encodeURIComponent(S.family || "")}`).catch(() => ({items: []}));
+  const r = await api(trainImagesUrl()).catch(() => ({items: []}));
   S.pairCaps = Object.fromEntries((r.items || []).map((x) => [x.name, x.caption == null ? "" : String(x.caption)]));
   S.pairCapsFor = folder;
   return S.pairCaps;
@@ -2487,7 +2494,7 @@ function pairCaptionBadge(host, ctl, i, prompt, image) {
         title: "Replace this prompt in the prompt box with the image's caption",
         onclick: () => pairReplacePrompt(host, i, image, cap)}));
   };
-  if (S.pairCapsFor === (S.imageFolder || "") && S.pairCaps) put(S.pairCaps); else pairCaptions().then(put);
+  if (S.pairCapsFor === (S.imageFolder || "") + ((S.values || {}).TRAIN_SUBFOLDERS ? "|subs" : "") && S.pairCaps) put(S.pairCaps); else pairCaptions().then(put);
 }
 
 // Image Validation > How often to check: Every epoch or Every N steps, laid out as How often to preview. It stays the
@@ -2578,10 +2585,11 @@ async function likenessPicker(single) {
   $("likModal").classList.add("active");
   likenessMarks();
   if (!folder) return;
-  const r = await api(`/api/captions?folder=${encodeURIComponent(folder)}&ext=${encodeURIComponent(capExt())}&family=${encodeURIComponent(S.family || "")}`).catch(() => ({items: []}));
+  // Image Prep's Test (top): Image Prep works on the top folder only, so its pick never lists sub-folders
+  const r = await api(trainImagesUrl(S.lik.single && S.lik.single.top)).catch(() => ({items: []}));
   const pics = (S.lik.single && S.lik.single.pics) || LIK_PICS;      // Image Prep's Test also lists .bmp
   for (const it of r.items.filter((x) => pics.test(x.name))) {
-    const fig = el("figure", {title: it.name, onclick: () => {
+    const fig = el("figure", {title: it.sub ? `${it.name.slice(it.sub.length + 1)}\nin ${it.sub}` : it.name, onclick: () => {
       if (S.lik.single && !S.lik.multi) { $("likModal").classList.remove("active"); S.lik.single.onPick(it); return; }
       const i = S.lik.picked.indexOf(it.name);
       if (S.lik.multi) {                 // in or out, the window stays open; the form's list follows each click
@@ -5326,7 +5334,7 @@ function prepTest() {
     $("prepTestResult").replaceChildren(el("div", {class: "field-hint", text: "Choose the training folder on the Start tab first."}));
     return;
   }
-  likenessPicker({title: "Image Prep: pick a photo to test on", pics: PREP_TEST_PICS, current: S.prep.testName || null,
+  likenessPicker({title: "Image Prep: pick a photo to test on", pics: PREP_TEST_PICS, top: true, current: S.prep.testName || null,
     onPick: (it) => { S.prep.testName = it.name; prepTestRun(it.path); }});
 }
 async function prepTestRun(path) {

@@ -16,6 +16,13 @@ def _stem(k):
     return k.lower()
 
 
+def _rel(k):
+    """A key or picked path -> "/"-led, "/"-separated, lower-case, its media extension and a clip's "#still" dropped."""
+    k = "/" + str(k).replace("\\", "/").split("#", 1)[0].lstrip("/")
+    head, _, _ = k.rpartition("/")
+    return (head + "/" + _stem(k)).lower()
+
+
 def picked_list(value):
     """The VALIDATION_PICKED setting -> a clean list of names (a list, or text one name a line / ';'-separated)."""
     if value is None:
@@ -40,7 +47,9 @@ def resolve_picked(picked, keys):
         by_stem.setdefault(_stem(k), []).append(k)
     found, missing = [], []
     for p in picked_list(picked):
-        k = exact.get(p) or next(iter(by_stem.get(_stem(p), [])), None)
+        # "sub/0001.png" (an Include sub-folders pick): the key under that sub-folder first, then any same stem
+        k = exact.get(p) or next((c for c in by_stem.get(_stem(p), []) if "/" in p.replace("\\", "/")
+                                  and _rel(c).endswith(_rel(p))), None) or next(iter(by_stem.get(_stem(p), [])), None)
         if k is None:
             missing.append(p)
         elif k not in found:
