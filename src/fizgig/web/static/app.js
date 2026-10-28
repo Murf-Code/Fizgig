@@ -4485,8 +4485,9 @@ const prepSettings = () => ({
 const TAGGER_KEEP = {"wd-eva02": "0.35", "jtp3": "0.20"};
 const TAGGER_HINTS = {
   "wd-eva02": "Best for anime and general art with Danbooru-style tags. Scores are how sure it is, from 0 to 1.",
-  "jtp3": "Best for furry art with e621 tags. It knows e621's species, character, artist and copyright tags and keeps " +
-    "them all, matches older e621 names, and keeps a tag while it sees one that implies it (breasts with big breasts). " +
+  "jtp3": "Best for furry art with e621 tags. It keeps artist and copyright tags, matches older e621 names, keeps a " +
+    "tag while it sees one that implies it (breasts with big breasts), and judges a few common tags it doesn't know " +
+    "(naked, belly, armpits) by ones it does (nude, navel, chest). " +
     "Scores are JTP-3's confidence, from 0 to 1 (its own demo lists tags from 0.30 up). Uses about 2.5 GB of memory while prep runs.",
 };
 const savePrepSoon = debounce(() => { S.prepSaved = prepSettings(); api("/api/state", {prep: S.prepSaved}).catch(() => {}); }, 600);

@@ -3,8 +3,10 @@ Image Prep's "Trim tags that don't fit" asks it which of a crop's copied tags it
 demand, into Fizgig's models folder (model.onnx + selected_tags.csv, about 1.2 GB); run with onnxruntime (already a
 Fizgig requirement) on the GPU when its CUDA provider is there, else the CPU; freed when the prep run ends.
 
-Only general tags (category 0) are ever dropped: character (4), rating (9), meta and any tag the tagger doesn't know
-(species it lacks, artists, your own tags) always stay. Tags are only removed, never added."""
+General tags (category 0) the tagger no longer sees are dropped. Character tags (4) are judged together: the ones it
+sees on the crop stay, and so do the likeliest one and any about as likely (so a close-up of one of two characters
+keeps only theirs). Rating (9), meta and any tag the tagger doesn't know (artists, your own tags) always
+stay. Tags are only removed, never added."""
 import csv
 import os
 import threading
@@ -18,6 +20,8 @@ FOLDER = "wd-eva02-large-tagger-v3"
 LABEL = "WD EVA02-Large tagger v3"
 SIZE_GB = 1.2
 GENERAL = 0
+CHARACTER = 4
+WHO = (CHARACTER,)                       # the categories that name who is in the picture (trim's `who`)
 KEEP_SCORE = 0.35                        # a general tag stays if the tagger scores it at least this on the crop
 
 _lock = threading.Lock()
@@ -105,6 +109,7 @@ def preprocess(img, size):
 
 class Tagger:
     """The loaded tagger: scores(img) -> {normalised tag: probability}; categories: {normalised tag: category}."""
+    who = WHO
 
     def __init__(self, folder, log=print, session=None):
         self.tags = read_tags(os.path.join(folder, "selected_tags.csv"))
@@ -131,20 +136,43 @@ class Tagger:
         gc.collect()
 
 
-def trim(caption, scores, categories, keep_words=(), keep_score=KEEP_SCORE):
-    """(caption, dropped): a tag caption without the general tags the tagger no longer sees on the crop (scored
-    under keep_score). The first tag, the trigger word, non-general tags and tags the tagger doesn't know stay;
-    a sentence caption comes back as written."""
+def trim(caption, scores, categories, keep_words=(), keep_score=KEEP_SCORE, who=WHO, ranks=None, stand_ins=None,
+         stand_in_extra=0.15):
+    """(caption, dropped): a tag caption without the tags the tagger no longer sees on the crop. The first tag and the
+    trigger word always stay; a sentence caption comes back as written.
+    - a general tag stays when it scores at least keep_score;
+    - who tags (a category in `who`: characters, and species for e621) are judged together, per category: one stays
+      when it scores at least keep_score, or when `ranks` (the network's own probabilities, default `scores`) puts it
+      at least half as likely as the likeliest of them, so a close-up of one of two characters keeps only theirs
+      and the likeliest always stays;
+    - a tag the tagger doesn't know stays, unless `stand_ins` names tags it does know that show the same thing
+      ({"naked": ("nude",)}): then it stays when the best of them scores at least keep_score + stand_in_extra;
+    - any other tag (rating, meta, artist, copyright...) stays."""
     from fizgig.dataset.tag_variants import split_tags
     tags = split_tags(caption)
     if tags is None:
         return caption, []
     keep = {norm(w) for w in keep_words if w and str(w).strip()}
+    ranks = scores if ranks is None else ranks
+    stand_ins = stand_ins or {}
+    names = [norm(t) for t in tags]
+    who_kept = set()
+    for cat in who:
+        pool = {n for n in names if categories.get(n) == cat}
+        top = max((ranks.get(n, 0.0) for n in pool), default=0.0)
+        who_kept |= {n for n in pool if scores.get(n, 0.0) >= keep_score or ranks.get(n, 0.0) >= top / 2}
     kept, dropped = [], []
-    for i, t in enumerate(tags):
-        n = norm(t)
-        if i == 0 or n in keep or categories.get(n) != GENERAL or scores.get(n, 0.0) >= keep_score:
-            kept.append(t)
+    for i, (t, n) in enumerate(zip(tags, names)):
+        cat = categories.get(n)
+        if i == 0 or n in keep:
+            ok = True
+        elif cat == GENERAL:
+            ok = scores.get(n, 0.0) >= keep_score
+        elif cat in who:
+            ok = n in who_kept
+        elif cat is None and n in stand_ins:
+            ok = max((scores.get(s, 0.0) for s in stand_ins[n]), default=0.0) >= keep_score + stand_in_extra
         else:
-            dropped.append(t)
+            ok = True
+        (kept if ok else dropped).append(t)
     return (", ".join(kept), dropped) if dropped else (caption, [])

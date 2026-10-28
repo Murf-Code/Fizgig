@@ -4,9 +4,12 @@ crop's copied tags it still sees. Downloaded once, on demand, into models/jtp-3-
 with e621 categories and implications, and the e621 rename list); run with plain PyTorch through the network modules
 vendored in jtp3_hydra/ (credit and licence there) on the GPU when there is one, else the CPU; freed when prep ends.
 
-The same trim rules as the WD tagger (wd_tagger.trim): only general tags (e621 category 0) the tagger knows and scores
-under the keep score are dropped. Species (5), character (4), artist, copyright (3), meta (7, which holds the rating
-tags safe / questionable / explicit), lore (8), tags it doesn't know and your own always stay; tags are never added.
+The same trim rules as the WD tagger (wd_tagger.trim): general tags (e621 category 0) the tagger knows and scores
+under the keep score are dropped, and species (5) and character (4) tags are judged together, so a close-up of one of
+two characters keeps only theirs. Artist, copyright (3), meta (7, which holds the rating tags safe / questionable /
+explicit), lore (8), tags it doesn't know and your own always stay, except a few common e621 tags JTP-3 never learned
+(naked, belly, armpits...), which are judged by tags it knows that show the same thing (STAND_INS). Tags are never
+added.
 
 e621 names: a caption's "long_hair", "long hair" and "Long Hair" all match (wd_tagger.norm). A tag e621 renamed since
 your captions were written (e.g. "animal pussy", now "animal_vulva") matches through RedRocket's rename list. Like
@@ -31,6 +34,21 @@ LABEL = "JTP-3 Hydra tagger"
 SIZE_GB = 1.0
 GENERAL = 0
 KEEP_SCORE = 0.20                        # a general tag stays if the tagger scores it at least this on the crop
+WHO = (4, 5)                             # character and species tags: judged together (wd_tagger.trim's `who`)
+_CHEST = ("pecs", "chest tuft", "breasts", "nipples", "flat chested", "featureless chest")
+_TORSO = ("navel", "abs", "stomach", "midriff", "big belly", "small waist", "slim")
+# Common e621 tags missing from JTP-3's list, and tags it knows that show the same thing is in view. Without these
+# they could never be judged, so a close-up kept "belly" or "naked" from the whole picture. Such a tag stays when the
+# best of its stand-ins scores a little over the keep score (wd_tagger.trim's stand_in_extra).
+STAND_INS = {
+    "naked": ("nude",),
+    "large balls": ("balls",), "large breasts": ("breasts",), "large penis": ("penis",), "large butt": ("butt",),
+    "belly": _TORSO, "thin waist": _TORSO, "narrow waist": _TORSO, "slim waist": _TORSO,
+    "petite": _TORSO + _CHEST,
+    "no nipples": _CHEST,
+    "armpits": _CHEST + ("raised arm", "raised arms", "arms above head", "hand behind head", "hands behind head",
+                         "armpit hair"),
+}
 CATEGORIES = ("general", "artist", "contributor", "copyright", "character", "species", "invalid", "meta", "lore")
 PATCH = 16
 MAX_PATCHES = 1024                       # NaFlex: up to 1024 16-pixel patches, about 512x512, aspect kept
@@ -227,7 +245,10 @@ def build(path, device="cpu", dtype=None):
 
 
 class Tagger:
-    """The loaded tagger: scores(img) -> {normalised tag: probability}; categories: {normalised tag: e621 category}."""
+    """The loaded tagger: scores(img) -> {normalised tag: probability}; categories: {normalised tag: e621 category};
+    judge(img) -> (scores, ranks) for wd_tagger.trim, ranks being the network's own probabilities; who and stand_ins
+    (STAND_INS, for the tags it doesn't know) for trim too."""
+    who = WHO
 
     def __init__(self, folder, log=print, net=None, labels=None, device=None):
         self.meta = read_tags(os.path.join(folder, TAGS))
@@ -244,6 +265,9 @@ class Tagger:
         for old, new in self.aliases.items():
             if new in self.categories and old not in self.categories:
                 self.categories[old] = self.categories[new]
+        self.stand_ins = {t: tuple(s for s in ss if s in self.categories) for t, ss in STAND_INS.items()
+                          if t not in self.categories}
+        self.stand_ins = {t: ss for t, ss in self.stand_ins.items() if ss}
 
     def raw(self, img):
         """{e621 tag: probability} straight from the network."""
@@ -262,11 +286,18 @@ class Tagger:
 
     def scores(self, img):
         """{normalised tag: confidence 0-1}, implied tags raised to their best implier, older e621 names included."""
-        s = inherit({norm(t): self.confidence(v) for t, v in self.raw(img).items()}, self.implies)
+        return self.judge(img)[0]
+
+    def judge(self, img):
+        """(scores, ranks): scores() and {normalised tag: the network's probability}, which still orders tags that are
+        all under the confidence floor (trim's `ranks`)."""
+        ranks = {norm(t): float(v) for t, v in self.raw(img).items()}
+        s = inherit({n: self.confidence(v) for n, v in ranks.items()}, self.implies)
         for old, new in self.aliases.items():
-            if new in s and old not in s:
-                s[old] = s[new]
-        return s
+            for d in (s, ranks):
+                if new in d and old not in d:
+                    d[old] = d[new]
+        return s, ranks
 
     def close(self):
         self.net = None

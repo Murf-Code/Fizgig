@@ -1,8 +1,9 @@
 """Image Prep's crops keep their picture's caption: a close-up cut from photo.png gets photo.txt's caption as its own
 (FaceCrop_001.txt, Crop_paw_001.txt), and a crop that replaces its picture keeps it. Optionally ("Trim tags that
-don't fit"), a tag caption loses the general tags the chosen tagger no longer sees on the crop (taggers.py: the WD
-tagger, wd_tagger.py, or JTP-3 Hydra for furry / e621 captions, jtp3_tagger.py): tags are only ever removed, never added; the trigger word, the first tag, character / rating / meta tags and tags the tagger
-doesn't know (species, artists, your own) always stay. Sentence captions are copied as written (tag_variants.split_tags
+don't fit"), a tag caption loses the tags the chosen tagger no longer sees on the crop (taggers.py: the WD tagger,
+wd_tagger.py, or JTP-3 Hydra for furry / e621 captions, jtp3_tagger.py; the rules are wd_tagger.trim's): tags are only
+ever removed, never added; the trigger word, the first tag, rating / meta tags and tags the tagger doesn't know
+(artists, your own) always stay, and only the character / species tags it sees on the crop stay. Sentence captions are copied as written (tag_variants.split_tags
 decides which is which)."""
 import os
 
@@ -49,8 +50,12 @@ class CropCaptions:
         from fizgig.dataset.tag_variants import split_tags
         if self.tagger is None or crop_img is None or split_tags(caption) is None:
             return caption, []
-        return wd_tagger.trim(caption, self.tagger.scores(crop_img), self.tagger.categories, self.keep,
-                              self.keep_score)
+        t = self.tagger
+        judge = getattr(t, "judge", None)
+        scores, ranks = judge(crop_img) if judge else (t.scores(crop_img), None)
+        return wd_tagger.trim(caption, scores, t.categories, self.keep, self.keep_score,
+                              who=getattr(t, "who", wd_tagger.WHO), ranks=ranks,
+                              stand_ins=getattr(t, "stand_ins", None))
 
     def to_crop(self, source_image, crop_image, log, crop_img=None):
         """A new crop (crop_image, its pixels crop_img) beside its picture: the picture's caption, written as the

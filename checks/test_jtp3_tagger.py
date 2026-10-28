@@ -366,3 +366,14 @@ def test_page_tagger_dropdown():
     assert r["keep"] == "0.15" and not r["run"] and r["note"] == "" and "JTP-3 Hydra tagger is downloaded" in r["state"]
     assert out["back"]["keep"] == "0.35"
     assert out["oldServer"]["note"] == ""          # a server without "taggers": the run itself says what's missing
+
+
+def test_judge_gives_scores_and_the_network_probabilities(tmp_path):
+    t = _tagger(tmp_path, {"solo": 0.95, "fox": 0.3, "canine": 0.6, "animal_vulva": 0.8})
+    s, r = t.judge(Image.new("RGB", (32, 32)))
+    assert s["fox"] == 0.0 and r["fox"] == pytest.approx(0.3, abs=1e-3)     # under the floor, still ordered
+    assert r["animal pussy"] == r["animal vulva"] and s == t.scores(Image.new("RGB", (32, 32)))
+    assert t.who == (4, 5)
+    # only stand-ins in its tag list are used: this small list has breasts, none of the others
+    assert t.stand_ins["large breasts"] == ("breasts",) and t.stand_ins["petite"] == ("breasts",)
+    assert "naked" not in t.stand_ins and "belly" not in t.stand_ins

@@ -311,7 +311,8 @@
                       <input type="text" id="prepKeepScore" class="w-num" value="0.35">
                       <span class="field-hint">lower keeps more</span></div>
                     <div class="field-hint">The tagger looks at each crop, and a tag it no longer sees is
-                      dropped. It only removes tags, never adds any. Your trigger word, the first tag, character,
+                      dropped. It only removes tags, never adds any. Only the characters and species it sees in
+                      the crop stay (if it sees none, the likeliest one stays). Your trigger word, the first tag,
                       rating and meta tags, and tags the tagger doesn't know (artists, your own) always stay.
                       Sentence captions are copied as written.</div>
                     <div class="field-hint" id="prepTaggerState"></div>
