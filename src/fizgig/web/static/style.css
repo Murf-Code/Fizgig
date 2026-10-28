@@ -2517,6 +2517,7 @@ a.pick-pill-vast:hover { border-color: var(--success); }
   font-weight: 700; font-size: 10pt; }
 /* a switch that needs the card's whole width (Image Validation's Fixed validation loss): one wide, short tile */
 .section-card[id^="sec-"] .form-row.row-full { grid-column: 1 / -1; }
+/* ==========================================================================
    Light n’ Orange: a white, flat world with one hot colour, orange. Only the theme's colours change; the fixed groups
    (over pictures, brands) and the derived shades follow by themselves.
    ========================================================================== */
@@ -2646,13 +2647,9 @@ a.pick-pill-vast:hover { border-color: var(--success); }
 .theme-pick small { grid-column: 2; font-size: 11px; color: var(--text-muted); line-height: 1.3; }
 .theme-swatch { width: 30px; height: 20px; border-radius: 3px; border: 1px solid var(--border-strong);
   background: linear-gradient(90deg, var(--sw-bg) 0 60%, var(--sw-accent) 60% 100%); }
-||||||| 38d3288f
-=======
 
 /* Include sub-folders under the Start tab's training folder: a plain tick, its explanation on hover */
 #folderOptions .form-row { margin-top: 8px; }
 #folderOptions .form-row .field-hint { padding-left: 24px; }
 .tip-mark { cursor: help; color: var(--text-secondary); font-weight: 400; }
 label[title]:has(.tip-mark) { cursor: help; }
-
-/* ===================================================================
