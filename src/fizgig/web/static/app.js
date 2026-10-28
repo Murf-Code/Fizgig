@@ -4485,7 +4485,7 @@ const prepSettings = () => ({
   mode: (document.querySelector('input[name="prepMode"]:checked') || {}).value || "Auto Prep (Face Crops)",
   mp: $("prepMp").value || "1.0", face: $("prepFace").value || "Largest Face", padding: $("prepPadding").value || "20",
   find: $("prepFind").value || "", capCopy: $("prepCapCopy").checked, capTrim: $("prepCapTrim").checked,
-  capCloseup: $("prepCapCloseup").checked, capDrop: $("prepCapDrop").checked, dropList: $("prepDropList").value, capAdd: $("prepCapAdd").checked, addScore: $("prepAddScore").value || "0.90",
+  capCloseup: $("prepCapCloseup").checked, capAdd: $("prepCapAdd").checked, addScore: $("prepAddScore").value || "0.90",
   tagger: $("prepTagger").value || "wd-eva02", keepScore: $("prepKeepScore").value || TAGGER_KEEP[$("prepTagger").value] || "0.35",
   replace: (document.querySelector('input[name="prepReplace"]:checked') || {}).value === "1"});
 // Trim tags' taggers (fizgig/dataset/taggers.py): what each is for, and the keep score a fresh pick starts at
@@ -4511,9 +4511,6 @@ async function loadPrep() {
     $("prepCapTrim").checked = !!saved.capTrim;
     $("prepCapCloseup").checked = saved.capCloseup !== false;       // on unless turned off
     $("prepCapAdd").checked = !!saved.capAdd;
-    $("prepCapDrop").checked = saved.capDrop !== false;             // on unless turned off
-    $("prepDropList").value = typeof saved.dropList === "string" ? saved.dropList : (o.drop_default || "");
-    $("prepDropBox").style.display = $("prepCapDrop").checked ? "" : "none";
     $("prepAddScore").value = saved.addScore || "0.90";
     $("prepTagger").value = saved.tagger in TAGGER_KEEP ? saved.tagger : "wd-eva02";
     $("prepKeepScore").value = saved.keepScore || TAGGER_KEEP[$("prepTagger").value];
@@ -5204,7 +5201,6 @@ async function prepSummary() {
   $("prepCapCopy").disabled = !faceOn;
   $("prepCapTrim").disabled = !faceOn || !$("prepCapCopy").checked;
   $("prepCapCloseup").disabled = !faceOn || !$("prepCapCopy").checked;
-  $("prepCapDrop").disabled = $("prepDropList").disabled = !faceOn || !$("prepCapCopy").checked;
   prepFindShow();
   if (!S.imageFolder) { $("prepSummary").textContent = ""; return; }
   const r = await api(`/api/prep/summary?folder=${encodeURIComponent(S.imageFolder)}&mode=${encodeURIComponent(p.mode)}` +
@@ -5250,7 +5246,7 @@ async function prepRun() {
   if (block) { $("prepState").textContent = block; return; }
   try {
     await api("/api/prep/run", {folder: S.imageFolder, ...p, captions: {copy: p.capCopy, trim: p.capTrim, tagger: p.tagger, keep_score: p.keepScore, closeup: p.capCloseup,
-      drop: p.capDrop, drop_list: p.dropList, add: p.capAdd, add_score: p.addScore,
+      add: p.capAdd, add_score: p.addScore,
       ext: S.values.DATASET_CAPTION_EXT || ".txt", trigger: S.values.CAPTION_TRIGGER_WORD || ""}});
     $("prepLog").textContent = ""; S.prep.logSize = 0;
     pollPrep();
@@ -5533,9 +5529,6 @@ function wirePrep() {
   $("prepFind").addEventListener("input", () => { prepFindShow(); savePrepSoon(); });
   $("prepCapCopy").addEventListener("change", () => { $("prepCapTrim").disabled = $("prepCapCloseup").disabled = !$("prepCapCopy").checked; prepFindShow(); savePrepSoon(); });
   $("prepCapCloseup").addEventListener("change", savePrepSoon);
-  $("prepCapDrop").addEventListener("change", () => { $("prepDropBox").style.display = $("prepCapDrop").checked ? "" : "none"; savePrepSoon(); });
-  $("prepDropList").addEventListener("input", savePrepSoon);
-  $("prepDropReset").addEventListener("click", (e) => { e.preventDefault(); $("prepDropList").value = (S.prep.opts || {}).drop_default || ""; savePrepSoon(); });
   $("prepCapTrim").addEventListener("change", () => { prepFindShow(); savePrepSoon(); });
   $("prepKeepScore").addEventListener("input", () => { prepFindShow(); savePrepSoon(); });
   $("prepCapAdd").addEventListener("change", () => { prepTaggerShow(); prepFindShow(); savePrepSoon(); });

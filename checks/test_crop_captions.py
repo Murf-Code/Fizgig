@@ -206,10 +206,12 @@ def test_page_settings_checked(tmp_path, monkeypatch):
     from fizgig import user_data
     from fizgig.web import prep_jobs
     monkeypatch.setattr(user_data, "MODELS_DIR", str(tmp_path))
-    c, folder = prep_jobs.caption_settings({"copy": True, "trim": False, "ext": "caption", "trigger": " me "})
+    monkeypatch.setattr(user_data, "USER_DATA", str(tmp_path))
+    c, folder = prep_jobs.caption_settings({"copy": True, "trim": False, "ext": "caption", "trigger": " me ",
+                                            "drop": False, "drop_list": "old"})     # an older page's: ignored
     assert c == {"copy": True, "trim": False, "tagger": "wd-eva02", "keep_score": 0.35, "ext": ".caption",
-                 "trigger": "me", "closeup": True, "add": False, "add_score": 0.9, "drop": True,
-                 "drop_list": prep_jobs.drop_list(None)} and folder == ""          # no tagger picked (an older page): the WD tagger
+                 "trigger": "me", "closeup": True, "add": False, "add_score": 0.9,
+                 "drop_list": prep_jobs.drop_list()} and folder == ""          # no tagger picked (an older page): the WD tagger
     assert prep_jobs.caption_settings(None) == (None, "")
     with pytest.raises(ValueError, match="press Download under it"):
         prep_jobs.caption_settings({"trim": True})

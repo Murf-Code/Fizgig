@@ -246,15 +246,42 @@ def add_score(v):
     return f
 
 
-def drop_list(v):
-    """Always drop on crops' patterns from the page's text; missing (settings saved before it) is the default list."""
+DROP_FILE_NAME = "dropped_crop_tags.txt"
+DROP_FILE_HEADER = """# Tags always dropped from crop captions (Image Prep's close-up crops; never Resize only).
+# One per line or comma separated. * matches any words (* out of frame, imminent *). Case doesn't matter.
+# What you crop to (the crop target) and your trigger word are never dropped, even if listed here.
+# portrait and bust portrait stay on face crops and drop on every other close-up.
+# Lines starting with # are ignored. Delete this file to get the default list back.
+"""
+
+
+def drop_file():
+    """Always drop on crops' file: user_data/dropped_crop_tags.txt (FIZGIG_USER_DATA's when set)."""
+    from fizgig import user_data
+    return os.path.join(user_data.USER_DATA, DROP_FILE_NAME)
+
+
+def drop_list():
+    """Always drop on crops' patterns, read fresh from drop_file(); a missing file is written with the default list."""
     from fizgig.dataset.crop_captions import DROP_DEFAULT, drop_words
-    return drop_words(DROP_DEFAULT if v is None else v)
+    path = drop_file()
+    try:
+        with open(path, encoding="utf-8-sig") as f:
+            text = f.read()
+    except FileNotFoundError:
+        text = DROP_DEFAULT
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(DROP_FILE_HEADER + "\n" + DROP_DEFAULT + "\n")
+        except OSError as e:
+            _log(f"Couldn't write {path} ({e}); using the default drop list.")
+    return drop_words("\n".join(ln for ln in text.splitlines() if not ln.lstrip().startswith("#")))
 
 
 def caption_settings(c):
     """The page's caption settings for crops ({copy, trim, tagger, keep_score, ext, trigger, closeup, add,
-    add_score, drop, drop_list}), checked: (settings or
+    add_score, drop_list}), checked: (settings or
     None, the tagger's folder or ""). tagger is "wd-eva02" (the default) or "jtp3" (taggers.py). ValueError when Trim
     is on and that tagger isn't downloaded."""
     if not isinstance(c, dict):
@@ -268,7 +295,7 @@ def caption_settings(c):
          "keep_score": keep_score(c.get("keep_score"), mod.KEEP_SCORE), "ext": caption_ext(c.get("ext")),
          "trigger": str(c.get("trigger") or "").strip(), "closeup": c.get("closeup", True) is not False,
          "add": bool(c.get("add")), "add_score": add_score(c.get("add_score")) if c.get("add") else wd_tagger.ADD_SCORE,
-         "drop": c.get("drop", True) is not False, "drop_list": drop_list(c.get("drop_list"))}
+         "drop_list": drop_list()}           # an older page's drop / drop_list are ignored: the file is the list
     folder = ""
     if c["copy"] and c["trim"]:
         folder = mod.find_model(MODELS_DIR)
@@ -286,7 +313,7 @@ def crop_captions(c, tagger=None):
     return CropCaptions(copy=c["copy"], ext=c["ext"], keep=[c["trigger"]], tagger=tagger if c["trim"] else None,
                         keep_score=c["keep_score"], closeup=c.get("closeup", True),
                         add_score=c["add_score"] if c.get("add") and c["trim"] else None,
-                        drop=c.get("drop_list", drop_list(None)) if c.get("drop", True) else None)
+                        drop=c["drop_list"] if "drop_list" in c else drop_list())
 
 
 def _tagger(folder, name=None):
