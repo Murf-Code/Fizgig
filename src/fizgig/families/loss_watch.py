@@ -93,6 +93,11 @@ def weigh_batch(loss, info, keys, watch, *, reg_keys=(), reg_mult=1.0):
     return (per * w).sum() / max(1, len(keys) - len(skip)), skip
 
 
+def second_try_min(min_score):
+    """A tagger's second-try min score: 25% lower, but never more than 0.1 below the first try's."""
+    return round(max(min_score * 0.75, min_score - 0.1), 3)
+
+
 class Watch:
     """The run's loss watch and the state around it. `watch` is None when every toggle is off."""
 
@@ -146,7 +151,7 @@ class Watch:
                             "<MORE_DETAILED_CAPTION>")
             elif backend == "tagger":
                 logger.info(f"[auto-recaption] captioner: {self.recap.get('model')} (Captions tab tag settings); "
-                            "second try: a lower min score, so more tags")
+                            "second try: a lower min score (25% lower, at most 0.1), so more tags")
             else:
                 first = recaption_task or ("an instruction given on the command line" if recaption_instruction
                                            else '"Training caption" (as shipped)')
@@ -370,7 +375,7 @@ class Watch:
             tid = rw.get("tagger")
             tagger = tag_captions.load(tid, rw.get("models_dir") or "", log=logger.info)
             cfg = tag_captions.settings(rw.get("tags"), tid)
-            low = {**cfg, "min_score": round(cfg["min_score"] * 0.75, 3)}
+            low = {**cfg, "min_score": second_try_min(cfg["min_score"])}
 
             def tag(img, attempt):
                 text = tag_captions.caption(tag_captions.scored_tags(tagger, _open_training_frame(img)), tid,

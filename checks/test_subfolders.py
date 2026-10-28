@@ -154,6 +154,12 @@ def test_auto_recaption_uses_the_captions_tabs_florence_model(tree, monkeypatch)
     assert open(tree / "a.txt", encoding="utf-8").read() == "florence 2, zmain"
 
 
+def test_tagger_second_try_drops_the_min_score_at_most_0_1():
+    pytest.importorskip("torch")
+    from fizgig.families.loss_watch import second_try_min
+    assert second_try_min(0.90) == 0.8 and second_try_min(0.60) == 0.5 and second_try_min(0.30) == 0.225
+
+
 def test_launch_recaptions_with_florence_without_the_krea2_encoder():
     from fizgig.families import form, launch
     from fizgig.families.registry import get
