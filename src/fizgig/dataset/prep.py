@@ -323,7 +323,7 @@ class Prep:
             if cropped and getattr(self.captions, "tagger", None) is not None:
                 crop_img = load_image(output_path)
             self.captions.in_place(filepath, output_path, None if replace else self._originals_for(folder),
-                                   self.log, crop_img)
+                                   self.log, crop_img, cropped=bool(cropped))
         except Exception as e:
             self.log(f"  caption not updated: {e}\n")
         self._originals = {}

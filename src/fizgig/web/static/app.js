@@ -4479,6 +4479,7 @@ const prepSettings = () => ({
   mode: (document.querySelector('input[name="prepMode"]:checked') || {}).value || "Auto Prep (Face Crops)",
   mp: $("prepMp").value || "1.0", face: $("prepFace").value || "Largest Face", padding: $("prepPadding").value || "20",
   find: $("prepFind").value || "", capCopy: $("prepCapCopy").checked, capTrim: $("prepCapTrim").checked,
+  capCloseup: $("prepCapCloseup").checked,
   tagger: $("prepTagger").value || "wd-eva02", keepScore: $("prepKeepScore").value || TAGGER_KEEP[$("prepTagger").value] || "0.35",
   replace: (document.querySelector('input[name="prepReplace"]:checked') || {}).value === "1"});
 // Trim tags' taggers (fizgig/dataset/taggers.py): what each is for, and the keep score a fresh pick starts at
@@ -4502,6 +4503,7 @@ async function loadPrep() {
     $("prepFind").value = saved.find || "";
     $("prepCapCopy").checked = saved.capCopy !== false;             // on unless turned off
     $("prepCapTrim").checked = !!saved.capTrim;
+    $("prepCapCloseup").checked = saved.capCloseup !== false;       // on unless turned off
     $("prepTagger").value = saved.tagger in TAGGER_KEEP ? saved.tagger : "wd-eva02";
     $("prepKeepScore").value = saved.keepScore || TAGGER_KEEP[$("prepTagger").value];
     if (saved.padding) $("prepPadding").value = saved.padding;
@@ -5187,6 +5189,7 @@ async function prepSummary() {
     i.disabled = !faceOn || (!S.prep.opts.face_tools && !(i.id === "prepFind" || (i.id === "prepFace" && prepOther()))); });
   $("prepCapCopy").disabled = !faceOn;
   $("prepCapTrim").disabled = !faceOn || !$("prepCapCopy").checked;
+  $("prepCapCloseup").disabled = !faceOn || !$("prepCapCopy").checked;
   prepFindShow();
   if (!S.imageFolder) { $("prepSummary").textContent = ""; return; }
   const r = await api(`/api/prep/summary?folder=${encodeURIComponent(S.imageFolder)}&mode=${encodeURIComponent(p.mode)}` +
@@ -5231,7 +5234,7 @@ async function prepRun() {
   const p = prepSettings(), block = prepBlocked();
   if (block) { $("prepState").textContent = block; return; }
   try {
-    await api("/api/prep/run", {folder: S.imageFolder, ...p, captions: {copy: p.capCopy, trim: p.capTrim, tagger: p.tagger, keep_score: p.keepScore,
+    await api("/api/prep/run", {folder: S.imageFolder, ...p, captions: {copy: p.capCopy, trim: p.capTrim, tagger: p.tagger, keep_score: p.keepScore, closeup: p.capCloseup,
       ext: S.values.DATASET_CAPTION_EXT || ".txt", trigger: S.values.CAPTION_TRIGGER_WORD || ""}});
     $("prepLog").textContent = ""; S.prep.logSize = 0;
     pollPrep();
@@ -5512,7 +5515,8 @@ function wirePrep() {
   for (const id of ["prepMp", "prepFace", "prepPadding"]) $(id).addEventListener("change", () => { prepSummary(); savePrepSoon(); });
   $("prepFace").addEventListener("change", () => { if (prepOther() && !$("prepFind").value.trim()) $("prepFind").focus(); });
   $("prepFind").addEventListener("input", () => { prepFindShow(); savePrepSoon(); });
-  $("prepCapCopy").addEventListener("change", () => { $("prepCapTrim").disabled = !$("prepCapCopy").checked; prepFindShow(); savePrepSoon(); });
+  $("prepCapCopy").addEventListener("change", () => { $("prepCapTrim").disabled = $("prepCapCloseup").disabled = !$("prepCapCopy").checked; prepFindShow(); savePrepSoon(); });
+  $("prepCapCloseup").addEventListener("change", savePrepSoon);
   $("prepCapTrim").addEventListener("change", () => { prepFindShow(); savePrepSoon(); });
   $("prepKeepScore").addEventListener("input", () => { prepFindShow(); savePrepSoon(); });
   $("prepTagger").addEventListener("change", () => { prepTaggerPicked(); prepFindShow(); savePrepSoon(); });

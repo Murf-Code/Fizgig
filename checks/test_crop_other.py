@@ -220,7 +220,7 @@ def test_run_uses_sam_and_frees_it(tmp_path, monkeypatch):
     st = prep_jobs.status()
     assert st["state"] == "done", st["log"]
     assert (data / "Crop_tail_001.png").exists() and freed == [1]
-    assert (data / "Crop_tail_001.txt").read_text() == "me, tail, smile"     # the caption came along
+    assert (data / "Crop_tail_001.txt").read_text() == "me, tail, smile, close-up"     # the caption came along
     assert not sammask._use.locked()
 
 

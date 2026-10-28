@@ -233,7 +233,7 @@ def keep_score(v, default=None):
 
 
 def caption_settings(c):
-    """The page's caption settings for crops ({copy, trim, tagger, keep_score, ext, trigger}), checked: (settings or
+    """The page's caption settings for crops ({copy, trim, tagger, keep_score, ext, trigger, closeup}), checked: (settings or
     None, the tagger's folder or ""). tagger is "wd-eva02" (the default) or "jtp3" (taggers.py). ValueError when Trim
     is on and that tagger isn't downloaded."""
     if not isinstance(c, dict):
@@ -245,7 +245,7 @@ def caption_settings(c):
     mod = taggers.get(name)
     c = {"copy": c.get("copy", True) is not False, "trim": bool(c.get("trim")), "tagger": name,
          "keep_score": keep_score(c.get("keep_score"), mod.KEEP_SCORE), "ext": caption_ext(c.get("ext")),
-         "trigger": str(c.get("trigger") or "").strip()}
+         "trigger": str(c.get("trigger") or "").strip(), "closeup": c.get("closeup", True) is not False}
     folder = ""
     if c["copy"] and c["trim"]:
         folder = mod.find_model(MODELS_DIR)
@@ -261,7 +261,7 @@ def crop_captions(c, tagger=None):
         return None
     from fizgig.dataset.crop_captions import CropCaptions
     return CropCaptions(copy=c["copy"], ext=c["ext"], keep=[c["trigger"]], tagger=tagger if c["trim"] else None,
-                        keep_score=c["keep_score"])
+                        keep_score=c["keep_score"], closeup=c.get("closeup", True))
 
 
 def _tagger(folder, name=None):

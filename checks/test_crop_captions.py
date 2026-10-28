@@ -206,7 +206,7 @@ def test_page_settings_checked(tmp_path, monkeypatch):
     monkeypatch.setattr(user_data, "MODELS_DIR", str(tmp_path))
     c, folder = prep_jobs.caption_settings({"copy": True, "trim": False, "ext": "caption", "trigger": " me "})
     assert c == {"copy": True, "trim": False, "tagger": "wd-eva02", "keep_score": 0.35, "ext": ".caption",
-                 "trigger": "me"} and folder == ""          # no tagger picked (an older page): the WD tagger
+                 "trigger": "me", "closeup": True} and folder == ""          # no tagger picked (an older page): the WD tagger
     assert prep_jobs.caption_settings(None) == (None, "")
     with pytest.raises(ValueError, match="press Download under it"):
         prep_jobs.caption_settings({"trim": True})
@@ -252,4 +252,4 @@ def test_run_frees_the_tagger(tmp_path, monkeypatch):
             break
         time.sleep(0.05)
     assert prep_jobs.status()["state"] == "done", prep_jobs.status()["log"]
-    assert (data / "FaceCrop_001.txt").read_text() == "ruaidri, wolf, smile" and closed == [1]
+    assert (data / "FaceCrop_001.txt").read_text() == "ruaidri, wolf, smile, close-up" and closed == [1]

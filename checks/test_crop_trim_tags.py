@@ -157,3 +157,45 @@ def test_the_sheath_close_up_backgrounds():
     assert "simple background" in out.split(", ") and "white background" in dropped
     out, dropped = _sheath(0.30)
     assert "simple background" in dropped and "white background" in dropped
+
+
+def test_crops_get_close_up(tmp_path):
+    pic = tmp_path / "a.png"
+    Image.new("RGB", (64, 64)).save(pic)
+    (tmp_path / "a.txt").write_text("me, solo, tail")
+    logs = []
+    cc = C.CropCaptions(keep=["me"], closeup=True)
+    cc.to_crop(str(pic), str(tmp_path / "Crop_tail_001.png"), logs.append)
+    assert (tmp_path / "Crop_tail_001.txt").read_text() == "me, solo, tail, close-up"
+    assert "  caption: added close-up\n" in logs
+    # not twice, not on sentence captions, and only when turned on
+    assert cc.caption_for("me, Close_Up, solo", None) == ("me, Close_Up, solo", [], [])
+    s = "A fox standing in a field, looking at the camera."
+    assert cc.caption_for(s, None) == (s, [], [])
+    assert C.CropCaptions().caption_for("me, solo", None) == ("me, solo", [], [])
+
+
+def test_a_close_up_that_replaced_its_picture_gets_it_but_a_resized_picture_does_not(tmp_path):
+    cc = C.CropCaptions(closeup=True)
+    for name, cropped, want in (("a", True, "me, solo, close-up"), ("b", False, "me, solo")):
+        Image.new("RGB", (8, 8)).save(tmp_path / f"{name}.png")
+        (tmp_path / f"{name}.txt").write_text("me, solo")
+        cc.in_place(str(tmp_path / f"{name}.png"), str(tmp_path / f"{name}.png"), str(tmp_path / "originals"),
+                    lambda m: None, None, cropped=cropped)
+        assert (tmp_path / f"{name}.txt").read_text() == want
+    assert (tmp_path / "originals" / "a.txt").read_text() == "me, solo"      # its first version is kept
+    assert not (tmp_path / "originals" / "b.txt").exists()
+
+
+def test_close_up_is_on_unless_turned_off(tmp_path, monkeypatch):
+    from fizgig import user_data
+    from fizgig.web import prep_jobs
+    monkeypatch.setattr(user_data, "MODELS_DIR", str(tmp_path))
+    c, _ = prep_jobs.caption_settings({"copy": True})
+    assert c["closeup"] is True and prep_jobs.crop_captions(c).closeup is True
+    c, _ = prep_jobs.caption_settings({"copy": True, "closeup": False})
+    assert c["closeup"] is False and prep_jobs.crop_captions(c).closeup is False
+    html = open(os.path.join(STATIC, "index.html"), encoding="utf-8").read()
+    js = open(os.path.join(STATIC, "app.js"), encoding="utf-8").read()
+    assert 'id="prepCapCloseup" checked>' in html and "Tag crops as close-up" in html
+    assert "closeup: p.capCloseup" in js and "saved.capCloseup !== false" in js
