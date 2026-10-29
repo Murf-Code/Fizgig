@@ -114,7 +114,7 @@ def test_crop_only_nothing_found_stays_whole_under_its_name(tmp_path):
     _folder(tmp_path, n=1, earlier=False)
     prep.Prep(lambda _t: None, None, prep.ThingFinder(_None(), ["sheath"]), captions=_caps(True)).run(
         "Face Crop Only", str(tmp_path), 0.05, prep.OTHER_TARGET, 20.0, False)
-    assert _tree(tmp_path) == ["originals/p0.jpg", "p0.png", "p0.txt"]
+    assert _tree(tmp_path) == ["p0.jpg", "p0.txt"]                 # left untouched: no resize, no backup
     assert (tmp_path / "p0.txt").read_text() == CAP
 
 

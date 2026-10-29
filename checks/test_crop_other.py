@@ -113,7 +113,8 @@ def test_crop_only_nothing_found_left_whole(tmp_path):
         "Face Crop Only", str(tmp_path), 4.2, prep.OTHER_TARGET, 20.0, False)
     text = "".join(log)
     assert "Nothing found in a.png, not cropped" in text and "Crops: 0 | Nothing found: 2" in text
-    assert Image.open(tmp_path / "b.png").size == (200, 160)
+    assert "Left as is (nothing to crop): b.jpg" in text
+    assert sorted(os.listdir(tmp_path)) == ["a.png", "b.jpg"]                  # untouched, nothing in originals
 
 
 def test_crop_only_crops_the_biggest(tmp_path):

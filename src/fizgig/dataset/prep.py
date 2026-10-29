@@ -280,8 +280,7 @@ def summary(folder, mode, replace, prep_mp, train_mp=None, find=""):
         what = f"{count} → {sized}"
     if mode == "Face Crop Only":
         originals = ("Your pictures and captions stay as they are; the crops are added beside them. Pictures with "
-                     "nothing to crop are only resized" + (" ⚠ in place, no undo." if replace else
-                                                            ", their old copies kept in 'originals'."))
+                     "nothing to crop are left untouched.")
     elif mode == "Auto Prep (Face Crops)":
         originals = ("Your pictures stay in the dataset, resized, with the crops added beside them. " +
                      ("Your original files are replaced ⚠ there is no undo." if replace else
@@ -610,23 +609,11 @@ class Prep:
                     converted += 1
                     img.close()
                     continue
-                output_path = os.path.join(output, os.path.splitext(filename)[0] + ".png")
-                if filepath == output_path and ext == '.png' and not resized and not cropped \
-                        and not _rotated(filepath):
-                    self.log(f"Skipped (no changes): {filename}\n")
-                    skipped += 1
-                    img.close()
-                    continue
-                output_path = self.safe_output_path(filepath, output_path)
-                self.stash_if_inplace(filepath, output_path, output, replace)
-                atomic_png_save(img, output_path)
-                info = f"{original[0]}x{original[1]} -> {w}x{h}" if (resized or cropped) else f"{w}x{h}"
-                self.log(f"Converted: {filename} [{info}]{crop_info}\n")
-                converted += 1
+                # close-up crops only: a picture with nothing to crop is left exactly as it is (no resize, no
+                # PNG copy, nothing moved to originals), its caption and mask too
+                self.log(f"Left as is (nothing to crop): {filename}\n")
+                skipped += 1
                 img.close()
-                self.handle_original(filepath, output_path, output, replace)
-                self.keep_mask(filepath, output_path, output, replace, crop_mask)
-                self._caption_in_place(filepath, output_path, output, replace, cropped)
             except Exception as e:
                 self.log(f"Error ({filename}): {e}\n")
                 errors += 1
@@ -752,23 +739,11 @@ class Prep:
                     converted += 1
                     img.close()
                     continue
-                output_path = os.path.join(output, os.path.splitext(filename)[0] + ".png")
-                if filepath == output_path and ext == '.png' and not resized and not cropped \
-                        and not _rotated(filepath):
-                    self.log(f"Skipped (no changes): {filename}\n")
-                    skipped += 1
-                    img.close()
-                    continue
-                output_path = self.safe_output_path(filepath, output_path)
-                self.stash_if_inplace(filepath, output_path, output, replace)
-                atomic_png_save(img, output_path)
-                info = f"{original[0]}x{original[1]} -> {w}x{h}" if (resized or cropped) else f"{w}x{h}"
-                self.log(f"Converted: {filename} [{info}]{crop_info}\n")
-                converted += 1
+                # close-up crops only: a picture with nothing to crop is left exactly as it is (no resize, no
+                # PNG copy, nothing moved to originals), its caption and mask too
+                self.log(f"Left as is (nothing to crop): {filename}\n")
+                skipped += 1
                 img.close()
-                self.handle_original(filepath, output_path, output, replace)
-                self.keep_mask(filepath, output_path, output, replace, crop_mask)
-                self._caption_in_place(filepath, output_path, output, replace, cropped)
             except Exception as e:
                 self.log(f"Error ({filename}): {e}\n")
                 errors += 1
