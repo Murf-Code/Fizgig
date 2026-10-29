@@ -3867,8 +3867,16 @@ class Handler(BaseHTTPRequestHandler):
                             **{k: v for k, v in vals.items() if k in mk}}
                 return self.json({"family": desc.key, "values": vals, "image_folder": rec.get("image_folder") or ""})
             if path == "/api/plan":
-                _, _, plan = _plan(b.get("family", ""), b.get("values") or {}, b.get("image_folder") or "")
-                return self.json({"problems": plan.problems, "stages": [{"name": s.name, "cmd": s.cmd}
+                desc, inputs, plan = _plan(b.get("family", ""), b.get("values") or {}, b.get("image_folder") or "")
+                warn = []
+                if desc is not None and isinstance(inputs, dict) and inputs.get("VALIDATION_LOSS") \
+                        and str(inputs.get("VALIDATION_LOSS")).lower() not in ("false", "0", "off"):
+                    w = launch.stale_validation_picks(desc, inputs)
+                    warn += [w] if w else []
+                if desc is not None and isinstance(inputs, dict):
+                    w = launch.stale_likeness_picks(desc, inputs)
+                    warn += [w] if w else []
+                return self.json({"problems": plan.problems, "warnings": warn, "stages": [{"name": s.name, "cmd": s.cmd}
                                                                          for s in plan.stages],
                                   "dataset_toml": plan.dataset_toml})
             if path == "/api/start":

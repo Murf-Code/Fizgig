@@ -1598,6 +1598,11 @@ async function check() {
     const p = await api("/api/plan", runBody());
     showProblems(p.problems, "✓ All good - nothing missing, Start Training will work. It will run: " +
       p.stages.map((s) => s.name).join(" → ") + ".");
+    if ((p.warnings || []).length) {
+      const box = $("problems");
+      box.classList.remove("ok");
+      box.textContent += (box.textContent ? "\n\n" : "") + "Worth a look:\n• " + p.warnings.join("\n• ");
+    }
   } catch (e) { showProblems([e.message]); }
 }
 

@@ -604,6 +604,48 @@ def run_subfolders(desc, st, skipped=None):
                                                    ft_reg_dir(desc, st)), skipped)
 
 
+def _missing_picks(desc, st, picked):
+    """The picked training images (names, or "sub/name" for a sub-folder pick) not found in this run's folder(s)."""
+    from fizgig.training.val_pick import resolve_picked
+    folder = _s(st.get("image_folder"))
+    if not picked or not folder or not os.path.isdir(folder):
+        return []
+    keys = [n for n in os.listdir(folder) if os.path.isfile(os.path.join(folder, n))]
+    for rel, f in run_subfolders(desc, st):
+        keys += [f"{rel}/{n}" for n in os.listdir(f) if os.path.isfile(os.path.join(f, n))]
+    return resolve_picked(picked, keys)[1]
+
+
+def stale_validation_picks(desc, st):
+    """The Check button's warning when picked validation images aren't in this run's training folder(s) (an old pick
+    from another dataset: the run then quietly uses its automatic pick), or ""."""
+    from fizgig.training.val_pick import picked_list
+    picked = picked_list(st.get("VALIDATION_PICKED"))
+    missing = _missing_picks(desc, st, picked)
+    if not missing:
+        return ""
+    n = len(missing)
+    return (f"{n} of your {len(picked)} picked validation image{'s' if len(picked) != 1 else ''} "
+            f"{'is' if n == 1 else 'are'} not in this training folder (e.g. {missing[0]}) - probably a pick from "
+            "another dataset. Re-pick them under Your images to check, or the run skips "
+            + ("it." if n < len(picked) else "them and uses its automatic pick."))
+
+
+def stale_likeness_picks(desc, st):
+    """The Check button's warning when the Samples tab's Likeness picks (SAMPLE_PAIRS) name images that aren't in this
+    run's training folder(s): those previews go unscored. "" when all are there."""
+    from fizgig.web.sample_pairs import dataset_rel, parse
+    picked = [dataset_rel(p["image"]) for p in parse(st.get("pairs") or st.get("SAMPLE_PAIRS"))]   # the plan: "pairs"
+    missing = _missing_picks(desc, st, picked)
+    if not missing:
+        return ""
+    n = len(missing)
+    return (f"{n} of your {len(picked)} Likeness pick{'s' if len(picked) != 1 else ''} on the Samples tab "
+            f"{'is' if n == 1 else 'are'} not in this training folder (e.g. {missing[0]}) - probably from another "
+            f"dataset. Re-pick {'it' if n == 1 else 'them'}, or {'that preview goes' if n == 1 else 'those previews go'}"
+            " unscored.")
+
+
 def own_skipped_line(desc, st):
     """The run log's one line naming the Fizgig folders the sub-folder tick left out, or "" (none, or tick off)."""
     skipped = []
