@@ -2553,6 +2553,7 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
     stop_now = [False]                # early stop: validation stopped improving, the run finishes
     stop_mid = [False]                # ... inside an epoch (a check every N steps): that epoch isn't whole
 
+    last_val = [None]                 # the latest validation loss, not yet seen by adaptive LR
     def _validate(epoch_no):
         nonlocal validator
         if validator is None or not validator.batches:
@@ -2568,6 +2569,7 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
         if r is None:
             return
         v, per_t, sec = r
+        last_val[0] = v                   # adaptive LR judges on it at this epoch's end
         steplog.add_validation(step_off + global_step, epoch_no, v, per_t, sec, seg=validator.seg)
         logger.info(f"[validation] step {step_off + global_step} (epoch {epoch_no}): loss {v:.5f}  "
                     f"[{', '.join(f't{t:.2f} {x:.4f}' for t, x in zip(validator.ts, per_t))}]  "
@@ -3018,7 +3020,9 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
                         "step(s) - how far the LoRA moves the class prompt from the base model")
             dop_sum[0], dop_sum[1] = 0.0, 0
         if adaptive:
-            adaptive.epoch_boundary(epoch, recorder.moving_average, net.trainable_modules(), optimizer)
+            adaptive.epoch_boundary(epoch, recorder.moving_average, net.trainable_modules(), optimizer,
+                                    val_loss=last_val[0])
+            last_val[0] = None
         # problem-image verdicts + queued caption fixes / auto-recaptions, re-encoded before the next epoch
         watch.boundary(epoch + 1, dit, device, parkable=not swapped)
 

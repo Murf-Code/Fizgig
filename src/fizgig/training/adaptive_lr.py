@@ -26,6 +26,9 @@ class AdaptiveLR:
     CLIP_RATIO_THRESHOLD = 0.5
     SMOOTH_EPOCHS = 3   # plateau / improving is judged on the mean loss of the last 3 epochs: an epoch's loss jitters
                         # by about ±0.005, which on its own read as a plateau every other epoch and walked the LR to Min
+    VAL_MIN_REL = 0.0002    # with the fixed validation loss on, it is the signal: steady but tiny drops (0.02%+ of the
+                            # best so far counts as better); the train loss jitters too much (a Muon run floored by e16)
+    COOLDOWN = 2            # after a halving, this many epochs before a plateau can count again: fresh evidence first
 
     def __init__(self, min_lr, max_lr, clip_signal=False):
         """clip_signal: Klein's rules - a grad-clip ratio over 50% of the epoch's steps is a stability signal
@@ -43,6 +46,8 @@ class AdaptiveLR:
         self.stability_triggered = False
         self.prev_weight_norm = None
         self.recent_losses = []
+        self.best_val = None
+        self.cooldown = 0
         self.snapshot = None  # {"weights": {...cpu...}, "optim": cpu state} — not persisted
 
     def record_clip(self, pre_clip_norm, max_norm):
@@ -58,7 +63,8 @@ class AdaptiveLR:
         return {"best_loss": self.best_loss, "good_streak": self.good_streak,
                 "bad_streak": self.bad_streak, "stability_streak": self.stability_streak,
                 "stability_triggered": self.stability_triggered,
-                "prev_weight_norm": self.prev_weight_norm, "recent_losses": list(self.recent_losses)}
+                "prev_weight_norm": self.prev_weight_norm, "recent_losses": list(self.recent_losses),
+                "best_val": self.best_val, "cooldown": self.cooldown}
 
     def load_state_dict(self, d):
         if not d:
@@ -70,6 +76,8 @@ class AdaptiveLR:
         self.stability_triggered = bool(d.get("stability_triggered", False))
         self.prev_weight_norm = d.get("prev_weight_norm")
         self.recent_losses = [float(x) for x in (d.get("recent_losses") or [])][-self.SMOOTH_EPOCHS:]
+        self.best_val = d.get("best_val")
+        self.cooldown = int(d.get("cooldown", 0))
 
     @staticmethod
     def _weight_norm(network):
@@ -112,11 +120,22 @@ class AdaptiveLR:
             except Exception:
                 pass
 
-    def epoch_boundary(self, epoch, current_loss, network, optimizer):
-        """epoch is 0-indexed (global). epoch 0 arms the baseline; epoch >= 1 adjusts the LR."""
+    def epoch_boundary(self, epoch, current_loss, network, optimizer, val_loss=None):
+        """epoch is 0-indexed (global). epoch 0 arms the baseline; epoch >= 1 adjusts the LR. val_loss: this epoch's
+        fixed validation loss (None when it's off or didn't run): when given it decides better / plateau."""
         raw_loss = current_loss
         self.recent_losses = (self.recent_losses + [float(current_loss)])[-self.SMOOTH_EPOCHS:]
         current_loss = sum(self.recent_losses) / len(self.recent_losses)      # smoothed
+        use_val = val_loss is not None
+        if use_val:
+            v = float(val_loss)
+            improved = self.best_val is None or v < self.best_val * (1.0 - self.VAL_MIN_REL)
+            if self.best_val is None or v < self.best_val:
+                self.best_val = v
+            signal = f"val={v:.5f} best {self.best_val:.5f}"
+        else:
+            improved = self.best_loss is None or current_loss < self.best_loss
+            signal = "train avg"
         if epoch == 0:
             self.best_loss = current_loss
             if not self.clip_signal:        # Klein's baseline starts at the first comparison
@@ -128,6 +147,8 @@ class AdaptiveLR:
 
         patience_up = 2
         patience_down = 2 if (self.stability_triggered or epoch == 1 or epoch >= 4) else 1
+        if use_val:          # one validation number per epoch, no smoothing: 3 epochs without a new best is a plateau
+            patience_down = 3
         cur_lr = optimizer.param_groups[0]["lr"]
         new_lr = cur_lr
         cur_wn = self._weight_norm(network)
@@ -162,9 +183,10 @@ class AdaptiveLR:
             else:
                 action = "WAIT"
                 reason = f"stability: {stability_reason}, streak {self.stability_streak}/{stability_patience}"
-        elif self.best_loss is None or current_loss < self.best_loss:
+        elif improved:
             self.stability_streak = 0
-            self.best_loss = current_loss
+            if not use_val:
+                self.best_loss = current_loss
             self.good_streak += 1
             self.bad_streak = 0
             if self.good_streak >= patience_up:
@@ -179,6 +201,10 @@ class AdaptiveLR:
                 self.good_streak = 0
             else:
                 reason = f"loss improving, streak {self.good_streak}/{patience_up}"
+        elif self.cooldown > 0:
+            self.stability_streak = 0
+            self.good_streak = 0
+            reason = f"loss plateau, cooling down after a halving ({self.cooldown} left)"
         else:
             self.stability_streak = 0
             self.bad_streak += 1
@@ -189,6 +215,7 @@ class AdaptiveLR:
                     new_lr = candidate
                     action = "REDUCE"
                     reason = f"loss plateau, streak {self.bad_streak}"
+                    self.cooldown = self.COOLDOWN + 1     # this epoch's -1 below leaves COOLDOWN
                 else:
                     action = "HOLD (floored)"
                     reason = "loss plateau, at min_lr"
@@ -196,6 +223,8 @@ class AdaptiveLR:
             else:
                 reason = f"loss plateau, streak {self.bad_streak}/{patience_down}"
 
+        if self.cooldown > 0:
+            self.cooldown -= 1
         if new_lr != cur_lr:
             for pg in optimizer.param_groups:
                 pg["lr"] = new_lr
@@ -203,7 +232,7 @@ class AdaptiveLR:
         wn_str = f"{weight_growth*100:+.0f}%" if weight_growth is not None else "—"
         clip_str = f"clip={clip_ratio*100:.0f}% " if self.clip_signal else ""
         logger.info(f"[adaptive_lr] epoch {epoch + 1}: loss={raw_loss:.4f} (avg {current_loss:.4f}) lr={lr_str} "
-                    f"{clip_str}wnorm_Δ={wn_str} | {action} ({reason})")
+                    f"{clip_str}wnorm_Δ={wn_str} [judged on {signal}] | {action} ({reason})")
         self.prev_weight_norm = cur_wn
         self.clip_steps = self.clip_events = 0
         self._snapshot(network, optimizer)
