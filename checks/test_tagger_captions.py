@@ -234,15 +234,15 @@ def test_florence_and_qwen_unchanged(tmp_path):
         "florence_code_revision": C.FLORENCE_CODE_REVISIONS[C.FLORENCE_DEFAULT_MODEL]}
     assert C._worker_config(C.QWEN_MODEL, "/te.safetensors", True) == {
         "backend": "qwen", "include_video": True, "text_encoder": "/te.safetensors"}
-    o = C.options({}, "/te.safetensors", str(tmp_path))
+    o = C.options({}, "/te.safetensors", models_dir=str(tmp_path))
     assert o["models"] == C.FLORENCE_MODELS + [C.QWEN_MODEL, T.WD_MODEL, T.JTP3_MODEL]
     assert o["default_model"] == C.QWEN_MODEL and o["tag_max"] == 255
-    assert C.options({}, "", str(tmp_path))["models"] == C.FLORENCE_MODELS + [T.WD_MODEL, T.JTP3_MODEL]
+    assert C.options({}, "", models_dir=str(tmp_path))["models"] == C.FLORENCE_MODELS + [T.WD_MODEL, T.JTP3_MODEL]
     tg = o["taggers"]
     assert tg[T.WD_MODEL]["id"] == "wd-eva02" and tg[T.WD_MODEL]["min_score"] == 0.60 and tg[T.WD_MODEL]["path"] == ""
     assert tg[T.JTP3_MODEL]["id"] == "jtp3" and tg[T.JTP3_MODEL]["min_score"] == 0.30 and tg[T.JTP3_MODEL]["gb"] == 1.0
     _wd_folder(tmp_path)          # the folder Trim tags downloads into is the one captions use
-    assert C.options({}, "", str(tmp_path))["taggers"][T.WD_MODEL]["path"] == os.path.join(str(tmp_path), W.FOLDER)
+    assert C.options({}, "", models_dir=str(tmp_path))["taggers"][T.WD_MODEL]["path"] == os.path.join(str(tmp_path), W.FOLDER)
 
 
 def test_server_passes_the_tag_settings():

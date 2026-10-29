@@ -72,6 +72,7 @@ async function boot() {
   S.uploadRoot = await api("/api/upload/root").catch(() => null);   // before the forms: where Choose… starts
   const pr = await api("/api/prefs");
   S.prefs = pr.models || {};
+  S.captioner = pr.captioner;              // the secondary captioning model's row
   S.webPort = pr.web_port;
   S.portNow = pr.port_now;
   S.onPod = pr.on_pod;
@@ -507,7 +508,7 @@ function splitRow(r, wrap) {
     else if (m === "Slide") {          // the refresh tick adds its "every N" as a fifth number
       mem.slide = [sFirst, sHold, sRest, sBy].map((i) => i.value.trim());
       mem.every = sEvery.value.trim() || mem.every || "3";
-      sFirstEcho.textContent = sFirst.value;     // "one epoch at 75%" follows the first box
+      refreshEcho();
       sEvery.disabled = !sTick.checked;
       onValue(r, [...mem.slide, ...(sTick.checked ? [mem.every] : [])].join(":"));
     }
@@ -517,7 +518,14 @@ function splitRow(r, wrap) {
   const one = box(), first = box(), until = box(), rest = box();
   const sFirst = box(), sHold = box(), sRest = box(), sBy = box(), sEvery = box();
   const sTick = el("input", {type: "checkbox", onchange: write});
-  const sFirstEcho = el("span");                   // "one epoch at 75%": the first share, as typed
+  const sFirstEcho = el("span");                   // "epoch at 30%": the lower of the two shares, as typed
+  const sNth = el("span");                         // "every 2nd epoch": the box's ordinal ending
+  const refreshEcho = () => {
+    const n = parseInt(sEvery.value, 10);
+    sNth.textContent = isNaN(n) ? "th" : n % 100 >= 11 && n % 100 <= 13 ? "th" : ["th", "st", "nd", "rd"][n % 10] || "th";
+    const a = parseFloat(sFirst.value), b = parseFloat(sRest.value);
+    sFirstEcho.textContent = `${isNaN(a) || isNaN(b) ? sRest.value : a <= b ? sFirst.value : sRest.value}${unit}`;
+  };
   const pills = el("div", {class: "radio-row"});
   for (const c of ["Single", ...(r.split ? ["Split"] : []), ...(r.slide ? ["Slide"] : [])]) {
     pills.append(el("label", {class: "checkbox-label"}, el("input", {type: "radio", name: "split_" + r.key, value: c,
@@ -532,12 +540,12 @@ function splitRow(r, wrap) {
     el("span", {class: "cad-pair"}, rest, el("span", {text: unit})));
   const lineSlide = el("div", {class: "cad-line"},
     el("span", {class: "cad-pair"}, sFirst, el("span", {text: unit + " until epoch"})),
-    el("span", {class: "cad-pair"}, sHold, el("span", {text: "then down to"})),
+    el("span", {class: "cad-pair"}, sHold, el("span", {text: "then slides to"})),
     el("span", {class: "cad-pair"}, sRest, el("span", {text: unit + " by epoch"})),
     el("span", {class: "cad-pair"}, sBy));
   const lineRefresh = (r.slide || []).length > 4 ? el("div", {class: "cad-line"},
     el("label", {class: "cad-tick"}, sTick, el("span", {text: "then every"})),
-    el("span", {class: "cad-pair"}, sEvery, el("span", {}, "epochs, one epoch at ", sFirstEcho, unit))) : null;
+    el("span", {class: "cad-pair"}, sEvery, el("span", {}, sNth, " epoch at ", sFirstEcho))) : null;
   const hintOne = el("div", {class: "field-hint", text: r.hint});
   const hintSplit = el("div", {class: "field-hint", text: r.split_hint || r.hint});
   const hintSlide = el("div", {class: "field-hint", text: r.slide_hint || r.hint});
@@ -552,7 +560,7 @@ function splitRow(r, wrap) {
       if (p.length === 5) mem.every = p[4];
       sEvery.value = mem.every || (r.slide || [])[4] || "3";
       sEvery.disabled = !sTick.checked;
-      sFirstEcho.textContent = sFirst.value;
+      refreshEcho();
     }
     else { one.value = S.values[r.key] ?? ""; mem.single = one.value; }
     for (const [node, on] of [[lineOne, m === "Single"], [hintOne, m === "Single"], [lineSplit, m === "Split"],
@@ -645,12 +653,71 @@ function promptLines(r, wrap) {
     line("", last).focus(); renumber(); save();
   }});
   wrap.append(el("span", {class: "field-label", text: r.label + ":"}), list, add, sync);
+  if (r.key === "SAMPLE_PROMPT") wrap.append(promptSetsBar(r, draw));
   if (r.hint) wrap.append(el("div", {class: "field-hint", text: r.hint}));
   wrap.append(el("div", {class: "field-hint row-note", id: "note_" + r.key}));
   draw();
   if (pairs) setTimeout(() => { document.querySelectorAll("#pairRows").forEach((h) => h !== pairs && h.remove());
     (document.querySelector('.form-row[data-key="_overtrain_tip"]') || wrap).after(pairs); });
   return wrap;
+}
+
+// the Samples tab's prompt sets (#267): saved prompts, shared by every model, loaded in place of the ones here (a
+// change goes to the run going now as any edit does, while Change the previews of the run going now is ticked)
+function promptSetsBar(r, draw) {
+  const pick = el("select", {"aria-label": "Prompt set"});
+  const ask = el("div"), msg = el("span", {class: "field-hint"});
+  const load = el("button", {class: "btn btn-sm", text: "Load", onclick: async () => {
+    try {
+      const d = await api("/api/prompt_set", {name: pick.value});
+      onValue(r, d.prompts); draw();
+      msg.textContent = `Loaded ${pick.value}: ${d.prompts.split("\n").length} prompt(s).`;
+    } catch (e) { msg.textContent = e.message; }
+  }});
+  const del = el("button", {class: "btn btn-sm", text: "Delete", onclick: () => {
+    const name = pick.value;
+    ask.replaceChildren(el("div", {class: "field-row"}, el("span", {class: "field-hint", text: `Delete the set ${name}?`}),
+      el("button", {class: "btn btn-sm btn-danger", text: "Delete", onclick: async () => {
+        try { fill((await api("/api/prompt_set/delete", {name})).sets); msg.textContent = `Deleted ${name}.`; }
+        catch (e) { msg.textContent = e.message; }
+        ask.replaceChildren();
+      }}),
+      el("button", {class: "btn btn-sm", text: "Cancel", onclick: () => ask.replaceChildren()})));
+  }});
+  const fill = (sets, chosen) => {
+    pick.replaceChildren(el("option", {value: "", text: sets.length ? "Choose a set…" : "No saved sets yet"}),
+      ...sets.map((n) => el("option", {value: n, text: n})));
+    pick.value = sets.includes(chosen) ? chosen : "";
+    load.disabled = del.disabled = !pick.value;
+  };
+  pick.addEventListener("change", () => { load.disabled = del.disabled = !pick.value; ask.replaceChildren(); });
+  const saveAs = el("button", {class: "btn btn-sm", text: "Save as set…", onclick: () => {
+    if (ask.childNodes.length) { ask.replaceChildren(); return; }
+    const name = el("input", {type: "text", class: "w-path", placeholder: "A name for these prompts", value: pick.value});
+    const note = el("span", {class: "field-hint"});
+    const save = async (overwrite) => {
+      const n = name.value.trim();
+      if (!n) { note.textContent = "Type a name first."; return; }
+      try {
+        const d = await api("/api/prompt_set/save", {name: n, prompts: S.values[r.key] || "", overwrite: !!overwrite});
+        if (d.exists) {
+          note.replaceChildren(document.createTextNode(`There's a set called ${n} already. `),
+            el("button", {class: "btn btn-sm btn-danger", text: "Replace it", onclick: () => save(true)}));
+          return;
+        }
+        fill(d.sets, n); ask.replaceChildren();
+        msg.textContent = `Saved ${n}: every model's Samples tab can load it.`;
+      } catch (e) { note.textContent = e.message; }
+    };
+    name.addEventListener("keydown", (e) => { if (e.key === "Enter") save(false); });
+    ask.replaceChildren(el("div", {class: "field-row"}, name,
+      el("button", {class: "btn btn-sm btn-primary", text: "Save", onclick: () => save(false)}),
+      el("button", {class: "btn btn-sm", text: "Cancel", onclick: () => ask.replaceChildren()}), note));
+    name.focus();
+  }});
+  api("/api/prompt_sets").then((d) => fill(d.sets)).catch(() => fill([]));
+  return el("div", {}, el("div", {class: "field-row"}, el("span", {class: "field-label", text: "Prompt sets:"}), pick,
+    load, saveAs, del, msg), ask);
 }
 
 // Model Area to Train > Custom: the model's blocks as ticks (All / None / an area's blocks), as the desktop's
@@ -974,6 +1041,7 @@ function renderPrefs() {
   host.append(foldersCard());
   host.append(inferenceCard());
   host.append(vramReclaimCard());
+  host.append(captionerCard());
   const gpuCard = gpuPickCard();
   if (gpuCard) host.append(gpuCard);
   S.fetchRows = {};
@@ -1035,6 +1103,36 @@ function renderPrefs() {
       el("div", {class: "field-hint", text: "Puts the folders, inference and training-memory settings above back to Fizgig's defaults. " +
         "Model files, the web password and the RunPod key are kept."}))));
   paintFetch();
+}
+
+// the secondary captioning model (#270): set, it captions everything (the Captions tab and auto-recaption);
+// empty, the Krea 2 text encoder does. Plain Hugging Face links to the builds Fizgig reads - nothing downloads itself
+function captionerCard() {
+  const c = S.captioner || {path: "", note: "", links: []};
+  const input = el("input", {type: "text", class: "w-path", value: c.path || "", placeholder: "Empty = the Krea 2 text encoder"});
+  const note = el("div", {class: "field-hint", text: c.note || ""});
+  const save = async () => {
+    try {
+      await api("/api/prefs", {changes: {captioner_secondary: input.value.trim()}});
+      S.captioner = (await api("/api/prefs")).captioner || c;
+      note.textContent = S.captioner.note || "";
+      captionModelsChanged();
+    } catch (e) { note.textContent = e.message; }
+  };
+  input.addEventListener("change", save);
+  const row = el("div", {class: "field-row"}, el("span", {class: "field-label", text: "Secondary captioning model:"}),
+    input, el("button", {class: "btn", text: "Choose…", title: "Pick from what is on the machine running Fizgig",
+      onclick: () => pick(input.value, false, (p) => { input.value = p; save(); })}),
+    ...(c.links || []).map((l) => el("a", {class: "btn", target: "_blank", rel: "noopener", href: l.href,
+      text: l.label.split(" (")[0], title: l.label})));
+  return el("div", {class: "section-card"}, el("div", {class: "card-title"}, el("span", {text: "Captioning model"})),
+    el("div", {class: "card-content"}, el("div", {class: "pref-file"}, row,
+      el("div", {class: "field-hint", text: "Optional. Qwen3-VL 8B, the bigger model of the family the Krea 2 text " +
+        "encoder belongs to (it's Qwen Image 2.1's text encoder): more detailed captions. Download a build from the " +
+        "links and choose it here; from then on it does all captioning - the Captions tab and auto-recaption. Empty " +
+        "the box to go back to the Krea 2 text encoder. " + (c.links || []).map((l) => l.label).join(" · ") +
+        ". On a card with less VRAM than it needs, it keeps what fits and streams the rest from system RAM (slower)."}),
+      note)));
 }
 
 // a folder setting the two apps share (prefs.json): a box, Choose…, saved when it changes
@@ -2576,24 +2674,42 @@ async function likenessPicker(single) {
   S.lik.multi = multi;
   $("likTitle").textContent = one ? (single.title || "Paired likeness: pick the training image this prompt describes") : "Likeness: pick 3 photos of your subject";
   $("likHint3").textContent = multi ? " Click pictures to select or unselect them; close with ✕ when you're done." :
-    " Pick clear, typical shots of the face: each preview is scored against all three and the mean shown, so one odd photo can't skew it.";
+    " Pick clear, typical shots of the face: each preview is scored against every photo you pick and the mean shown, so one odd photo can't skew it.";
   $("likHint3").style.display = one && !multi ? "none" : "";
   $("likStart").style.display = $("likClear").style.display = one ? "none" : "";
   if ($("likCount")) $("likCount").style.display = multi ? "" : "none";
   $("likModal").classList.toggle("lik-multi", multi);
-  const folder = S.imageFolder || "";
+  S.lik.mode = "gallery";
+  await likGridShow(S.imageFolder || "", multi ? (single.picked || []) : one ? (single.current ? [single.current] : []) :
+    ((S.lik.data && S.lik.data.baselines) || []));
+}
+// the picker's grid: the Samples gallery's 3 photos (from the training images), a single / multi pick (paired
+// likeness, validation, Image Prep's Test), or LoRA Royale's 1-3 (any folder)
+async function likGridShow(folder, picked) {
+  const royale = S.lik.mode === "royale";
+  if (royale) { S.lik.single = null; S.lik.multi = false; $("likModal").classList.remove("lik-multi");
+    $("likHint3").style.display = ""; if ($("likCount")) $("likCount").style.display = "none"; }
+  const one = !!S.lik.single;
+  S.lik.folder = folder; S.lik.paths = {};
+  if (!one) $("likTitle").textContent = `Likeness: pick ${royale ? "up to " : ""}3 photos of your subject`;
+  $("likFrom").textContent = royale ? "this folder" : "the training images";
+  $("likFolderPick").style.display = royale ? "" : "none";
+  $("likClear").style.display = royale || one ? "none" : "";
+  $("likStart").style.display = one ? "none" : "";
+  $("likStart").textContent = royale ? "Use these" : "Start scoring";
   $("likFolder").textContent = folder || "no training image folder set on the Start tab";
-  S.lik.picked = multi ? [...(single.picked || [])] : one ? (single.current ? [single.current] : []) :
-    [...((S.lik.data && S.lik.data.baselines) || [])];
+  S.lik.picked = [...picked];
   const grid = $("likGrid");
   grid.innerHTML = "";
   $("likModal").classList.add("active");
   likenessMarks();
   if (!folder) return;
   // Image Prep's Test (top): Image Prep works on the top folder only, so its pick never lists sub-folders
-  const r = await api(trainImagesUrl(S.lik.single && S.lik.single.top)).catch(() => ({items: []}));
+  const r = await api(royale ? `/api/captions?folder=${encodeURIComponent(folder)}&ext=${encodeURIComponent(capExt())}&family=${encodeURIComponent(S.family || "")}`
+    : trainImagesUrl(S.lik.single && S.lik.single.top)).catch(() => ({items: []}));
   const pics = (S.lik.single && S.lik.single.pics) || LIK_PICS;      // Image Prep's Test also lists .bmp
   for (const it of r.items.filter((x) => pics.test(x.name))) {
+    S.lik.paths[it.name] = it.path;
     const fig = el("figure", {title: it.sub ? `${it.name.slice(it.sub.length + 1)}\nin ${it.sub}` : it.name, onclick: () => {
       if (S.lik.single && !S.lik.multi) { $("likModal").classList.remove("active"); S.lik.single.onPick(it); return; }
       const i = S.lik.picked.indexOf(it.name);
@@ -2610,7 +2726,7 @@ async function likenessPicker(single) {
     fig.dataset.name = it.name;
     grid.append(fig);
   }
-  if (!grid.children.length) grid.append(el("div", {class: "field-hint", text: "No pictures in the training image folder."}));
+  if (!grid.children.length) grid.append(el("div", {class: "field-hint", text: `No pictures in ${royale ? "this" : "the training image"} folder.`}));
   likenessMarks();
 }
 function likenessMarks() {
@@ -2623,7 +2739,7 @@ function likenessMarks() {
     f.querySelector(".lik-check")?.remove();
     if (i >= 0) f.append(multi ? el("span", {class: "lik-check", text: "✓"}) : el("span", {class: "lik-num", text: String(i + 1)}));
   }
-  $("likStart").disabled = S.lik.picked.length !== 3;
+  $("likStart").disabled = S.lik.mode === "royale" ? !S.lik.picked.length : S.lik.picked.length !== 3;
   if (multi && $("likCount")) $("likCount").textContent = `${S.lik.picked.length} selected`;
   $("likPickStatus").textContent = multi ? `${S.lik.picked.length} selected` : S.lik.single ? "Click one picture" : `${S.lik.picked.length}/3 selected`;
 }
@@ -2956,6 +3072,7 @@ async function loadRuns() {
         if (x.need) { contAsk(x.error); return; }
         if (x.problems) { alertRow.textContent = x.problems.join(" "); return; }
         contBox.style.display = "none";
+        if (x.form) await loadIntoForm(x.form);   // the tab shows the run going on, not the settings before it
         alertRow.textContent = x.queued ? "A run is training now: this one is on the queue, and continues when its " +
           "turn comes." : `Continuing ${run.lora || "the run"}: it's on the Training tab.`;
         pollRun();
@@ -3210,7 +3327,7 @@ function ryRemember() {
     single: v("rySingle"), cmp: v("ryCPrompts"),
     family: v("ryFamily"), folder: v("ryFolder"), prompt: v("ryPrompt"),
     seed: v("rySeed"), ref: v("ryRef"), refStr: v("ryRefStr"), w: v("ryW"), h: v("ryH"), max: v("ryMax"),
-    like: v("ryLikeRef"), out: v("ryOut"), fmt: v("ryFmt"), speed: v("rySpeed")})); } catch (e) { /* private */ }
+    like: S.ry.likeRefs || [], out: v("ryOut"), fmt: v("ryFmt"), speed: v("rySpeed")})); } catch (e) { /* private */ }
 }
 const ryLabel = (l) => (String(l).match(/^\d+$/) ? `Epoch ${l}` : String(l));
 
@@ -3219,7 +3336,9 @@ async function royaleOpen() {
     S.ry.wired = true;
     const sv = rySaved();
     for (const [id, k] of [["ryFolder", "folder"], ["ryPrompt", "prompt"], ["rySeed", "seed"], ["ryRef", "ref"],
-      ["ryRefStr", "refStr"], ["ryLikeRef", "like"], ["ryOut", "out"]]) if (sv[k] != null) $(id).value = sv[k];
+      ["ryRefStr", "refStr"], ["ryOut", "out"]]) if (sv[k] != null) $(id).value = sv[k];
+    S.ry.likeRefs = Array.isArray(sv.like) ? sv.like.slice(0, 3) : sv.like ? [sv.like] : [];
+    ryLikeShow();
     for (const [id, k] of [["ryW", "w"], ["ryH", "h"], ["ryMax", "max"], ["ryFmt", "fmt"], ["rySpeed", "speed"]])
       if (sv[k]) $(id).value = sv[k]; else if (id === "ryW" || id === "ryH") $(id).value = "512";
     await royaleFamily(sv.family);
@@ -3542,10 +3661,10 @@ async function royaleScore() {
   $("ryLikeStatus").textContent = "Scoring… (the first run loads the face model)";
   $("ryLikePeak").textContent = "";
   try {
-    const r = await api("/api/royale/score", {ref: $("ryLikeRef").value.trim()});
+    const r = await api("/api/royale/score", {refs: S.ry.likeRefs || []});
     S.ry.scores = r.scores; S.ry.best = r.best;
     royaleGrid();
-    if (r.best == null) { $("ryLikeStatus").textContent = "No faces detected in the renders or subject image."; $("ryBest").disabled = true; return; }
+    if (r.best == null) { $("ryLikeStatus").textContent = "No faces detected in the renders or subject photos."; $("ryBest").disabled = true; return; }
     $("ryBest").disabled = false;
     $("ryLikeStatus").textContent = `Best: ${ryLabel(r.best).toLowerCase()} (${r.scores[r.best].toFixed(3)})` +
       (r.no_face ? `  (${r.no_face} no-face)` : "") +
@@ -3553,6 +3672,14 @@ async function royaleScore() {
     $("ryLikePeak").textContent = arcPeak(r.embedder).replace("72%", "0.72 (72%)");
     royaleBest();
   } catch (e) { $("ryLikeStatus").textContent = e.message; }
+}
+
+// the Likeness score card's chosen photos, as thumbnails
+function ryLikeShow() {
+  const refs = S.ry.likeRefs || [];
+  $("ryLikeRefs").replaceChildren(...(refs.length ? refs.map((p) => el("img", {title: p, alt: "",
+    src: `/api/thumb?path=${encodeURIComponent(p)}&t=${encodeURIComponent(TOKEN)}`}))
+    : [el("span", {class: "field-hint", text: "None chosen"})]));
 }
 
 function royaleBest() {
@@ -3582,8 +3709,13 @@ function wireRoyale() {
     $("ryFolder").value = p; royaleScan(); remember(); }));
   $("ryRefPick").addEventListener("click", () => pick($("ryRef").value || refStart(), false, (p) => { $("ryRef").value = p; remember(); }));
   $("ryRefClear").addEventListener("click", () => { $("ryRef").value = ""; remember(); });
-  $("ryLikePick").addEventListener("click", () => pick($("ryLikeRef").value || refStart(), false, (p) => { $("ryLikeRef").value = p; remember(); }));
-  $("ryLikeClear").addEventListener("click", () => { $("ryLikeRef").value = ""; remember(); });
+  $("ryLikePick").addEventListener("click", () => {      // the Samples gallery's picker, from the photos' folder
+    const refs = S.ry.likeRefs || [], dir = (p) => p.replace(/[\\/][^\\/]*$/, "");
+    const folder = refs.length ? dir(refs[0]) : refStart() || "";
+    S.lik.mode = "royale";
+    likGridShow(folder, refs.filter((p) => dir(p) === folder).map((p) => p.split(/[\\/]/).pop()));
+  });
+  $("ryLikeClear").addEventListener("click", () => { S.ry.likeRefs = []; ryLikeShow(); remember(); });
   $("ryOutPick").addEventListener("click", () => pick($("ryOut").value, true, (p) => { $("ryOut").value = p; remember(); }));
   $("ryRender").addEventListener("click", royaleRender);
   $("ryStop").addEventListener("click", () => api("/api/royale/cancel", {}).then(royalePoll));
@@ -7357,7 +7489,10 @@ async function loadCaptionOptions() {
   model.innerHTML = "";
   for (const m of o.models) model.append(el("option", {value: m, text: m}));
   model.value = o.models.includes(saved.model) ? saved.model : o.default_model;
-  S.cap.modelHint = o.qwen_available ?
+  S.cap.modelHint = o.secondary ?
+    `Qwen3-VL captions with your secondary captioning model (${o.secondary}, set in Preferences), following an ` +
+    "instruction you can edit. Empty that row in Preferences to caption with the Krea 2 text encoder again. " +
+    "Florence-2 downloads itself the first time." : o.qwen_available ?
     "Qwen3-VL (the Krea 2 text encoder from Preferences) follows an instruction you can edit and writes the best " +
     "training captions. Florence-2 downloads itself the first time." :
     "Set the Krea 2 text encoder in Preferences to caption with Qwen3-VL, which writes better training captions. " +
@@ -9659,7 +9794,13 @@ function wire() {
   });
   new MutationObserver(() => { if (!$("rvModal").classList.contains("active")) rvStop(); })
     .observe($("rvModal"), {attributes: true, attributeFilter: ["class"]});
-  $("likStart").addEventListener("click", held($("likStart"), () => likenessSet(S.lik.picked)));
+  $("likStart").addEventListener("click", held($("likStart"), async () => {
+    if (S.lik.mode !== "royale") return likenessSet(S.lik.picked);
+    S.ry.likeRefs = S.lik.picked.map((n) => S.lik.paths[n]).filter(Boolean);
+    ryLikeShow(); ryRemember();
+    $("likModal").classList.remove("active");
+  }));
+  $("likFolderPick").addEventListener("click", () => pick(S.lik.folder || refStart(), true, (p) => likGridShow(p, [])));
   $("likClear").addEventListener("click", () => likenessSet([]));
   document.querySelectorAll("#galleryView button").forEach((b) => b.addEventListener("click", () => {
     S.galleryView = b.dataset.view; loadGallery(); }));

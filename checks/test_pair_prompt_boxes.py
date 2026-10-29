@@ -19,6 +19,7 @@ const code = src.match(/const \$ = \(id\)[^\n]*\n/)[0] + src.match(/const el = \
 const S = {values: {SAMPLE_PROMPT: "a fox\nb cat", SAMPLE_PAIRED: true,
                     SAMPLE_PAIRS: ""}, imageFolder: "/d"};
 const TOKEN = "t", saveStateSoon = () => {}, pairSyncSoon = () => {}, pairCaptionBadge = () => {};
+const promptSetsBar = () => document.createElement("div");
 const likenessPicker = () => {}, onValue = (r, v) => { S.values[r.key] = v; };
 eval(code + "; global.promptLines = promptLines; global.promptHash = promptHash;");
 const wrap = document.createElement("div"); document.getElementById("host").append(wrap);

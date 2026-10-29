@@ -464,6 +464,25 @@ def user_presets(desc) -> list:
         return []
 
 
+PROMPT_SETS_DIR = os.path.join(PRESETS_DIR, "sample_prompts")
+
+
+def prompt_sets() -> list:
+    """The Samples tab's saved prompt sets, shared by every model (presets/sample_prompts/<name>.txt, one prompt a
+    line), by name (#267)."""
+    try:
+        return sorted((f[:-4] for f in os.listdir(PROMPT_SETS_DIR) if f.endswith(".txt")), key=str.lower)
+    except OSError:
+        return []
+
+
+def prompt_set_path(name) -> str:
+    name = str(name or "").strip()
+    if not name or any(c in name for c in '<>:"/\\|?*') or name.startswith("."):
+        raise ValueError('A set\'s name can\'t be empty or hold < > : " / \\ | ? *')
+    return os.path.join(PROMPT_SETS_DIR, name + ".txt")
+
+
 def _code_stamp():
     """The newest change to the web UI's server code (and the shared modules it runs): a page served after an update
     while this server still runs the old code is told to restart it."""
@@ -976,7 +995,7 @@ def _plan(family_key, values, image_folder, resume="", ft_continue=None, models=
     name = str(values.get("LORA_NAME") or "").strip() or "my_lora"
     out_dir = str(values.get("LORA_OUTPUT_DIR") or "").strip() or default_output_dir()
     values.update(LORA_OUTPUT_DIR=out_dir, DATASET_CONFIG=os.path.join(DATASET_DIR, f"{_safe(name)}_web.toml"))
-    captioner = pref_path(prefs, "krea2_text_encoder")
+    captioner = captioner_for(prefs)
     raw_ovr = prefs.get("caption_qwen_instructions")
     inputs = form.inputs(
         desc, values, models={**{k: pref_path(prefs, k) for k in form.model_keys(desc)}, **(models or {})},
@@ -1466,6 +1485,23 @@ def _oom_note(run_id):
             "swap (Memory & Precision, on the Training tab), and close other programs that use the GPU.\n")
 
 
+def _run_form(rec, values=None):
+    """A run's model, training folder and settings as the Training tab loads them (Start again; a Continue that
+    started, with the settings it carries on with, so the tab shows the run training and not the one before)."""
+    if rec and rec.get("family") in (refmod.KEY, refmod.LABEL):
+        return {"family": refmod.KEY, "values": {k: v for k, v in (values or rec.get("values") or {}).items()
+                                                 if not str(k).startswith("__")},
+                "image_folder": rec.get("image_folder") or ""}
+    desc = get_family(rec.get("family", "")) if rec else None
+    if desc is None:
+        return {"error": "That run's model isn't available here."}
+    vals = values or rec.get("values") or {}
+    if rec.get("source") == "desktop":       # the desktop's settings, as a preset applies them, with the
+        mk = {o.key for o in desc.options if o.tab == "model"}   # Base Model card's options beside them
+        vals = {**form.apply_preset(desc, {}, vals, whole=True), **{k: v for k, v in vals.items() if k in mk}}
+    return {"family": desc.key, "values": vals, "image_folder": rec.get("image_folder") or ""}
+
+
 def _continue_run(run_id, more="", queue_ok=True, values=None):
     """Continue on Runs & outputs: the run trains on from its newest save, with its own settings and into its own
     record. more: the epochs (a fine-tune: rotations) to train to, for a run that already trained all it was set to.
@@ -1502,10 +1538,16 @@ def _continue_run(run_id, more="", queue_ok=True, values=None):
         return {"ok": True, "queued": True}
     note = f"=== Continuing {rec.get('lora')} from {os.path.basename(pt['path'])}: to {target} {unit} ==="
     if pt["kind"] == "ft":
-        return _resumed(_start(rec["family"], values, rec.get("image_folder") or "", ft_continue={
+        r = _resumed(_start(rec["family"], values, rec.get("image_folder") or "", ft_continue={
             "continue": cont, "rotations": left}, note=note, carry=run_id))
-    return _resumed(_start(rec["family"], values, rec.get("image_folder") or "", resume=pt["path"], note=note,
-                           carry=run_id))
+    else:
+        r = _resumed(_start(rec["family"], values, rec.get("image_folder") or "", resume=pt["path"], note=note,
+                            carry=run_id))
+    if isinstance(r, dict) and not r.get("error") and not r.get("problems"):
+        f = _run_form(rec, values)            # the Training tab then shows this run's settings (it kept the last ones)
+        if not f.get("error"):
+            r = {**r, "form": f}
+    return r
 
 
 LOG_CLEAR = "\x00clear\n"      # in the log where a run starts: the page's console begins again from there
@@ -2264,14 +2306,18 @@ def remember_folder(path):
     key = os.path.normcase(os.path.abspath(path))
     old = [p for p in (d.get("recent_folders") or []) if isinstance(p, str)
            and os.path.normcase(os.path.abspath(p)) != key]
-    update_last_used({"recent_folders": [path] + old[:RECENT_KEEP - 1]})
+    update_last_used({"recent_folders": [path] + old[:RECENT_KEEP - 1],      # picked again: on the list again
+                      "hidden_folders": [h for h in (d.get("hidden_folders") or []) if h != key]})
 
 
 def forget_folder(path):
+    """The tile's x: off Your training data (its files stay). Hidden, not only dropped from the recent ones - a past
+    run's training folder came straight back from the run history (#266) - until it's picked again."""
     key = os.path.normcase(os.path.abspath(str(path or "")))
     d = load_last_used()
     update_last_used({"recent_folders": [p for p in (d.get("recent_folders") or []) if isinstance(p, str)
-                                         and os.path.normcase(os.path.abspath(p)) != key]})
+                                         and os.path.normcase(os.path.abspath(p)) != key],
+                      "hidden_folders": [h for h in (d.get("hidden_folders") or []) if h != key] + [key]})
 
 
 def _elsewhere_folders(root) -> list:
@@ -2284,7 +2330,7 @@ def _elsewhere_folders(root) -> list:
     except Exception:
         pass
     inside = os.path.normcase(os.path.abspath(root)) + os.sep
-    seen, out = set(), []
+    seen, out = set(d.get("hidden_folders") or []), []          # the ones taken off the list (forget_folder)
     for p in cand:
         if not isinstance(p, str) or not p.strip():
             continue
@@ -2611,6 +2657,27 @@ def _fetch_watch(proc):
             _fetch["state"] = "done" if code == 0 else "failed"
 
 
+def captioner_for(prefs) -> str:
+    """The captioner (the Captions tab's Qwen3-VL and auto-recaption): the secondary captioning model when that row is
+    set to a file it can read (#270), else the Krea 2 text encoder."""
+    sec = pref_path(prefs, captions.SECONDARY_PREF)
+    if sec and os.path.isfile(sec) and not captions.captioner_problem(sec):
+        return sec
+    return pref_path(prefs, "krea2_text_encoder")
+
+
+def secondary_captioner_note(prefs) -> str:
+    """The secondary captioning row's line for Preferences: what captions, or why the file set there can't."""
+    sec = pref_path(prefs, captions.SECONDARY_PREF)
+    if not sec:
+        return ""
+    if not os.path.isfile(sec):
+        return "That file isn't there: captioning uses the Krea 2 text encoder."
+    why = captions.captioner_problem(sec)
+    return (f"Not used - {why}. Captioning uses the Krea 2 text encoder." if why
+            else f"Captioning (the Captions tab and auto-recaption) uses {os.path.basename(sec)}.")
+
+
 def _caption_gpu_check(need_gb):
     """With a run training, a caption job only starts when the card has room for it beside the run (what the job
     needs + 3 GB)."""
@@ -2839,6 +2906,10 @@ class Handler(BaseHTTPRequestHandler):
                                          for k in form.model_keys(d)},
                               "cache_dir": str(p.get("cache_dir") or ""),
                               "settings": {k: str(p.get(k) or "") for k in SETTING_PREFS},
+                              "captioner": {"path": str(p.get(captions.SECONDARY_PREF) or ""),
+                                            "note": secondary_captioner_note(p),
+                                            "links": [{"label": lab, "href": f"https://huggingface.co/{r}/blob/main/{f}"}
+                                                      for lab, r, f in captions.SECONDARY_LINKS]},
                               "abs": {k: pref_path(p, k) for k in ("profiles_dir", "cache_dir")},
                               "lora_output_dir": str(p.get("lora_output_dir") or ""), "output_default": default_output_dir(),
                               "web_port": saved_port(p), "port_now": self.server.server_address[1], "on_pod": on_pod(), "file_manager": pod_stop.file_manager(), "host_name": socket.gethostname(), "port_fixed": getattr(self, "port_fixed", False),
@@ -2911,9 +2982,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self.json({"error": str(e)}, 400)
         if path == "/api/captions/options":
             p = load_prefs()
-            cap = pref_path(p, "krea2_text_encoder")
+            cap = captioner_for(p)
+            sec = pref_path(p, captions.SECONDARY_PREF)
             desc = get_family((qs.get("family") or [""])[0])
-            return self.json({**captions.options(p, cap if cap and os.path.isfile(cap) else ""),
+            return self.json({**captions.options(p, cap if cap and os.path.isfile(cap) else "",
+                                                 cap if cap and cap == sec else ""),
                               "song_words": getattr(desc, "song_captions", "") if desc is not None else ""})
         if path == "/api/presets":               # a model's presets: the built-in ones, then the ones you saved
             desc = _preset_family((qs.get("family") or [""])[0])
@@ -2921,6 +2994,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.json({"error": "unknown family"}, 400)
             built = [n for n, _ in (desc.presets or ())]
             return self.json({"builtin": built, "user": [n for n in user_presets(desc) if n not in built]})
+        if path == "/api/prompt_sets":           # the Samples tab's saved prompt sets
+            return self.json({"sets": prompt_sets()})
         if path == "/api/studio/families":
             return self.json({"families": [{"key": d.key, "name": d.display_name} for d in studio.families()]})
         if path == "/api/studio/layout":
@@ -3688,7 +3763,7 @@ class Handler(BaseHTTPRequestHandler):
                 if desc is None:
                     return self.json({"error": "unknown family"}, 400)
                 prefs = load_prefs()
-                cap = pref_path(prefs, "krea2_text_encoder")
+                cap = captioner_for(prefs)
                 sp = desc.preview_speed()
                 spf = pref_path(prefs, sp.pref_key) if sp is not None and sp.pref_key else ""
                 ck = desc.preview_checkpoint()
@@ -3739,6 +3814,31 @@ class Handler(BaseHTTPRequestHandler):
                               {k: v for k, v in vals.items() if not str(k).startswith("__") and k != "H3_TRAIN_BASE"},
                               f, indent=4)
                 return self.json({"ok": True, "user": user_presets(desc)})
+            if path in ("/api/prompt_set", "/api/prompt_set/save", "/api/prompt_set/delete"):
+                try:
+                    p = prompt_set_path(b.get("name"))
+                except ValueError as e:
+                    return self.json({"error": str(e)}, 400)
+                if path == "/api/prompt_set/save":
+                    lines = [ln.rstrip() for ln in str(b.get("prompts") or "").splitlines()]
+                    if not any(lines):
+                        return self.json({"error": "Type a prompt first."}, 400)
+                    if os.path.exists(p) and not b.get("overwrite"):
+                        return self.json({"exists": True})
+                    os.makedirs(PROMPT_SETS_DIR, exist_ok=True)
+                    with open(p, "w", encoding="utf-8") as f:
+                        f.write("\n".join(ln for ln in lines if ln.strip()) + "\n")
+                elif path == "/api/prompt_set/delete":
+                    if os.path.isfile(p):
+                        os.remove(p)
+                else:
+                    try:
+                        with open(p, encoding="utf-8") as f:
+                            return self.json({"prompts": "\n".join(ln.rstrip() for ln in f.read().splitlines()
+                                                                   if ln.strip())})
+                    except OSError:
+                        return self.json({"error": "That set's file can't be read."}, 400)
+                return self.json({"ok": True, "sets": prompt_sets()})
             if path == "/api/preset":
                 desc = _preset_family(b.get("family", ""))
                 preset = dict(desc.presets or ()).get(b.get("name")) if desc else None
@@ -3852,20 +3952,8 @@ class Handler(BaseHTTPRequestHandler):
                 r = _continue_run(str(b.get("id") or ""), str(b.get("more") or ""))
                 return self.json(r, 400 if r.get("error") and not r.get("need") else 200)
             if path == "/api/runs/settings":            # Start again with these settings
-                rec = history.get(str(b.get("id") or ""))
-                if rec and rec.get("family") in (refmod.KEY, refmod.LABEL):
-                    return self.json({"family": refmod.KEY, "values": {k: v for k, v in (rec.get("values") or {}).items()
-                                                                        if not str(k).startswith("__")},
-                                      "image_folder": rec.get("image_folder") or ""})
-                desc = get_family(rec.get("family", "")) if rec else None
-                if desc is None:
-                    return self.json({"error": "That run's model isn't available here."}, 400)
-                vals = rec.get("values") or {}
-                if rec.get("source") == "desktop":       # the desktop's settings, as a preset applies them, with the
-                    mk = {o.key for o in desc.options if o.tab == "model"}   # Base Model card's options beside them
-                    vals = {**form.apply_preset(desc, {}, vals, whole=True),
-                            **{k: v for k, v in vals.items() if k in mk}}
-                return self.json({"family": desc.key, "values": vals, "image_folder": rec.get("image_folder") or ""})
+                r = _run_form(history.get(str(b.get("id") or "")))
+                return self.json(r, 400 if r.get("error") else 200)
             if path == "/api/plan":
                 desc, inputs, plan = _plan(b.get("family", ""), b.get("values") or {}, b.get("image_folder") or "")
                 warn = []
@@ -4034,7 +4122,7 @@ class Handler(BaseHTTPRequestHandler):
                 render_keys = {f"workbench_render_{d.key}" for d in training_families()
                                if getattr(d, "workbench_render_choice", False)}
                 allowed = {k for d in training_families() for k in form.model_keys(d)} | set(SETTING_PREFS) | {
-                    "input_dataset_dir", "welcome_v8_hidden"} | render_keys
+                    "input_dataset_dir", "welcome_v8_hidden", captions.SECONDARY_PREF} | render_keys
                 ch = b.get("changes") or {}
                 ch = {k: v for k, v in ch.items() if k not in render_keys or v in ("checkpoint", "samples")}
                 if b.get("reset"):                      # Reset to defaults: the settings, never the model files
@@ -4088,7 +4176,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.json({"ok": True})
             if path == "/api/captions/ai":
                 prefs, folder, clips, photos, _ = _caption_args(b)
-                cap = pref_path(prefs, "krea2_text_encoder")
+                cap = captioner_for(prefs)
                 model = str(b.get("model") or "")
                 _caption_gpu_check(8.0 if model == captions.QWEN_MODEL else 2.5)
                 only = [p for p in (b.get("only") or []) if os.path.dirname(os.path.abspath(p)) ==
@@ -4558,7 +4646,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not rendered:
                     raise ValueError("Render some epochs first.")
                 if path == "/api/royale/score":
-                    return self.json(royale.score(st["gen"], rendered, str(b.get("ref") or "")))
+                    return self.json(royale.score(st["gen"], rendered, [str(r) for r in b.get("refs") or []]))
                 folder = str(b.get("out_dir") or "").strip() or default_output_dir()
                 if path == "/api/royale/export":
                     return self.json(royale.export(rendered, folder, run, b.get("format") or "MP4",

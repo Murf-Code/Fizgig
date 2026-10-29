@@ -1163,11 +1163,11 @@
           </div>
           <div data-ry="epochs" class="section-card ry-folder-only">
             <div class="card-title">Likeness score</div>
-            <div class="card-desc">Pick a training image of your subject - Fizgig scores each epoch's face against it
-              (ArcFace, on the CPU) and highlights the closest match in gold.</div>
+            <div class="card-desc">Choose up to 3 photos of your subject - Fizgig scores each epoch's face against
+              each of them (ArcFace, on the CPU), shows the mean, and highlights the closest match in gold.</div>
             <div class="card-content">
-              <div class="field-row"><span class="field-label">Subject image:</span>
-                <input type="text" id="ryLikeRef" class="w-path"><button class="btn" id="ryLikePick">Choose…</button>
+              <div class="field-row"><span class="field-label">Subject photos:</span>
+                <span class="ry-like-refs" id="ryLikeRefs"></span><button class="btn" id="ryLikePick">Choose…</button>
                 <button class="btn" id="ryLikeClear">Clear</button></div>
               <div class="field-row"><button class="btn btn-primary" id="ryScore">Score likeness</button>
                 <button class="btn" id="ryBest" disabled>Jump to best</button>
@@ -1888,8 +1888,9 @@
         <span class="lik-count" id="likCount" style="display: none">0 selected</span>
         <button class="btn" data-close="likModal">✕</button></div>
       <div class="modal-body">
-        <div class="field-hint">From the training images (<span id="likFolder"></span>).<span id="likHint3"> Pick clear, typical shots of the
-          face: each preview is scored against all three and the mean shown, so one odd photo can't skew it.</span></div>
+        <div class="field-hint">From <span id="likFrom">the training images</span> (<span id="likFolder"></span>).
+          <button class="btn btn-sm" id="likFolderPick">Another folder…</button><span id="likHint3"> Pick clear, typical shots of the
+          face: each render is scored against every photo you pick and the mean shown, so one odd photo can't skew it.</span></div>
         <div class="lik-grid" id="likGrid"></div>
         <div class="field-row"><button class="btn btn-primary" id="likStart" disabled>Start scoring</button>
           <button class="btn" id="likClear">Stop and clear scores</button>

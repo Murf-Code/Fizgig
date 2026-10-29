@@ -2905,6 +2905,8 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
                     dop_sum[0] += _dl.item()
                     dop_sum[1] += 1
                     _dc = None
+                if ftr is not None and ftr.fused is not None:
+                    ftr.fused.scale = lr_acc[-1] if lr_acc else 1.0   # each weight steps in this backward's hooks
                 (_scaled / accum if accum > 1 else _scaled).backward()
                 if _dc is not None and ftr is None:
                     dop_sum[0] += _dop_step(driver, dit, net, latents, _dc, gen, weight=dop_weight,

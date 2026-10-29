@@ -2028,6 +2028,8 @@ input[type="radio"] { accent-color: var(--accent); width: 16px; height: 16px; ma
 .ry-label { text-align: center; font-weight: 700; min-height: 1.4em; }
 .ry-scrub { width: calc(100% - 40px); margin: 6px 20px 4px; display: block; }
 .ry-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; }
+.ry-like-refs { display: inline-flex; gap: 6px; align-items: center; margin-right: 6px; }
+.ry-like-refs img { width: 48px; height: 48px; object-fit: cover; display: block; border: 1px solid var(--border); }
 .ry-cell { text-align: center; cursor: pointer; font-size: 8.5pt; color: var(--text-muted); }
 .ry-cell img { width: 100%; aspect-ratio: 1; object-fit: cover; display: block; border: 3px solid transparent; }
 .ry-cell.best img { border-color: var(--gold); }

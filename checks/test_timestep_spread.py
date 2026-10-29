@@ -81,7 +81,7 @@ def _draws(key, preset, n=3000, min_t=0.0, max_t=1.0, seed=0):
 
 # ---- which families ---------------------------------------------------------------------------------------------
 def test_which_families_offer_it():
-    assert {k for k, d in FAMILIES.items() if d.timestep_spread} == OFFERED
+    assert {k for k, d in FAMILIES.items() if d.timestep_spread} == OFFERED | {"zimage_base"}   # Base shares Z-Image's
     for k in ("moss_image", "minimax", "acestep15xl"):       # their own Clean-end share / schedules
         assert FAMILIES[k].timestep_spread == ()
     assert get("sdxl").timestep_spread == ("default", "detail", "composition")      # its even draw is balanced

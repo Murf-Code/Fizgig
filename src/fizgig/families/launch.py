@@ -1225,11 +1225,34 @@ def _preview_flags(desc, st, plan, cmd):
                         "--preview_checkpoint_cache", _s(sm.get("checkpoint_cache")) or "auto"]
                 if sm.get("int8"):
                     out.append("--preview_int8")
+        if (desc.train_preview_checkpoint and ck and ck[1] and sm.get("checkpoint")
+                and "--preview_checkpoint" not in out):
+            # ticked, but this run previews on its own model (a fine-tune, a slider, no preview file): the boxes hold
+            # the checkpoint's Steps and CFG (the tick's follow - Z-Image Turbo's 8 and 1), which render the training
+            # model badly; its own come back for them, with its negative once CFG is above 1
+            _swap_sample_value(out, "--sample_steps", ck[1].steps, desc.preview_steps)
+            if _swap_sample_value(out, "--sample_cfg_scale", ck[1].cfg, desc.preview_cfg) and desc.preview_cfg > 1.0 \
+                    and "--sample_negative" not in out:
+                neg = _s(sm.get("negative")) or _s(desc.preview_negative)
+                if neg:
+                    out += ["--sample_negative", neg]
         look = desc.preview_look()
         if look is not None and st.get("FAMILY_PREVIEW_LOOK") and "--preview_checkpoint" not in out:
             # on the training model's previews only; a file still downloading is picked up at a later preview
             out += ["--preview_lora", look_path(desc, st), "--preview_lora_strength", f"{desc.preview_look_strength:g}"]
     return out
+
+
+def _swap_sample_value(out, flag, was, now) -> bool:
+    """The value after `flag` in a command list, replaced by `now` when it is `was` (as a number). True = replaced."""
+    try:
+        i = out.index(flag)
+        if float(out[i + 1]) == float(was) and float(was) != float(now):
+            out[i + 1] = f"{now:g}" if isinstance(now, float) else str(now)
+            return True
+    except (ValueError, IndexError):
+        pass
+    return False
 
 
 def look_path(desc, st):

@@ -54,6 +54,7 @@ class Weight:
         self.replaces = tuple(replaces)          # earlier versions of this file: a pref on one moves to this one
         self.alt = None                          # the other build offered beside it (ModelFile.fetch_choice)
         self.switch_from = ""                    # picked over that build: a pref on it moves to this one
+        self.same_as = ""                        # another family's pref for the same file (ModelFile.same_as)
 
 
 # The Captions tab captions ANY dataset with the Krea 2 Qwen3-VL text encoder — it follows an
@@ -168,6 +169,7 @@ def _described_families():
             w = Weight(f.pref_key, f.repo, f.path, f.size_gb, f.label + (" — " + f.note if f.note else ""),
                        optional=f.fetch_is_optional, gated=f.gated, local_name=f.local_name or None,
                        replaces=f.replaces)
+            w.same_as = f.same_as
             if f.fetch_choice and f.alt_repo and f.alt_path:
                 w.alt = Weight(f.pref_key, f.alt_repo, f.alt_path, f.alt_size_gb or f.size_gb,
                                f"{f.label} — {f.fetch_choice[1]}", optional=w.optional, gated=f.gated,
@@ -344,6 +346,15 @@ def fetch_weight(w, models_dir, prefs, token=None, log=print, dry_run=False):
             log(f"  [keep] {w.pref_key} -> {os.path.basename(current)} (your own choice, not replacing it)")
         else:
             log(f"  [ok]   {w.filename} — already set up")
+        return True
+
+    # the same file set for another model (any name: the user's own copy, e.g. ComfyUI's renamed VAE): linked, not fetched
+    same_as = getattr(w, "same_as", "")
+    other = str(prefs.get(same_as) or "").strip() if same_as else ""
+    if other and os.path.isfile(other):
+        log(f"  [have] {w.filename} — already set for another model ({os.path.basename(other)}), linking into "
+            "Preferences")
+        prefs[w.pref_key] = other
         return True
 
     if os.path.isfile(dest) and _valid_safetensors(dest, min_bytes):

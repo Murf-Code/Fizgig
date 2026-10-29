@@ -22,7 +22,7 @@ const fn = (name) => { const i = src.indexOf("function " + name + "("); const a 
   return src.slice(a, src.indexOf("\n}\n", i) + 3); };
 const code = src.match(/const \$ = \(id\)[^\n]*\n/)[0] + src.match(/const el = \(tag[\s\S]*?\n};\n/)[0] +
   src.match(/const LIK_PICS = [^\n]*\n/)[0] + src.match(/const PREP_TEST_PICS = [^\n]*\n/)[0] +
-  fn("trainImagesUrl") + fn("likenessPicker") + fn("likenessMarks") + fn("prepTest") + fn("prepTestRun");
+  fn("trainImagesUrl") + fn("likenessPicker") + fn("likGridShow") + fn("likenessMarks") + fn("prepTest") + fn("prepTestRun");
 const names = ["a.png", "a.txt", "b.JPG", "c.jpeg", "d.webp", "e.bmp", "f.gif", "g.mp4"];
 const items = names.map((n) => ({name: n, path: "/d/" + n}));
 const S = {lik: {picked: []}, prep: {}, imageFolder: "/d", family: "krea2"};
