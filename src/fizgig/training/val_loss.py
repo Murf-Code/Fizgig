@@ -84,6 +84,21 @@ class FixedValidation:
                     self.save()
                 return
 
+    def prefill(self, datasets):
+        """Keep the picked images' batches straight from the cache, before training (the step-0 baseline): each its
+        own one-image batch with its own caption. -> True when all are kept."""
+        from fizgig.dataset.image_dataset import BucketBatchManager
+        for ds in datasets or []:
+            for reso, items in getattr(getattr(ds, "batch_manager", None), "buckets", {}).items():
+                for it in items:
+                    k = str(it.item_key)
+                    if k in self.wanted and k not in self.batches:
+                        try:
+                            self.offer(BucketBatchManager({reso: [it]}, 1)[0])
+                        except Exception:
+                            logger.debug(f"[validation] could not read {k} for the baseline", exc_info=True)
+        return self.ready
+
     def _setup(self):
         return {"wanted": list(self.wanted), "ts": [round(t, 6) for t in self.ts], "seed": self.seed}
 

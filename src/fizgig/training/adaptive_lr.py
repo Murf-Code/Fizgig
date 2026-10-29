@@ -50,6 +50,13 @@ class AdaptiveLR:
         self.cooldown = 0
         self.snapshot = None  # {"weights": {...cpu...}, "optim": cpu state} — not persisted
 
+    def set_baseline(self, val_loss):
+        """The step-0 validation loss (the untrained LoRA): the first best, so epoch 1 is judged against it. No LR
+        change here."""
+        if val_loss is not None and self.best_val is None:
+            self.best_val = float(val_loss)
+            logger.info(f"[adaptive_lr] baseline validation loss {self.best_val:.5f}: epoch 1 is judged against it")
+
     def record_clip(self, pre_clip_norm, max_norm):
         """One optimizer step's clip, for clip_signal (the norm clip_grad_norm_ returned, before clipping)."""
         self.clip_steps += 1
@@ -127,6 +134,7 @@ class AdaptiveLR:
         self.recent_losses = (self.recent_losses + [float(current_loss)])[-self.SMOOTH_EPOCHS:]
         current_loss = sum(self.recent_losses) / len(self.recent_losses)      # smoothed
         use_val = val_loss is not None
+        had_best = self.best_val is not None
         if use_val:
             v = float(val_loss)
             improved = self.best_val is None or v < self.best_val * (1.0 - self.VAL_MIN_REL)
@@ -140,8 +148,12 @@ class AdaptiveLR:
             self.best_loss = current_loss
             if not self.clip_signal:        # Klein's baseline starts at the first comparison
                 self.prev_weight_norm = self._weight_norm(network)
+            note = ""
+            if use_val and had_best:        # the step-0 baseline: epoch 1 already counts toward a streak
+                self.good_streak, self.bad_streak = (1, 0) if improved else (0, 1)
+                note = f" [judged on {signal}: {'better' if improved else 'not better'} than the baseline]"
             logger.info(f"[adaptive_lr] epoch 1: loss={raw_loss:.4f} "
-                        f"lr={optimizer.param_groups[0]['lr']:.2e} | ARMED")
+                        f"lr={optimizer.param_groups[0]['lr']:.2e}{note} | ARMED")
             self._snapshot(network, optimizer)
             return
 

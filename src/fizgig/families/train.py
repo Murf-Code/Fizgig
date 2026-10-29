@@ -1104,6 +1104,25 @@ def _check_timestep_spread(desc, driver):
         logger.info(f"Timestep focus: {TS.LABELS[k]}")
 
 
+def _baseline(validator, adaptive, datasets, steplog, step, epoch, run):
+    """The step-0 validation baseline (see train_family): -> True when it ran. run() -> (result, failed) as
+    val_loss.run_or_skip. A failed check is never fatal: the run goes on, the per-epoch checks as before."""
+    if not validator.prefill(datasets):
+        logger.info("[validation] baseline skipped: not every validation image could be read from the cache yet")
+        return False
+    r, failed = run()
+    if failed or r is None:
+        return False
+    v, per_t, sec = r
+    steplog.add_validation(step, epoch, v, per_t, sec, seg=validator.seg)
+    logger.info(f"[validation] step {step} (baseline): loss {v:.5f}  "
+                f"[{', '.join(f't{t:.2f} {x:.4f}' for t, x in zip(validator.ts, per_t))}]  "
+                f"{len(validator.batches)} image(s), {sec:.1f}s")
+    if adaptive is not None:
+        adaptive.set_baseline(v)
+    return True
+
+
 def train_family(family, dit_path, dataset_config, output_dir, output_name, *, network_dim=32, network_alpha=32,
                  learning_rate=1e-4, max_train_epochs=16, save_every_n_epochs=1, save_until_epoch=0,
                  save_every_n_epochs_after=0, save_state=False,
@@ -2689,6 +2708,12 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
                             + " (untick Start together on the Helpers tab to start now)")
                 _noted = time.time()
             time.sleep(2)
+    # the step-0 baseline: the untrained LoRA on the validation images, the line's first point and Adaptive LR's
+    # first best (epoch 1 is judged against it). Not on a resume that already has a best.
+    if validator is not None and not share_worker and (not resume_state_dir or (adaptive and adaptive.best_val is None)):
+        from fizgig.training.val_loss import run_or_skip
+        _baseline(validator, adaptive, getattr(group, "datasets", []), steplog, step_off + global_step, start_epoch,
+                  lambda: run_or_skip(validator, driver, dit, device, net, swapped=bool(swapped)))
     prior = _MaskPrior(driver, dit, net, mask_prior, swapped) if mask_prior else None
     for epoch in (_worker_epochs() if share_worker else range(start_epoch, max_train_epochs)):
         shared_epoch.value = epoch + 1

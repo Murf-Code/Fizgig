@@ -4276,7 +4276,7 @@ function lossGraph(data) {
     const ownVal = valScale(trends, set.val, val.length);
     const L = ownVal ? 110 : 54, R = hasLr && set.lr ? 64 : 12, T = 10, B = 26;   // room for the live rate beside "LR"
     const xs = pts.map((p) => p[0]);
-    const x0 = xs[0], x1 = xs[xs.length - 1];
+    const x0 = !xs.length ? xs[0] : Math.min(xs[0], ...(set.val && hasVal ? [val[0][0]] : [])), x1 = xs[xs.length - 1];   // a step-0 baseline
     const tf = (v) => (set.log ? Math.log10(Math.max(v, 1e-8)) : v);
     // the smoothed line: an exponential moving average, run forward from the first step
     const sm = [];
