@@ -2376,6 +2376,21 @@ async function likenessShow(dir, items, run, view) {
       b.style.color = bi.text;
       fig.append(b);
     }
+    fig.querySelector(".style-badge")?.remove();
+    const ss = pairedOn && S.values.SAMPLE_STYLE !== false ? (d.style || {})[fig.title] : null;   // the Style score
+    if (ss && typeof ss.score === "number") {
+      const h = pairHeat(ss.score);
+      const b = el("span", {class: "lik-badge pair-badge style-badge",
+        title: `Style ${ss.score.toFixed(3)} - how close this preview's look (texture, palette, line, medium) is to ` +
+          `the whole training set: its 8 closest training pictures, DINOv2 patch statistics (raw ${ss.raw}). ` +
+          "Same-artist pictures score about 0.85-1.0, other artists' work mostly 0.3-0.85, unrelated pictures under 0.3. Compare epochs: higher is closer to the dataset's style.",
+        text: `Style ${ss.score.toFixed(2)}`});
+      b.dataset.score = ss.score;
+      b.style.background = h.color;
+      b.style.color = h.text;
+      b.style.marginLeft = "4px";
+      fig.append(b);
+    }
   }
   $("likPanel").style.display = epochs.length ? "" : "none";
   if (!epochs.length) return;
@@ -2493,9 +2508,12 @@ async function pairSync(say) {
   try {
     const r = await api("/api/sample_pairs", {dir: out + (out.includes("\\") ? "\\" : "/") + "sample", run,
       prompts: S.values.SAMPLE_PROMPT || "", pairs: S.values.SAMPLE_PAIRS || "", on: !!S.values.SAMPLE_PAIRED,
-      dataset: S.imageFolder || ""});
-    if (say) say.textContent = r.paired ? `Scoring ${run}'s previews of ${r.paired} paired prompt${r.paired === 1 ? "" : "s"}…` : "Nothing paired yet.";
-    if (r.paired) setTimeout(() => { if (S.lik.dir) likenessShow(S.lik.dir, (S.gal && S.gal.items) || [], S.gal && S.gal.run, ""); }, 4000);
+      dataset: S.imageFolder || "", style: S.values.SAMPLE_STYLE !== false, subs: !!S.values.TRAIN_SUBFOLDERS,
+      out: S.values.LORA_OUTPUT_DIR || ""});
+    const sty = !!S.values.SAMPLE_PAIRED && S.values.SAMPLE_STYLE !== false;
+    if (say) say.textContent = r.paired ? `Scoring ${run}'s previews of ${r.paired} paired prompt${r.paired === 1 ? "" : "s"}${sty ? " and their style" : ""}…` :
+      sty ? `Scoring the style of ${run}'s previews…` : "Nothing paired yet.";
+    if (r.paired || sty) setTimeout(() => { if (S.lik.dir) likenessShow(S.lik.dir, (S.gal && S.gal.items) || [], S.gal && S.gal.run, ""); }, 4000);
   } catch (e) { if (say) say.textContent = e.message; }
 }
 const pairSyncSoon = debounce(() => pairSync(), 800);
@@ -2511,6 +2529,15 @@ function pairRows(host, raw) {
   tick.checked = !!S.values.SAMPLE_PAIRED;
   const say = el("span", {class: "field-hint pair-say"});
   host.append(el("label", {class: "checkbox-label pair-toggle", title: "For style LoRAs: tie a prompt to the training image it describes, and each preview of it gets a whole-image score against that image. Off keeps your pairings."}, tick, " Paired likeness (style LoRAs)"));
+  if (tick.checked) {               // the Style score: each preview against the whole training set's look
+    const st = el("input", {type: "checkbox", id: "f_SAMPLE_STYLE", onchange: (e) => {
+      S.values.SAMPLE_STYLE = e.target.checked; saveStateSoon(); pairSyncSoon();
+      if (S.lik.dir) likenessShow(S.lik.dir, (S.gal && S.gal.items) || [], S.gal && S.gal.run, ""); }});
+    st.checked = S.values.SAMPLE_STYLE !== false;
+    host.append(el("label", {class: "checkbox-label pair-toggle", title: "Score every preview against the whole " +
+      "training set's look (texture, palette, line, medium), not one picture - for a style made of many different " +
+      "characters. Works with nothing paired. Runs on the CPU beside training."}, st, " Style score"));
+  }
   if (tick.checked) host.lastChild.after(el("button", {class: "btn btn-sm pair-score", text: "Score now",
     title: "Score this run's existing previews of the paired prompts now (no restart needed)", onclick: () => pairSync(say)}), say);
   if (!tick.checked || !lines.length) return;      // off: the pairings are kept, just not shown or used

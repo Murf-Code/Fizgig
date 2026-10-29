@@ -1155,8 +1155,12 @@ def _preview_flags(desc, st, plan, cmd):
         if st.get("LORA_NAME"):          # paired likeness (off by default): prompt -> its training image, by the previews
             from fizgig.web import sample_pairs
             side = sample_pairs.sidecar(samples_dir, _s(st.get("LORA_NAME")))
-            text = sample_pairs.sidecar_text(sm.get("pairs"), sm.get("prompts") or [], _s(st.get("image_folder")))
-            if json.loads(text)["pairs"]:
+            # the Style score (on with Paired likeness): the training folder and the run's sub-folders
+            sdirs = ([_s(st.get("image_folder"))] + [f for _r, f in run_subfolders(desc, st)]
+                     if sm.get("style") and _s(st.get("image_folder")) else None)
+            text = sample_pairs.sidecar_text(sm.get("pairs"), sm.get("prompts") or [], _s(st.get("image_folder")),
+                                             sdirs)
+            if json.loads(text)["pairs"] or sdirs:
                 plan.files.append((side, text))
             elif os.path.exists(side):    # turned off (or nothing paired): an earlier run's pairings stop scoring
                 plan.files.append((side, text))

@@ -48,9 +48,10 @@ def _dump(samples_dir, d):
 def _write(samples_dir, names, status, scores, meta=None):
     with _file_lock:
         d = {"baselines": names, "status": status, "scores": scores, **(meta or {})}
-        paired = read(samples_dir).get("paired")
-        if paired:
-            d["paired"] = paired                  # the paired scores (sample_pairs.py) stay
+        old = read(samples_dir)
+        for k in ("paired", "style"):             # the paired and Style scores (sample_pairs.py) stay
+            if old.get(k):
+                d[k] = old[k]
         _dump(samples_dir, d)
 
 
@@ -61,6 +62,16 @@ def merge_paired(samples_dir, new, keep=None):
         paired = {k: v for k, v in (d.get("paired") or {}).items() if keep is None or k in keep}
         paired.update(new)
         d["paired"] = paired
+        _dump(samples_dir, d)
+
+
+def merge_style(samples_dir, new, keep=None):
+    """Add Style scores ({sample: {score, raw}}); samples no longer in `keep` drop out."""
+    with _file_lock:
+        d = read(samples_dir)
+        style = {k: v for k, v in (d.get("style") or {}).items() if keep is None or k in keep}
+        style.update(new)
+        d["style"] = style
         _dump(samples_dir, d)
 
 
@@ -112,7 +123,7 @@ def state(samples_dir, dataset_dir, paired=False):
     thr = d.get("thresholds") if isinstance(d.get("thresholds"), dict) else None
     from fizgig.web import sample_pairs
     sample_pairs.kick(samples_dir)                    # paired prompts: each preview against its own image
-    return {"paired": d.get("paired") or {}, "paired_mode": bool(paired), "baselines": names, "status": d.get("status", ""), "scores": d.get("scores") or {},
+    return {"paired": d.get("paired") or {}, "style": d.get("style") or {}, "paired_mode": bool(paired), "baselines": names, "status": d.get("status", ""), "scores": d.get("scores") or {},
             "available": prep_jobs.faces_available(), "embedder": d.get("embedder_label") or "",
             "thresholds": thr or {"match": 0.45, "borderline": 0.30}}
 

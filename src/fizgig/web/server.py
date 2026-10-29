@@ -1028,7 +1028,7 @@ _SIZE_KEYS = ("DATASET_MEGAPIXELS", "CLIP_MEGAPIXELS")
 # the settings a Resume takes from the form as it is now: the Samples tab's, block swap (memory only, the results
 # are the same), the save schedule (when checkpoints are written) and the learning rate (the run trains on at the
 # new one, logged); the rest trains on as it was
-_RESUME_SAMPLE_KEYS = ("SAMPLE_PROMPT", "SAMPLE_PAIRS", "SAMPLE_PAIRED", "SAMPLE_SEED", "SAMPLE_WIDTH", "SAMPLE_HEIGHT", "SAMPLE_STEPS",
+_RESUME_SAMPLE_KEYS = ("SAMPLE_PROMPT", "SAMPLE_PAIRS", "SAMPLE_PAIRED", "SAMPLE_STYLE", "SAMPLE_SEED", "SAMPLE_WIDTH", "SAMPLE_HEIGHT", "SAMPLE_STEPS",
                        "SAMPLE_CFG_SCALE", "FAMILY_TURBO_STRENGTH", "SAMPLE_CHECKPOINT",   # + previews on the checkpoint
                        "FAMILY_PREVIEW_LOOK",                                              # + the SFT look tick
                        "SAMPLE_EVERY_N_EPOCHS", "SAMPLE_LATER", "SAMPLE_UNTIL_EPOCH", "SAMPLE_EVERY_AFTER",
@@ -4281,9 +4281,14 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/sample_pairs":        # paired likeness changed mid-run: the sidecar now, then score
                 from fizgig.web import sample_pairs
                 try:
+                    ds = str(b.get("dataset") or "")
+                    sdirs = None
+                    if b.get("on") and b.get("style") and ds and os.path.isdir(ds):   # the Style score's folders
+                        sdirs = [ds] + ([f for _r, f in launch.subfolders(ds, (str(b.get("out") or ""),))]
+                                        if b.get("subs") else [])
                     return self.json({"ok": True, "paired": sample_pairs.update(
                         str(b.get("dir") or ""), str(b.get("run") or ""), str(b.get("prompts") or ""),
-                        b.get("pairs") if b.get("on") else "", str(b.get("dataset") or ""))})
+                        b.get("pairs") if b.get("on") else "", ds, sdirs)})
                 except (ValueError, OSError) as e:
                     return self.json({"error": str(e)}, 400)
             if path == "/api/likeness":            # three dataset photos to score the samples against; [] clears
