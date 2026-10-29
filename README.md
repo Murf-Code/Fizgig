@@ -5,7 +5,8 @@ It adds Batch Size above 1 for MOSS-Image, Anima and SDXL, with the per-image fe
 It also adds loss graph trend views with a fixed Image Validation check, paired likeness scores for style LoRA previews, and Reclaim VRAM on Windows.
 Added in 1.1: Save & stop on a second Pause press, early stopping when validation stops improving, tag shuffle and caption dropout, faster Blocks Swap for Krea 2 and MOSS-Image LoRAs, and Timestep focus presets.
 New in 1.2: crop to anything you type, crops keep their picture's tags (with optional tag trimming, now with the JTP-3 Hydra furry tagger too), masks for drawn and furry characters, clearer Timestep focus names, and a colour for each 0.1 step on paired likeness badges.
-See the [release notes](https://github.com/Murf-Code/Fizgig/releases/tag/advanced-1.2) for the full list and how to switch to the `fizgig-advanced` branch.
+New in 1.3: up to date with Fizgig v8.9.95 (Z-Image Base, a secondary captioning model), WD EVA02 and JTP-3 Hydra tag captions, auto-recaption with the model you picked, sub-folder images in the pickers, steadier Adaptive LR (judged on validation loss when it's on), crops that leave your pictures untouched, and Check warnings for picks from another dataset.
+See the [release notes](https://github.com/Murf-Code/Fizgig/releases/tag/advanced-1.3) for the full list and how to switch to the `fizgig-advanced` branch.
 
 ---
 
