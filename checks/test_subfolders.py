@@ -84,14 +84,25 @@ def test_the_tick_says_what_it_leaves_out_and_what_it_trains(tree):
     desc = get_family("krea2")
     v = {"LORA_OUTPUT_DIR": str(tree / "out")}
     off, act = form.subfolders_note(desc, v, str(tree))
-    assert "2 sub-folders with 2 more pictures are not trained on" in off and act is None
+    assert off == ("This training folder has 1 picture. 2 sub-folders with pictures are not counted. "
+                   "Tick this to include them.") and act is None
     _pic(str(tree / "outfits" / "blue" / "c.png"), caption=None)
     on, act = form.subfolders_note(desc, {**v, "TRAIN_SUBFOLDERS": True}, str(tree))
-    assert on.startswith("Training on 3 folders, 4 pictures.") and "Start will refuse them: outfits/blue (1)" in on
-    assert "outfits/red" not in on and act["label"] == "Show all folders"            # the list waits for the button
-    full, act = form.subfolders_note(desc, {**v, "TRAIN_SUBFOLDERS": True, **act["values"]}, str(tree))
-    assert "All folders: the training folder 1 · outfits/blue 2 · outfits/red 1." in full
-    assert act["label"] == "Hide the folders"
+    assert on.startswith("Training on 3 folders, 4 pictures: 1 in the training folder, plus outfits/blue (2), "
+                         "outfits/red (1).") and "Start will refuse them: outfits/blue (1)" in on
+    assert act is None                                     # every folder is named, so no list button
+
+
+def test_more_than_eight_sub_folders_get_the_list_button(tmp_path):
+    d = tmp_path / "data"
+    _pic(str(d / "a.png"))
+    for i in range(10):
+        _pic(str(d / f"s{i:02d}" / "x.png"))
+    desc = get_family("krea2")
+    on, act = form.subfolders_note(desc, {"TRAIN_SUBFOLDERS": True}, str(d))
+    assert "s07 (1) and 2 more." in on and "s09" not in on and act["label"] == "Show all folders"
+    full, act = form.subfolders_note(desc, {"TRAIN_SUBFOLDERS": True, **act["values"]}, str(d))
+    assert "All folders: the training folder 1 · s00 1" in full and act["label"] == "Hide the folders"
 
 
 def test_where_takes_the_longest_prefix_and_refuses_unknown_folders():

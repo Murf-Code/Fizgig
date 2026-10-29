@@ -31,9 +31,9 @@ def test_the_line_under_the_tick_names_what_it_leaves_out(tmp_path):
     _pic(str(d / "originals_2" / "x.png"))
     desc = get_family("krea2")
     on, _act = form.subfolders_note(desc, {"TRAIN_SUBFOLDERS": True}, str(d))
-    assert on.startswith("Training on 2 folders, 2 pictures. Left out (Fizgig's own): originals_2.")
+    assert on.startswith("Training on 2 folders, 2 pictures: 1 in the training folder, plus outfits (1). Left out (Fizgig's own): originals_2.")
     off, _act = form.subfolders_note(desc, {}, str(d))
-    assert "Left out" not in off and "1 sub-folder with 1 more picture is not trained on" in off
+    assert "Left out" not in off and "1 sub-folder with pictures is not counted" in off
 
 
 def _rows(desc):
@@ -104,3 +104,13 @@ def test_page_draws_the_one_tick_under_the_training_folder():
     assert out["title"].startswith("Off: only the pictures directly in the training folder are used.")
     assert all(h == "" for h in out["hints"]) and out["note"]      # no visible description; its status line stays
     assert out["saved"] is True
+
+
+def test_the_line_always_counts_the_training_folders_own_pictures(tmp_path):
+    d = tmp_path / "data"
+    _pic(str(d / "a.png"))
+    _pic(str(d / "b.png"))
+    desc = get_family("krea2")
+    assert form.subfolders_note(desc, {}, str(d))[0] == "This training folder has 2 pictures."
+    on, _act = form.subfolders_note(desc, {"TRAIN_SUBFOLDERS": True}, str(d))
+    assert on == "This training folder has 2 pictures. It has no sub-folders with pictures."

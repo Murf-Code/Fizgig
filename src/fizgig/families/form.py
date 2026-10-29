@@ -958,24 +958,29 @@ def subfolders_note(desc, values, image_folder):
     subs = launch.subfolders(image_folder, (_str(values.get("LORA_OUTPUT_DIR")), reg), own)
     left_out = (f" Left out (Fizgig's own): {', '.join(own[:4])}{' …' if len(own) > 4 else ''}."
                 if own and values.get("TRAIN_SUBFOLDERS") else "")
+    top = launch._media_count(image_folder)
+    here = f"This training folder has {top:,} picture{'s' if top != 1 else ''}."     # always shown
     if not subs:
-        return ("This training folder has no sub-folders with pictures." + left_out
-                if values.get("TRAIN_SUBFOLDERS") else ""), None
+        return (here + (" It has no sub-folders with pictures." + left_out
+                        if values.get("TRAIN_SUBFOLDERS") else "")), None
     ext = _str(values.get("DATASET_CAPTION_EXT")) or ".txt"
     counts = [(rel, launch._media_count(f), _uncaptioned(f, ext)) for rel, f in subs]
     more = sum(n for _r, n, _u in counts)
     if not values.get("TRAIN_SUBFOLDERS"):
-        return (f"{len(subs)} sub-folder{'s' if len(subs) != 1 else ''} with {more:,} more picture"
-                f"{'s' if more != 1 else ''} {'is' if more == 1 else 'are'} not trained on. Tick this to include "
-                f"them."), None
-    top = launch._media_count(image_folder)
+        return (f"{here} {len(subs)} sub-folder{'s' if len(subs) != 1 else ''} with pictures "
+                f"{'is' if len(subs) == 1 else 'are'} not counted. Tick this to include them."), None
     rows = ([("the training folder", top, _uncaptioned(image_folder, ext))] if top else []) + counts
-    line = f"Training on {len(rows)} folders, {top + more:,} pictures." + left_out
+    named = ", ".join(f"{rel} ({n:,})" for rel, n, _u in counts[:8]) + (
+        f" and {len(counts) - 8} more" if len(counts) > 8 else "")
+    line = (f"Training on {len(rows)} folders, {top + more:,} pictures: {top:,} in the training folder, plus "
+            f"{named}." + left_out)
     bare = [(rel, u) for rel, _n, u in rows if u]
     if bare:      # Start refuses a run with uncaptioned pictures: these come first
         line += (" Not captioned yet, so Start will refuse them: "
                  + " · ".join(f"{rel} ({u:,})" for rel, u in bare[:8])
                  + (f" · and {len(bare) - 8} more folders" if len(bare) > 8 else "") + ".")
+    if len(counts) <= 8:          # every sub-folder is already named: no list button
+        return line, None
     show = bool(values.get("_SUBFOLDER_LIST"))
     if show:
         line += " All folders: " + " · ".join(f"{rel} {n:,}" for rel, n, _u in rows) + "."
