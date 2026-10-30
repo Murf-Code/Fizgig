@@ -1141,6 +1141,7 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
                  metadata_title=None, metadata_author=None, metadata_description=None, metadata_license=None,
                  metadata_tags=None, metadata_trigger_phrase=None, metadata_thumbnail=None,
                  resume_state_dir=None, adaptive_lr=False, adaptive_lr_min=1e-4, adaptive_lr_max=2e-4,
+                 adaptive_lr_on_val=True,
                  max_grad_norm=1.0, ema_decay=0.0, optimizer_type="adamw", optimizer_args="",
                  lr_scheduler="constant", lr_warmup_steps=0, lr_scheduler_num_cycles=1, lr_scheduler_power=1.0,
                  gradient_accumulation_steps=1, compile_blocks="auto", gradient_checkpointing="auto", blocks_to_swap=0, network_type="lora", lokr_factor=8,
@@ -1760,7 +1761,8 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
         # Prodigy keeps per-image LR: it weights that image's loss (loss * mult), it never writes the group rate
         _keeps_pilr = str(optimizer_type or "").strip().lower() == "prodigy"
         if adaptive_lr:
-            logger.info("[adaptive_lr] ignored - the optimizer sets its own learning rate")
+            logger.info(f"[adaptive_lr] off - {optimizer_type} sets its own learning rate (Prodigy/DAdapt/Automagic "
+                        "style); scaling its estimate would fight it, so the watcher stands down")
         if warmup_look_outliers or (per_image_lr and not _keeps_pilr):
             logger.info(("[per-image LR] the look warm-up is off" if _keeps_pilr else
                          "[per-image LR] per-image LR and the look warm-up are off") + " - the optimizer sets its own rate")
@@ -1777,7 +1779,8 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
         for g in optimizer.param_groups:
             g["lr"] = learning_rate
         logger.info(f"[adaptive_lr] ENABLED - start_lr={learning_rate:.3e} min_lr={adaptive_lr_min:.3e} "
-                    f"max_lr={adaptive_lr_max:.3e} (the Learning Rate box is ignored)")
+                    f"max_lr={adaptive_lr_max:.3e} (the Learning Rate box is ignored; optimizer {optimizer_type}; "
+                    f"judged on {'validation loss when it runs' if adaptive_lr_on_val else 'smoothed train loss'})")
     adaptive = (AdaptiveLR(adaptive_lr_min, adaptive_lr_max, clip_signal=desc.adaptive_lr_clip_signal)
                 if adaptive_lr else None)
     ema = None
@@ -2712,7 +2715,7 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
     # first best (epoch 1 is judged against it). Not on a resume that already has a best.
     if validator is not None and not share_worker and (not resume_state_dir or (adaptive and adaptive.best_val is None)):
         from fizgig.training.val_loss import run_or_skip
-        _baseline(validator, adaptive, getattr(group, "datasets", []), steplog, step_off + global_step, start_epoch,
+        _baseline(validator, adaptive if adaptive_lr_on_val else None, getattr(group, "datasets", []), steplog, step_off + global_step, start_epoch,
                   lambda: run_or_skip(validator, driver, dit, device, net, swapped=bool(swapped)))
     prior = _MaskPrior(driver, dit, net, mask_prior, swapped) if mask_prior else None
     for epoch in (_worker_epochs() if share_worker else range(start_epoch, max_train_epochs)):
@@ -3048,7 +3051,7 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
             dop_sum[0], dop_sum[1] = 0.0, 0
         if adaptive:
             adaptive.epoch_boundary(epoch, recorder.moving_average, net.trainable_modules(), optimizer,
-                                    val_loss=last_val[0])
+                                    val_loss=last_val[0] if adaptive_lr_on_val else None)
             last_val[0] = None
         # problem-image verdicts + queued caption fixes / auto-recaptions, re-encoded before the next epoch
         watch.boundary(epoch + 1, dit, device, parkable=not swapped)
@@ -3293,6 +3296,8 @@ def setup_parser():
     p.add_argument("--adaptive_lr", action="store_true")
     p.add_argument("--adaptive_lr_min", type=float, default=1e-4)
     p.add_argument("--adaptive_lr_max", type=float, default=2e-4)
+    p.add_argument("--adaptive_lr_train_loss", action="store_true",
+                   help="Adaptive LR judges on the smoothed train loss even when validation loss is on")
     p.add_argument("--max_grad_norm", type=float, default=1.0)
     p.add_argument("--gradient_accumulation_steps", type=int, default=1,
                    help="micro-batches averaged into one optimizer step (sliders: always 1)")
@@ -3406,7 +3411,7 @@ def main():
         metadata_description=a.metadata_description, metadata_license=a.metadata_license,
         metadata_tags=a.metadata_tags, metadata_trigger_phrase=a.metadata_trigger_phrase or a.trigger_word,
         metadata_thumbnail=a.metadata_thumbnail, resume_state_dir=a.resume, adaptive_lr=a.adaptive_lr,
-        adaptive_lr_min=a.adaptive_lr_min, adaptive_lr_max=a.adaptive_lr_max, max_grad_norm=a.max_grad_norm,
+        adaptive_lr_on_val=not a.adaptive_lr_train_loss, adaptive_lr_min=a.adaptive_lr_min, adaptive_lr_max=a.adaptive_lr_max, max_grad_norm=a.max_grad_norm,
         ema_decay=a.ema_decay, optimizer_type=a.optimizer_type, optimizer_args=a.optimizer_args,
         lr_scheduler=a.lr_scheduler, lr_warmup_steps=a.lr_warmup_steps,
         lr_scheduler_num_cycles=a.lr_scheduler_num_cycles, lr_scheduler_power=a.lr_scheduler_power,

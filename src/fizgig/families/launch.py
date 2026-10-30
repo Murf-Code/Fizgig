@@ -937,6 +937,8 @@ def train_command(desc, inputs, plan):
         cmd += ["--adaptive_lr",
                 "--adaptive_lr_min", (str(st.get("ADAPTIVE_LR_MIN", "1e-4")).split() or ["1e-4"])[0],
                 "--adaptive_lr_max", (str(st.get("ADAPTIVE_LR_MAX", "2e-4")).split() or ["2e-4"])[0]]
+        if str(st.get("ADAPTIVE_LR_ON_VAL", True)).lower() in ("false", "0", "off"):   # old configs: on
+            cmd += ["--adaptive_lr_train_loss"]
     else:
         sched = _s(st.get("LR_SCHEDULER") or "constant") or "constant"
         if sched != "constant":

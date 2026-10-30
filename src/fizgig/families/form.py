@@ -48,7 +48,7 @@ DEFAULTS = {
     "OPTIMIZER_ARGS": "", "GRADIENT_ACCUMULATION": "1", "DATASET_BATCH_SIZE": "1", "MAX_GRAD_NORM": "1.0", "LR_SCHEDULER": "constant",
     "LR_WARMUP_STEPS": "", "VALIDATION_LOSS": False, "VALIDATION_IMAGES": "4", "VALIDATION_TIMESTEPS": "4",
     "VALIDATION_SEED": "42", "VALIDATION_EVERY_STEPS": "0", "VALIDATION_PICKED": [],
-    "VALIDATION_EARLY_STOP": False, "VALIDATION_PATIENCE": "3", "ADAPTIVE_LR": False, "ADAPTIVE_LR_MIN": "1e-5", "ADAPTIVE_LR_MAX": "4e-4",
+    "VALIDATION_EARLY_STOP": False, "VALIDATION_PATIENCE": "3", "ADAPTIVE_LR": False, "ADAPTIVE_LR_ON_VAL": True, "ADAPTIVE_LR_MIN": "1e-5", "ADAPTIVE_LR_MAX": "4e-4",
     "CONTEXT_LORA_PATH": "", "CONTEXT_LORA_STRENGTH": "1.0", "FAMILY_DOP": False, "FAMILY_MULTI_PERSON": False, "FAMILY_DOP_TRIGGER": "",
     "FAMILY_DOP_CLASS": "", "FAMILY_DOP_TRIGGER2": "", "FAMILY_DOP_CLASS2": "",
     "FAMILY_DOP_TRIGGER3": "", "FAMILY_DOP_CLASS3": "", "FAMILY_DOP_TRIGGER4": "", "FAMILY_DOP_CLASS4": "",
@@ -785,6 +785,9 @@ def form(desc):
              full=True),
         _row("VALIDATION_PATIENCE", "Patience: checks", hint="How many checks in a row without a better validation "
              "loss before the run stops (a tiny change, under 0.1%, doesn't count as better)."),
+        _row("ADAPTIVE_LR_ON_VAL", "Adaptive LR: judge on validation loss", "check",
+             "On (default): Adaptive LR raises or halves the rate by the validation loss. Off: it goes by the "
+             "smoothed training loss instead. Needs Fixed validation loss and Adaptive LR on.", full=True),
     ], collapsed=True)
     # the Training tab's order: what every run sets, then (after the Extras divider) the features you choose to use
     order = {sid: i for i, sid in enumerate(TRAINING_ORDER)}
@@ -1028,6 +1031,14 @@ def state(desc, values, image_folder="", captioner="", speed_file=False, checkpo
         tips["VALIDATION_EARLY_STOP"] = "Turn on Fixed validation loss first: early stop goes by it."
     elif not _on("VALIDATION_EARLY_STOP"):
         disabled.add("VALIDATION_PATIENCE")
+    if not desc.adaptive_lr:                            # no Adaptive LR on this model: nothing to judge
+        hidden.add("ADAPTIVE_LR_ON_VAL")
+    elif not _on("VALIDATION_LOSS"):
+        disabled.add("ADAPTIVE_LR_ON_VAL")
+        tips["ADAPTIVE_LR_ON_VAL"] = "Turn on Fixed validation loss first: without it Adaptive LR uses the training loss."
+    elif not _on("ADAPTIVE_LR"):
+        disabled.add("ADAPTIVE_LR_ON_VAL")
+        tips["ADAPTIVE_LR_ON_VAL"] = "Turn on Adaptive LR (Learning Rate section) to use this."
     if picked_list(values.get("VALIDATION_PICKED")):    # your own validation images: the count is not used
         disabled.add("VALIDATION_IMAGES")
         notes["VALIDATION_IMAGES"] = "Not used: your picked images are checked instead."

@@ -171,7 +171,8 @@ def test_validation_rows_live_in_samples_and_stay_in_presets():
     assert samples.index("validation") > samples.index("samples")  # after the preview cards
     assert [r["key"] for r in sec["rows"]] == ["VALIDATION_LOSS", "VALIDATION_PICKED", "VALIDATION_IMAGES",
                                                "VALIDATION_TIMESTEPS", "VALIDATION_SEED", "VALIDATION_EVERY_STEPS",
-                                               "VALIDATION_EARLY_STOP", "VALIDATION_PATIENCE"]
+                                               "VALIDATION_EARLY_STOP", "VALIDATION_PATIENCE",
+                                               "ADAPTIVE_LR_ON_VAL"]
     assert sec["rows"][0]["full"] is True                          # the switch spans the card: wide and short
     keys = [r["key"] for s in secs if s["id"] != "validation" for r in s["rows"]]
     assert not any(k.startswith("VALIDATION_") or k == "_validation_heading" for k in keys)
