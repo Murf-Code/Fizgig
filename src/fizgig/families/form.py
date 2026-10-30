@@ -785,9 +785,9 @@ def form(desc):
              full=True),
         _row("VALIDATION_PATIENCE", "Patience: checks", hint="How many checks in a row without a better validation "
              "loss before the run stops (a tiny change, under 0.1%, doesn't count as better)."),
-        _row("ADAPTIVE_LR_ON_VAL", "Adaptive LR: judge on validation loss", "check",
-             "On (default): Adaptive LR raises or halves the rate by the validation loss. Off: it goes by the "
-             "smoothed training loss instead. Needs Fixed validation loss and Adaptive LR on.", full=True),
+        _row("ADAPTIVE_LR_ON_VAL", "Adaptive LR: follow validation loss", "check",
+             "On (default): Adaptive LR raises or halves the rate by following the validation loss. When off, "
+             "Adaptive LR follows smoothed training loss instead. Needs Fixed validation loss and Adaptive LR on.", full=True),
     ], collapsed=True)
     # the Training tab's order: what every run sets, then (after the Extras divider) the features you choose to use
     order = {sid: i for i, sid in enumerate(TRAINING_ORDER)}

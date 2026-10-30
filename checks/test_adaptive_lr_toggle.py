@@ -1,4 +1,4 @@
-"""Adaptive LR's 'judge on validation loss' toggle (Validation tab): form, command, old configs, every optimizer."""
+"""Adaptive LR's 'follow validation loss' toggle (Validation tab): form, command, old configs, every optimizer."""
 import sys
 
 import torch
@@ -36,6 +36,8 @@ def _setup(tmp_path):
 def test_form_row_and_greying(tmp_path):
     form, desc, _ = _setup(tmp_path)
     rows = {r["key"]: r for sec in form.form(desc)["sections"] if sec["id"] == "validation" for r in sec["rows"]}
+    assert rows["ADAPTIVE_LR_ON_VAL"]["label"] == "Adaptive LR: follow validation loss"
+    assert "follows smoothed training loss" in rows["ADAPTIVE_LR_ON_VAL"]["hint"]
     assert rows["ADAPTIVE_LR_ON_VAL"]["kind"] == "check" and form.DEFAULTS["ADAPTIVE_LR_ON_VAL"] is True
     assert "ADAPTIVE_LR_ON_VAL" in form.state(desc, {**form.DEFAULTS, "ADAPTIVE_LR": True})["disabled"]
     assert "ADAPTIVE_LR_ON_VAL" in form.state(desc, {**form.DEFAULTS, "VALIDATION_LOSS": True})["disabled"]

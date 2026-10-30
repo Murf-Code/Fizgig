@@ -1780,7 +1780,7 @@ def train_family(family, dit_path, dataset_config, output_dir, output_name, *, n
             g["lr"] = learning_rate
         logger.info(f"[adaptive_lr] ENABLED - start_lr={learning_rate:.3e} min_lr={adaptive_lr_min:.3e} "
                     f"max_lr={adaptive_lr_max:.3e} (the Learning Rate box is ignored; optimizer {optimizer_type}; "
-                    f"judged on {'validation loss when it runs' if adaptive_lr_on_val else 'smoothed train loss'})")
+                    f"following {'validation loss when it runs' if adaptive_lr_on_val else 'smoothed training loss'})")
     adaptive = (AdaptiveLR(adaptive_lr_min, adaptive_lr_max, clip_signal=desc.adaptive_lr_clip_signal)
                 if adaptive_lr else None)
     ema = None
@@ -3297,7 +3297,7 @@ def setup_parser():
     p.add_argument("--adaptive_lr_min", type=float, default=1e-4)
     p.add_argument("--adaptive_lr_max", type=float, default=2e-4)
     p.add_argument("--adaptive_lr_train_loss", action="store_true",
-                   help="Adaptive LR judges on the smoothed train loss even when validation loss is on")
+                   help="Adaptive LR follows the smoothed training loss even when validation loss is on")
     p.add_argument("--max_grad_norm", type=float, default=1.0)
     p.add_argument("--gradient_accumulation_steps", type=int, default=1,
                    help="micro-batches averaged into one optimizer step (sliders: always 1)")
